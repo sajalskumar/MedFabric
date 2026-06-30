@@ -1,0 +1,301 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/semantic_layer/semantic_layer.yaml
+#
+# Layer:
+#   Layer 1G - Semantic Layer
+#
+# Purpose:
+#   Defines all configuration required by:
+#
+#     src/semantic_layer/build_semantic_layer.py
+#
+#   This file controls how actual Feature Store outputs are converted into
+#   business-facing Semantic Layer assets.
+#
+# Objectives:
+#   - Keep Semantic Layer execution fully configuration-driven.
+#   - Avoid hardcoded paths in Python code.
+#   - Consume the actual Feature Store artifacts produced by Layer 1F.
+#   - Define semantic dimensions.
+#   - Define semantic metric groups.
+#   - Define semantic business views.
+#   - Define metadata catalog outputs.
+#   - Define validation and audit outputs.
+#   - Support downstream analytics, dashboards, notebooks, governance, and AI.
+#
+# Upstream Dependency:
+#   This configuration depends on Feature Store files under:
+#
+#     data/feature_store/
+#
+#   Actual files currently expected:
+#     - claims_features.parquet
+#     - cost_features.parquet
+#     - demographic_features.parquet
+#     - enrollment_features.parquet
+#     - laboratory_features.parquet
+#     - pharmacy_features.parquet
+#     - provider_attribution_features.parquet
+#     - risk_features.parquet
+#     - sdoh_features.parquet
+#     - temporal_features.parquet
+#     - utilization_features.parquet
+#
+# Outputs:
+#   Semantic outputs are written under:
+#
+#     data/semantic_layer/
+#
+# Run:
+#   python -m src.semantic_layer.build_semantic_layer
+#
+###############################################################################
+
+semantic_layer:
+  layer_name: "Layer 1G - Semantic Layer"
+  output_format: "parquet"
+
+###############################################################################
+# Logging
+###############################################################################
+
+logging:
+  level: "INFO"
+  module_log_dir: "logs/modules"
+  log_file_name: "semantic_layer.log"
+
+###############################################################################
+# Paths
+###############################################################################
+
+paths:
+
+  ###########################################################################
+  # Feature Store Inputs
+  ###########################################################################
+
+  inputs:
+
+    demographic_features:
+      path: "data/feature_store/demographic_features.parquet"
+      format: "parquet"
+      required: true
+
+    claims_features:
+      path: "data/feature_store/claims_features.parquet"
+      format: "parquet"
+      required: true
+
+    cost_features:
+      path: "data/feature_store/cost_features.parquet"
+      format: "parquet"
+      required: true
+
+    enrollment_features:
+      path: "data/feature_store/enrollment_features.parquet"
+      format: "parquet"
+      required: true
+
+    utilization_features:
+      path: "data/feature_store/utilization_features.parquet"
+      format: "parquet"
+      required: true
+
+    risk_features:
+      path: "data/feature_store/risk_features.parquet"
+      format: "parquet"
+      required: true
+
+    provider_attribution_features:
+      path: "data/feature_store/provider_attribution_features.parquet"
+      format: "parquet"
+      required: true
+
+    laboratory_features:
+      path: "data/feature_store/laboratory_features.parquet"
+      format: "parquet"
+      required: false
+
+    pharmacy_features:
+      path: "data/feature_store/pharmacy_features.parquet"
+      format: "parquet"
+      required: false
+
+    sdoh_features:
+      path: "data/feature_store/sdoh_features.parquet"
+      format: "parquet"
+      required: false
+
+    temporal_features:
+      path: "data/feature_store/temporal_features.parquet"
+      format: "parquet"
+      required: false
+
+  ###########################################################################
+  # Root Output
+  ###########################################################################
+
+  outputs:
+    semantic_root: "data/semantic_layer"
+
+  ###########################################################################
+  # Metadata Outputs
+  ###########################################################################
+
+  metadata_outputs:
+    default_output_dir: "data/semantic_layer/metadata"
+    semantic_metadata_catalog: "data/semantic_layer/metadata/semantic_metadata_catalog"
+    semantic_entity_mapping_catalog: "data/semantic_layer/metadata/semantic_entity_mapping_catalog"
+    semantic_configuration_catalog: "data/semantic_layer/metadata/semantic_configuration_catalog"
+
+  ###########################################################################
+  # Audit Outputs
+  ###########################################################################
+
+  audit_outputs:
+    default_output_dir: "data/semantic_layer/audit"
+    semantic_layer_audit_records: "data/semantic_layer/audit/semantic_layer_audit_records"
+    semantic_layer_validation_results: "data/semantic_layer/audit/semantic_layer_validation_results"
+    semantic_layer_dataset_inventory: "data/semantic_layer/audit/semantic_layer_dataset_inventory"
+    semantic_layer_metric_definitions: "data/semantic_layer/audit/semantic_layer_metric_definitions"
+    semantic_layer_execution_summary: "data/semantic_layer/audit/semantic_layer_execution_summary"
+
+###############################################################################
+# Semantic Dimensions
+###############################################################################
+
+semantic_dimensions:
+  enabled: true
+  default_output_dir: "data/semantic_layer/dimensions"
+
+  dimensions:
+
+    member_semantic_dimension:
+      source_dataset: "demographic_features"
+      key_columns:
+        - "member_id"
+      keep_unmapped_columns: true
+      output_path: "data/semantic_layer/dimensions/member_semantic_dimension"
+
+    provider_semantic_dimension:
+      source_dataset: "provider_attribution_features"
+      keep_unmapped_columns: true
+      output_path: "data/semantic_layer/dimensions/provider_semantic_dimension"
+
+###############################################################################
+# Semantic Metrics
+###############################################################################
+
+semantic_metrics:
+  enabled: true
+  default_output_dir: "data/semantic_layer/metrics"
+
+  metric_groups:
+
+    population_metrics:
+      source_dataset: "demographic_features"
+      grain: "platform"
+      owner: "MedFabric"
+      output_path: "data/semantic_layer/metrics/population_metrics"
+
+      metrics:
+
+        total_members:
+          calculation_type: "count_rows"
+          description: "Total number of member demographic feature records available for semantic analytics."
+          required: true
+
+        unique_members:
+          calculation_type: "count_distinct"
+          column: "member_id"
+          description: "Unique member count based on member_id."
+          required: true
+
+    claims_metrics:
+      source_dataset: "claims_features"
+      grain: "claim"
+      owner: "MedFabric"
+      output_path: "data/semantic_layer/metrics/claims_metrics"
+
+      metrics:
+
+        total_claim_records:
+          calculation_type: "count_rows"
+          description: "Total number of claim feature records."
+          required: true
+
+    utilization_metrics:
+      source_dataset: "utilization_features"
+      grain: "member"
+      owner: "MedFabric"
+      output_path: "data/semantic_layer/metrics/utilization_metrics"
+
+      metrics:
+
+        total_utilization_records:
+          calculation_type: "count_rows"
+          description: "Total number of utilization feature records."
+          required: true
+
+    risk_metrics:
+      source_dataset: "risk_features"
+      grain: "member"
+      owner: "MedFabric"
+      output_path: "data/semantic_layer/metrics/risk_metrics"
+
+      metrics:
+
+        total_risk_records:
+          calculation_type: "count_rows"
+          description: "Total number of risk feature records."
+          required: true
+
+###############################################################################
+# Semantic Business Views
+###############################################################################
+
+semantic_business_views:
+  enabled: true
+  default_output_dir: "data/semantic_layer/business_views"
+
+  views:
+
+    member_360_semantic_view:
+      source_dataset: "member_semantic_dimension"
+      keep_unmapped_columns: true
+      output_path: "data/semantic_layer/business_views/member_360_semantic_view"
+
+    provider_attribution_semantic_view:
+      source_dataset: "provider_semantic_dimension"
+      keep_unmapped_columns: true
+      output_path: "data/semantic_layer/business_views/provider_attribution_semantic_view"
+
+###############################################################################
+# Entity Mappings
+###############################################################################
+
+entity_mappings:
+
+  mappings:
+
+    member:
+      source_dataset: "demographic_features"
+      business_key: "member_id"
+      semantic_key: "member_id"
+      description: "Member entity mapping used by semantic analytics, business views, governance metadata, and downstream reporting."
+
+    provider:
+      source_dataset: "provider_attribution_features"
+      business_key: "provider_id"
+      semantic_key: "provider_id"
+      description: "Provider entity mapping used by attribution analytics and provider performance semantic views."
+
+    claim:
+      source_dataset: "claims_features"
+      business_key: "claim_id"
+      semantic_key: "claim_id"
+      description: "Claim entity mapping used by claims analytics, utilization analytics, and cost analytics."

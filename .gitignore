@@ -86,6 +86,9 @@ data/quality/*
 data/audit/*
 !data/audit/.gitkeep
 
+data/semantic_layer/*
+!data/semantic_layer/.gitkeep
+
 ###############################################################################
 # Logs
 #
