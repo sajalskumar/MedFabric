@@ -1,0 +1,89 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/data_generation/members.yaml
+#
+# Purpose:
+#     Controls synthetic canonical Member generation.
+#
+# Status:
+#     LOCKED
+###############################################################################
+
+configuration:
+  version: "1.0"
+  enabled: true
+
+member_population:
+  total_members: 100000
+  generate_family_households: true
+  average_household_size: 2.4
+
+member_identifier:
+  prefix: "MBR"
+  starting_sequence: 100000000
+  padding_length: 10
+
+household_identifier:
+  prefix: "HH"
+  starting_sequence: 500000
+  padding_length: 8
+
+demographics:
+  minimum_age: 0
+  maximum_age: 100
+
+  first_name_source: "reference/demographics/first_names.parquet"
+  last_name_source: "reference/demographics/last_names.parquet"
+  race_source: "reference/demographics/race_reference.parquet"
+  ethnicity_source: "reference/demographics/ethnicity_reference.parquet"
+  language_source: "reference/demographics/language_reference.parquet"
+  geography_source: "reference/geography/us_geography_reference.parquet"
+
+  age_distribution:
+    pediatric: 0.22
+    adult: 0.58
+    senior: 0.20
+
+gender:
+  male: 0.49
+  female: 0.50
+  unknown: 0.01
+
+contact_information:
+  generate_addresses: true
+  generate_phone_numbers: true
+  generate_email_addresses: true
+
+eligibility:
+  minimum_member_age: 0
+  maximum_member_age: 100
+
+reproducibility:
+  use_global_random_seed: true
+
+validation:
+  require_unique_member_ids: true
+  require_unique_household_ids: true
+  require_birth_date: true
+  require_gender: true
+  require_zip_code: true
+  allow_missing_email: true
+  allow_missing_phone: true
+
+output:
+  dataset_name: "members"
+  file_name: "members.parquet"
+  output_format: "parquet"
+
+metadata:
+  generate_dataset_metadata: true
+  generate_column_metadata: true
+  generate_statistics: true
+  generate_lineage: true
+
+###############################################################################
+# END OF FILE
+###############################################################################

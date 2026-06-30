@@ -1,0 +1,220 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/data_generation/enrollment.yaml
+#
+# Purpose:
+#     Controls synthetic member enrollment generation.
+#
+# Description:
+#     This configuration defines HOW synthetic enrollment records are generated.
+#     It controls enrollment periods, plan assignment, line of business,
+#     product types, coverage continuity, and eligibility behavior.
+#
+# Guiding Principles:
+#     • Configuration defines behavior.
+#     • Reference datasets contain lookup values.
+#     • Python contains business logic only.
+#     • No hardcoded configurable values.
+#
+# Reference Data:
+#     Enrollment products, plans, lines of business, payer products, and benefit
+#     structures are stored under:
+#
+#         reference/enrollment/
+#
+# Used By:
+#     src/data_generation/engines/enrollment_engine.py
+#     src/data_generation/builders/enrollment_builder.py
+#
+###############################################################################
+
+###############################################################################
+# CONFIGURATION
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+
+  enabled: true
+
+###############################################################################
+# INPUT DEPENDENCIES
+###############################################################################
+
+inputs:
+
+  members_dataset: "data/raw/members.parquet"
+
+###############################################################################
+# ENROLLMENT PERIOD
+###############################################################################
+
+enrollment_period:
+
+  start_year: 2020
+
+  end_year: 2026
+
+  generate_member_months: true
+
+###############################################################################
+# ENROLLMENT CONTINUITY
+###############################################################################
+
+coverage_continuity:
+
+  continuous_coverage_probability: 0.78
+
+  partial_year_coverage_probability: 0.17
+
+  coverage_gap_probability: 0.05
+
+  maximum_coverage_gaps_per_member: 2
+
+###############################################################################
+# LINE OF BUSINESS
+###############################################################################
+
+line_of_business:
+
+  use_reference_dataset: true
+
+  source: "reference/enrollment/line_of_business_reference.parquet"
+
+###############################################################################
+# PRODUCT
+###############################################################################
+
+product:
+
+  use_reference_dataset: true
+
+  source: "reference/enrollment/product_reference.parquet"
+
+###############################################################################
+# PLAN
+###############################################################################
+
+plan:
+
+  use_reference_dataset: true
+
+  source: "reference/enrollment/plan_reference.parquet"
+
+###############################################################################
+# PAYER
+###############################################################################
+
+payer:
+
+  use_reference_dataset: true
+
+  source: "reference/enrollment/payer_reference.parquet"
+
+###############################################################################
+# COVERAGE TYPE
+###############################################################################
+
+coverage_type:
+
+  use_reference_dataset: true
+
+  source: "reference/enrollment/coverage_type_reference.parquet"
+
+###############################################################################
+# MEMBER MONTH IDENTIFIER
+###############################################################################
+
+member_month_identifier:
+
+  prefix: "MM"
+
+  starting_sequence: 300000000
+
+  padding_length: 12
+
+###############################################################################
+# ENROLLMENT IDENTIFIER
+###############################################################################
+
+enrollment_identifier:
+
+  prefix: "ENR"
+
+  starting_sequence: 400000000
+
+  padding_length: 12
+
+###############################################################################
+# REPRODUCIBILITY
+###############################################################################
+
+reproducibility:
+
+  use_global_random_seed: true
+
+###############################################################################
+# VALIDATION
+###############################################################################
+
+validation:
+
+  require_member_id: true
+
+  require_enrollment_id: true
+
+  require_member_month_id: true
+
+  require_coverage_start_date: true
+
+  require_coverage_end_date: true
+
+  require_line_of_business: true
+
+  require_product: true
+
+  require_plan: true
+
+  require_payer: true
+
+  require_unique_enrollment_ids: true
+
+  require_unique_member_month_ids: true
+
+###############################################################################
+# OUTPUT
+###############################################################################
+
+output:
+
+  enrollment_dataset_name: "enrollment"
+
+  enrollment_file_name: "enrollment.parquet"
+
+  member_month_dataset_name: "member_months"
+
+  member_month_file_name: "member_months.parquet"
+
+  output_format: "parquet"
+
+###############################################################################
+# METADATA
+###############################################################################
+
+metadata:
+
+  generate_dataset_metadata: true
+
+  generate_column_metadata: true
+
+  generate_statistics: true
+
+  generate_lineage: true
+
+###############################################################################
+# END OF FILE
+###############################################################################

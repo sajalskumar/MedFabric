@@ -1,0 +1,173 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/data_generation/organizations.yaml
+#
+# Purpose:
+#     Controls synthetic healthcare Organization generation.
+#
+# Description:
+#     This configuration defines HOW synthetic organizations are generated.
+#     Organizations represent provider groups, IPAs, health systems, specialty
+#     groups, payers, employer groups, and other enterprise entities that can
+#     participate in provider networks, facility ownership, attribution,
+#     contracts, enrollment, and reporting.
+#
+# Guiding Principles:
+#     • Configuration defines behavior.
+#     • Reference datasets contain lookup values.
+#     • Python contains business logic only.
+#     • No configurable values are hardcoded in Python.
+#
+# Reference Data:
+#     Organization reference values are stored under:
+#
+#         reference/providers/provider_organization_reference.parquet
+#         reference/geography/us_geography_reference.parquet
+#
+# Used By:
+#     src/data_generation/generators/organization_generator.py
+#
+###############################################################################
+
+###############################################################################
+# CONFIGURATION
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+
+  enabled: true
+
+###############################################################################
+# ORGANIZATION POPULATION
+###############################################################################
+
+organization_population:
+
+  total_organizations: 25
+
+###############################################################################
+# ORGANIZATION IDENTIFIER
+###############################################################################
+
+organization_identifier:
+
+  prefix: "ORG"
+
+  starting_sequence: 600000000
+
+  padding_length: 10
+
+###############################################################################
+# ORGANIZATION REFERENCE DATA
+###############################################################################
+
+organization:
+
+  use_reference_dataset: true
+
+  source: "reference/providers/provider_organization_reference.parquet"
+
+###############################################################################
+# GEOGRAPHY
+###############################################################################
+
+geography:
+
+  use_reference_dataset: true
+
+  source: "reference/geography/us_geography_reference.parquet"
+
+  geographic_distribution: "population_weighted"
+
+###############################################################################
+# CONTACT INFORMATION
+###############################################################################
+
+contact_information:
+
+  generate_addresses: true
+
+  generate_phone_numbers: true
+
+  generate_email_addresses: true
+
+  email_domain: "medfabric.example"
+
+###############################################################################
+# NAMING
+###############################################################################
+
+naming:
+
+  organization_name_template: "{base_organization_name} {organization_id}"
+
+###############################################################################
+# REPRODUCIBILITY
+###############################################################################
+
+reproducibility:
+
+  use_global_random_seed: true
+
+###############################################################################
+# AUDIT
+###############################################################################
+
+audit:
+
+  source_system: "MedFabric Synthetic Data Engine"
+
+  record_status: "Active"
+
+  created_at: "2026-01-01"
+
+  updated_at: "2026-01-01"
+
+###############################################################################
+# VALIDATION
+###############################################################################
+
+validation:
+
+  require_unique_organization_ids: true
+
+  require_organization_name: true
+
+  require_organization_type: true
+
+  require_zip_code: true
+
+###############################################################################
+# OUTPUT
+###############################################################################
+
+output:
+
+  dataset_name: "organizations"
+
+  file_name: "organizations.parquet"
+
+  output_format: "parquet"
+
+###############################################################################
+# METADATA
+###############################################################################
+
+metadata:
+
+  generate_dataset_metadata: true
+
+  generate_column_metadata: true
+
+  generate_statistics: true
+
+  generate_lineage: true
+
+###############################################################################
+# END OF FILE
+###############################################################################

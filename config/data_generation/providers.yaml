@@ -1,0 +1,208 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/data_generation/providers.yaml
+#
+# Purpose:
+#     Controls synthetic provider generation.
+#
+# Description:
+#     This configuration defines HOW synthetic providers are generated.
+#     It does NOT contain large reference datasets such as taxonomy codes,
+#     specialties, organizations, ZIP codes, or facility reference values.
+#     Those belong in the Reference Data layer.
+#
+# Guiding Principles:
+#     • Configuration defines behavior.
+#     • Reference datasets contain lookup values.
+#     • Python contains business logic only.
+#     • No hardcoded configurable values.
+#
+# Reference Data:
+#     All large lookup datasets are stored under:
+#
+#         reference/
+#
+# Used By:
+#     src/data_generation/engines/provider_engine.py
+#     src/data_generation/builders/provider_builder.py
+#
+###############################################################################
+
+###############################################################################
+# CONFIGURATION
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+  enabled: true
+
+###############################################################################
+# PROVIDER POPULATION
+###############################################################################
+
+provider_population:
+  total_providers: 2500
+  include_individual_providers: true
+  include_organizational_providers: true
+
+  ###############################################################################
+# ORGANIZATION POPULATION
+###############################################################################
+
+organization_population:
+
+  total_organizations: 25
+  minimum_providers_per_organization: 2
+  maximum_providers_per_organization: 40
+
+###############################################################################
+# PROVIDER IDENTIFIER
+###############################################################################
+
+provider_identifier:
+  prefix: "PRV"
+  starting_sequence: 200000000
+  padding_length: 10
+
+###############################################################################
+# NPI GENERATION
+###############################################################################
+
+npi:
+  generate_npi: true
+  npi_length: 10
+  require_unique_npi: true
+
+###############################################################################
+# PROVIDER TYPES
+###############################################################################
+
+provider_type:
+
+  individual_provider_probability: 0.85
+  organizational_provider_probability: 0.15
+
+###############################################################################
+# SPECIALTY AND TAXONOMY
+###############################################################################
+
+specialty:
+
+  use_reference_dataset: true
+  source: "reference/providers/provider_specialty_reference.parquet"
+
+taxonomy:
+
+  use_reference_dataset: true
+  source: "reference/providers/provider_taxonomy_reference.parquet"
+
+###############################################################################
+# ORGANIZATION AND FACILITY RELATIONSHIP
+###############################################################################
+
+organization:
+
+  generate_provider_organizations: true
+  organization_source: "reference/providers/provider_organization_reference.parquet"
+facility_relationship:
+  assign_facility_affiliation: true
+  facility_source: "reference/facilities/facility_reference.parquet"
+  maximum_facilities_per_provider: 3
+
+###############################################################################
+# GEOGRAPHY
+###############################################################################
+
+geography:
+
+  use_reference_dataset: true
+  source: "reference/geography/us_geography_reference.parquet"
+  geographic_distribution: "population_weighted"
+
+###############################################################################
+# CONTACT INFORMATION
+###############################################################################
+
+contact_information:
+
+  generate_addresses: true
+  generate_phone_numbers: true
+  generate_email_addresses: true
+
+###############################################################################
+# NETWORK PARTICIPATION
+###############################################################################
+
+network:
+
+  generate_network_status: true
+  in_network_probability: 0.90
+  out_of_network_probability: 0.10
+
+###############################################################################
+# PRIMARY CARE FLAG
+###############################################################################
+
+primary_care:
+
+  derive_from_specialty: true
+  primary_care_specialty_source: "reference/providers/primary_care_specialty_reference.parquet"
+
+###############################################################################
+# ATTRIBUTION ELIGIBILITY
+###############################################################################
+
+attribution_eligibility:
+
+  generate_attribution_eligible_flag: true
+  require_primary_care_for_pcp_attribution: true
+
+###############################################################################
+# REPRODUCIBILITY
+###############################################################################
+
+reproducibility:
+
+  use_global_random_seed: true
+
+###############################################################################
+# VALIDATION
+###############################################################################
+
+validation:
+
+  require_unique_provider_ids: true
+  require_unique_npi: true
+  require_provider_type: true
+  require_specialty: true
+  require_taxonomy_code: true
+  require_zip_code: true
+
+###############################################################################
+# OUTPUT
+###############################################################################
+
+output:
+
+  dataset_name: "providers"
+  file_name: "providers.parquet"
+  output_format: "parquet"
+
+###############################################################################
+# METADATA
+###############################################################################
+
+metadata:
+
+  generate_dataset_metadata: true
+  generate_column_metadata: true
+  generate_statistics: true
+  generate_lineage: true
+
+###############################################################################
+# END OF FILE
+###############################################################################

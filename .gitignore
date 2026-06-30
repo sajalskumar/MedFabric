@@ -1,0 +1,110 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     .gitignore
+#
+# Purpose:
+#     Defines files and directories that should not be committed to source
+#     control.
+#
+# Objectives:
+#     - Keep the repository clean.
+#     - Exclude generated artifacts.
+#     - Exclude virtual environments.
+#     - Exclude logs.
+#     - Exclude trained models.
+#     - Exclude generated datasets.
+#
+# Last Updated:
+#     Version 1.0
+###############################################################################
+
+###############################################################################
+# Python
+###############################################################################
+
+__pycache__/
+*.py[cod]
+*.so
+
+###############################################################################
+# Virtual Environment
+###############################################################################
+
+.venv/
+venv/
+.env
+
+###############################################################################
+# macOS
+###############################################################################
+
+.DS_Store
+
+###############################################################################
+# Jupyter
+###############################################################################
+
+.ipynb_checkpoints/
+
+###############################################################################
+# Generated Data
+#
+# These folders contain generated datasets and should not be versioned.
+# Empty folders are preserved using .gitkeep.
+###############################################################################
+
+data/raw/*
+!data/raw/.gitkeep
+
+data/bronze/*
+!data/bronze/.gitkeep
+
+data/silver/*
+!data/silver/.gitkeep
+
+data/gold/*
+!data/gold/.gitkeep
+
+data/feature_store/*
+!data/feature_store/.gitkeep
+
+data/modeling/*
+!data/modeling/.gitkeep
+
+data/scoring/*
+!data/scoring/.gitkeep
+
+data/metadata/*
+!data/metadata/.gitkeep
+
+data/quality/*
+!data/quality/.gitkeep
+
+data/audit/*
+!data/audit/.gitkeep
+
+###############################################################################
+# Logs
+#
+# Generated during pipeline execution.
+###############################################################################
+
+logs/**/*.log
+logs/**/*.txt
+logs/**/*.json
+
+###############################################################################
+# Models
+#
+# Trained models are generated artifacts and should not be committed.
+###############################################################################
+
+models/**/*
+!models/**/.gitkeep
+
+###############################################################################
+# End of File
+###############################################################################

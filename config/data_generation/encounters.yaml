@@ -1,0 +1,178 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/data_generation/encounters.yaml
+#
+# Purpose:
+#     Controls synthetic encounter generation.
+#
+# Description:
+#     This configuration defines HOW synthetic healthcare encounters are
+#     generated. Encounters represent service events between members and the
+#     healthcare delivery system and support claims, utilization, Member 360,
+#     provider performance, and clinical timeline analytics.
+#
+# Guiding Principles:
+#     • Configuration defines behavior.
+#     • Reference datasets contain lookup values.
+#     • Python contains business logic only.
+#     • No configurable values are hardcoded in Python.
+#
+# Reference Data:
+#     reference/terminology/encounter_type_reference.parquet
+#     reference/terminology/place_of_service_reference.parquet
+#
+# Used By:
+#     src/data_generation/generators/encounter_generator.py
+#
+###############################################################################
+
+###############################################################################
+# CONFIGURATION
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+
+  enabled: true
+
+###############################################################################
+# INPUT DATASETS
+###############################################################################
+
+inputs:
+
+  members_dataset: "data/raw/members.parquet"
+
+  providers_dataset: "data/raw/providers.parquet"
+
+  facilities_dataset: "data/raw/facilities.parquet"
+
+  enrollment_dataset: "data/raw/enrollment.parquet"
+
+###############################################################################
+# ENCOUNTER IDENTIFIER
+###############################################################################
+
+encounter_identifier:
+
+  prefix: "ENC"
+
+  starting_sequence: 1000000000
+
+  padding_length: 12
+
+###############################################################################
+# ENCOUNTER VOLUME
+###############################################################################
+
+encounter_volume:
+
+  average_encounters_per_member_per_year: 5
+
+  minimum_encounters_per_member: 0
+
+  maximum_encounters_per_member: 30
+
+###############################################################################
+# ENCOUNTER TYPES
+###############################################################################
+
+encounter_types:
+
+  use_reference_dataset: true
+
+  source: "reference/terminology/encounter_type_reference.parquet"
+
+###############################################################################
+# PLACE OF SERVICE
+###############################################################################
+
+place_of_service:
+
+  use_reference_dataset: true
+
+  source: "reference/terminology/place_of_service_reference.parquet"
+
+###############################################################################
+# ENCOUNTER DATES
+###############################################################################
+
+dates:
+
+  minimum_encounter_year: 2020
+
+  maximum_encounter_year: 2026
+
+###############################################################################
+# REPRODUCIBILITY
+###############################################################################
+
+reproducibility:
+
+  use_global_random_seed: true
+
+###############################################################################
+# AUDIT
+###############################################################################
+
+audit:
+
+  source_system: "MedFabric Synthetic Data Engine"
+
+  record_status: "Active"
+
+  created_at: "2026-01-01"
+
+  updated_at: "2026-01-01"
+
+###############################################################################
+# VALIDATION
+###############################################################################
+
+validation:
+
+  require_unique_encounter_ids: true
+
+  require_member_id: true
+
+  require_provider_id: true
+
+  require_facility_id: true
+
+  require_encounter_type: true
+
+  require_encounter_date: true
+
+###############################################################################
+# OUTPUT
+###############################################################################
+
+output:
+
+  dataset_name: "encounters"
+
+  file_name: "encounters.parquet"
+
+  output_format: "parquet"
+
+###############################################################################
+# METADATA
+###############################################################################
+
+metadata:
+
+  generate_dataset_metadata: true
+
+  generate_column_metadata: true
+
+  generate_statistics: true
+
+  generate_lineage: true
+
+###############################################################################
+# END OF FILE
+###############################################################################

@@ -1,0 +1,62 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/data_generation/terminology.yaml
+#
+# Purpose:
+#     Controls clinical and administrative terminology generation.
+#
+# Description:
+#     This configuration defines which terminology reference datasets are
+#     generated for the MedFabric synthetic healthcare ecosystem.
+#
+# Reference Data:
+#     reference/terminology/
+#
+# Used By:
+#     src/data_generation/reference/build_reference_data.py
+#     src/data_generation/generators/terminology_generator.py
+#
+###############################################################################
+
+configuration:
+  version: "1.0"
+  enabled: true
+
+terminology_sets:
+  generate_icd10: true
+  generate_cpt: true
+  generate_hcpcs: true
+  generate_loinc: true
+  generate_ndc_rxnorm: true
+  generate_revenue_codes: true
+  generate_place_of_service: true
+  generate_encounter_types: true
+
+outputs:
+  icd10: "reference/terminology/icd10_reference.parquet"
+  cpt: "reference/terminology/cpt_reference.parquet"
+  hcpcs: "reference/terminology/hcpcs_reference.parquet"
+  loinc: "reference/terminology/loinc_reference.parquet"
+  rxnorm: "reference/pharmacy/rxnorm_reference.parquet"
+  revenue_codes: "reference/terminology/revenue_code_reference.parquet"
+  place_of_service: "reference/terminology/place_of_service_reference.parquet"
+  encounter_types: "reference/terminology/encounter_type_reference.parquet"
+
+validation:
+  require_code: true
+  require_description: true
+  require_code_system: true
+  require_unique_codes_within_system: true
+
+metadata:
+  generate_dataset_metadata: true
+  generate_column_metadata: true
+  generate_statistics: true
+  generate_lineage: true
+
+###############################################################################
+# END OF FILE
+###############################################################################

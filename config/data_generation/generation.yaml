@@ -1,0 +1,163 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/data_generation/generation.yaml
+#
+# Purpose:
+#     Global configuration controlling the MedFabric Synthetic Data Engine.
+#
+# Description:
+#     This file contains platform-wide settings used during synthetic healthcare
+#     data generation. It defines execution behavior, dataset sizes,
+#     reproducibility, output options, and validation settings.
+#
+# Notes:
+#     - Dataset-specific settings belong in their own YAML files.
+#     - Do NOT place business rules in this file.
+#     - Do NOT hardcode values in Python code.
+###############################################################################
+
+###############################################################################
+# APPLICATION SETTINGS
+###############################################################################
+
+application:
+
+  project_name: "MedFabric"
+
+  platform: "Enterprise Healthcare Data Platform"
+
+  version: "1.0.0"
+
+###############################################################################
+# EXECUTION SETTINGS
+###############################################################################
+
+execution:
+
+  # Random seed for reproducible synthetic data.
+  random_seed: 12345
+
+  # Number of worker processes.
+  # Future cloud versions may override this.
+  worker_count: 1
+
+  # Generate datasets in parallel where supported.
+  enable_parallel_processing: false
+
+  # Stop pipeline immediately if an error occurs.
+  fail_fast: true
+
+###############################################################################
+# DATASET SIZES
+###############################################################################
+
+dataset_sizes:
+
+  members: 100000
+
+  providers: 2500
+
+  facilities: 200
+
+###############################################################################
+# DATE SETTINGS
+###############################################################################
+
+dates:
+
+  member_birth_year_start: 1920
+
+  member_birth_year_end: 2025
+
+  enrollment_start_year: 2020
+
+  enrollment_end_year: 2026
+
+  claims_history_years: 5
+
+###############################################################################
+# SYNTHETIC DATA OPTIONS
+###############################################################################
+
+generation:
+
+  generate_members: true
+
+  generate_enrollment: true
+
+  generate_providers: true
+
+  generate_claims: true
+
+  generate_pharmacy: true
+
+  generate_laboratories: true
+
+  generate_sdoh: true
+
+  generate_terminology: true
+
+###############################################################################
+# DATA QUALITY SETTINGS
+###############################################################################
+
+quality:
+
+  validate_output: true
+
+  generate_metadata: true
+
+  generate_data_dictionary: true
+
+  generate_statistics: true
+
+###############################################################################
+# OUTPUT SETTINGS
+###############################################################################
+
+output:
+
+  overwrite_existing_files: true
+
+  write_csv: true
+
+  write_parquet: false
+
+###############################################################################
+# LOGGING
+###############################################################################
+
+logging:
+
+  log_progress_every: 1000
+
+  log_summary: true
+
+###############################################################################
+# PERFORMANCE
+###############################################################################
+
+performance:
+
+  chunk_size: 50000
+
+  memory_optimization: true
+
+###############################################################################
+# FUTURE CLOUD SETTINGS
+###############################################################################
+
+cloud:
+
+  enabled: false
+
+  storage_provider: ""
+
+  storage_container: ""
+
+###############################################################################
+# END OF FILE
+###############################################################################Next

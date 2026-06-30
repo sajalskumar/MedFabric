@@ -1,0 +1,205 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/data_generation/sdoh.yaml
+#
+# Purpose:
+#     Controls synthetic Social Determinants of Health (SDOH) generation.
+#
+# Description:
+#     This configuration defines HOW synthetic SDOH records are generated.
+#     It controls member-level social determinant domains, assessment behavior,
+#     observation dates, and reproducibility. Large lookup datasets such as
+#     income categories, education levels, housing status, transportation,
+#     food security, digital access, and social support are maintained in the
+#     MedFabric Reference Data layer.
+#
+# Guiding Principles:
+#     • Configuration defines behavior.
+#     • Reference datasets contain lookup values.
+#     • Python contains business logic only.
+#     • No configurable values are hardcoded in Python.
+#
+# Reference Data:
+#     reference/sdoh/
+#
+# Used By:
+#     src/data_generation/generators/sdoh_generator.py
+#
+###############################################################################
+
+###############################################################################
+# CONFIGURATION
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+
+  enabled: true
+
+###############################################################################
+# INPUT DATASETS
+###############################################################################
+
+inputs:
+
+  members_dataset: "data/raw/members.parquet"
+
+###############################################################################
+# SDOH POPULATION
+###############################################################################
+
+sdoh_population:
+
+  generate_record_for_every_member: true
+
+  maximum_assessments_per_member: 3
+
+###############################################################################
+# REFERENCE DATASETS
+###############################################################################
+
+income:
+
+  use_reference_dataset: true
+
+  source: "reference/sdoh/income_reference.parquet"
+
+education:
+
+  use_reference_dataset: true
+
+  source: "reference/sdoh/education_reference.parquet"
+
+employment:
+
+  use_reference_dataset: true
+
+  source: "reference/sdoh/employment_reference.parquet"
+
+housing:
+
+  use_reference_dataset: true
+
+  source: "reference/sdoh/housing_reference.parquet"
+
+food_security:
+
+  use_reference_dataset: true
+
+  source: "reference/sdoh/food_security_reference.parquet"
+
+transportation:
+
+  use_reference_dataset: true
+
+  source: "reference/sdoh/transportation_reference.parquet"
+
+social_support:
+
+  use_reference_dataset: true
+
+  source: "reference/sdoh/social_support_reference.parquet"
+
+digital_access:
+
+  use_reference_dataset: true
+
+  source: "reference/sdoh/digital_access_reference.parquet"
+
+language_barriers:
+
+  use_reference_dataset: true
+
+  source: "reference/sdoh/language_barrier_reference.parquet"
+
+###############################################################################
+# ASSESSMENT DATES
+###############################################################################
+
+assessment_dates:
+
+  assessment_start_year: 2020
+
+  assessment_end_year: 2026
+
+###############################################################################
+# IDENTIFIER
+###############################################################################
+
+sdoh_identifier:
+
+  prefix: "SDOH"
+
+  starting_sequence: 700000000
+
+  padding_length: 12
+
+###############################################################################
+# REPRODUCIBILITY
+###############################################################################
+
+reproducibility:
+
+  use_global_random_seed: true
+
+###############################################################################
+# AUDIT
+###############################################################################
+
+audit:
+
+  source_system: "MedFabric Synthetic Data Engine"
+
+  record_status: "Active"
+
+###############################################################################
+# VALIDATION
+###############################################################################
+
+validation:
+
+  require_unique_sdoh_ids: true
+
+  require_member_id: true
+
+  require_assessment_date: true
+
+  require_income: true
+
+  require_education: true
+
+  require_housing: true
+
+###############################################################################
+# OUTPUT
+###############################################################################
+
+output:
+
+  dataset_name: "sdoh"
+
+  file_name: "sdoh.parquet"
+
+  output_format: "parquet"
+
+###############################################################################
+# METADATA
+###############################################################################
+
+metadata:
+
+  generate_dataset_metadata: true
+
+  generate_column_metadata: true
+
+  generate_statistics: true
+
+  generate_lineage: true
+
+###############################################################################
+# END OF FILE
+###############################################################################

@@ -1,0 +1,296 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/data_generation/claims.yaml
+#
+# Purpose:
+#     Controls synthetic medical claims generation.
+#
+# Description:
+#     This configuration defines HOW synthetic medical claims are generated.
+#     It supports payer-side Professional and Institutional claim structures
+#     while remaining synthetic, reproducible, and reference-data driven.
+#
+# Guiding Principles:
+#     • Configuration defines behavior.
+#     • Reference datasets contain lookup values.
+#     • Python contains business logic only.
+#     • No configurable values are hardcoded in Python.
+#
+# Reference Data:
+#     Medical terminology and claim classification values are stored under:
+#
+#         reference/terminology/
+#
+# Used By:
+#     src/data_generation/generators/claims_generator.py
+#
+###############################################################################
+
+###############################################################################
+# CONFIGURATION
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+
+  enabled: true
+
+###############################################################################
+# INPUT DATASETS
+###############################################################################
+
+inputs:
+
+  members_dataset: "data/raw/members.parquet"
+
+  providers_dataset: "data/raw/providers.parquet"
+
+  facilities_dataset: "data/raw/facilities.parquet"
+
+  enrollment_dataset: "data/raw/enrollment.parquet"
+
+###############################################################################
+# CLAIM IDENTIFIER
+###############################################################################
+
+claim_identifier:
+
+  prefix: "CLM"
+
+  starting_sequence: 700000000
+
+  padding_length: 12
+
+###############################################################################
+# CLAIM LINE IDENTIFIER
+###############################################################################
+
+claim_line_identifier:
+
+  prefix: "CL"
+
+  starting_sequence: 900000000
+
+  padding_length: 12
+
+###############################################################################
+# CLAIM VOLUME
+###############################################################################
+
+claim_volume:
+
+  average_claims_per_member_per_year: 9
+
+  minimum_claims_per_member: 0
+
+  maximum_claims_per_member: 75
+
+###############################################################################
+# CLAIM TYPES
+###############################################################################
+
+claim_types:
+
+  professional_probability: 0.72
+
+  institutional_probability: 0.28
+
+###############################################################################
+# ENCOUNTER TYPES
+###############################################################################
+
+encounter_types:
+
+  use_reference_dataset: true
+
+  source: "reference/terminology/encounter_type_reference.parquet"
+
+###############################################################################
+# DIAGNOSIS CODES
+###############################################################################
+
+diagnosis:
+
+  use_reference_dataset: true
+
+  icd10_source: "reference/terminology/icd10_reference.parquet"
+
+  maximum_diagnoses_per_claim: 12
+
+###############################################################################
+# PROCEDURE CODES
+###############################################################################
+
+procedures:
+
+  use_reference_dataset: true
+
+  cpt_source: "reference/terminology/cpt_reference.parquet"
+
+  hcpcs_source: "reference/terminology/hcpcs_reference.parquet"
+
+  maximum_procedures_per_claim: 10
+
+###############################################################################
+# REVENUE CODES
+###############################################################################
+
+revenue_codes:
+
+  use_reference_dataset: true
+
+  source: "reference/terminology/revenue_code_reference.parquet"
+
+###############################################################################
+# PLACE OF SERVICE
+###############################################################################
+
+place_of_service:
+
+  use_reference_dataset: true
+
+  source: "reference/terminology/place_of_service_reference.parquet"
+
+###############################################################################
+# CLAIM FINANCIALS
+###############################################################################
+
+financials:
+
+  generate_allowed_amount: true
+
+  generate_paid_amount: true
+
+  generate_member_liability: true
+
+  generate_deductible: true
+
+  generate_copay: true
+
+  generate_coinsurance: true
+
+  minimum_allowed_amount: 25.00
+
+  maximum_allowed_amount: 25000.00
+
+  paid_amount_ratio_minimum: 0.45
+
+  paid_amount_ratio_maximum: 0.98
+
+  member_liability_ratio_minimum: 0.00
+
+  member_liability_ratio_maximum: 0.25
+
+###############################################################################
+# SERVICE DATES
+###############################################################################
+
+dates:
+
+  generate_service_dates: true
+
+  generate_admission_dates: true
+
+  generate_discharge_dates: true
+
+  minimum_service_year: 2020
+
+  maximum_service_year: 2026
+
+  maximum_inpatient_length_of_stay_days: 14
+
+###############################################################################
+# CLAIM STATUS
+###############################################################################
+
+claim_status:
+
+  default_claim_status: "Paid"
+
+  default_adjudication_status: "Final"
+
+###############################################################################
+# REPRODUCIBILITY
+###############################################################################
+
+reproducibility:
+
+  use_global_random_seed: true
+
+###############################################################################
+# AUDIT
+###############################################################################
+
+audit:
+
+  source_system: "MedFabric Synthetic Data Engine"
+
+  record_status: "Active"
+
+  created_at: "2026-01-01"
+
+  updated_at: "2026-01-01"
+
+###############################################################################
+# VALIDATION
+###############################################################################
+
+validation:
+
+  require_member_id: true
+
+  require_claim_id: true
+
+  require_claim_line_id: true
+
+  require_provider_id: true
+
+  require_service_date: true
+
+  require_paid_amount: true
+
+  require_allowed_amount: true
+
+  require_primary_diagnosis: true
+
+  require_unique_claim_id: true
+
+  require_unique_claim_line_id: true
+
+###############################################################################
+# OUTPUT
+###############################################################################
+
+output:
+
+  claim_header_dataset_name: "claim_headers"
+
+  claim_header_file_name: "claim_headers.parquet"
+
+  claim_line_dataset_name: "claim_lines"
+
+  claim_line_file_name: "claim_lines.parquet"
+
+  output_format: "parquet"
+
+###############################################################################
+# METADATA
+###############################################################################
+
+metadata:
+
+  generate_dataset_metadata: true
+
+  generate_column_metadata: true
+
+  generate_statistics: true
+
+  generate_lineage: true
+
+###############################################################################
+# END OF FILE
+###############################################################################

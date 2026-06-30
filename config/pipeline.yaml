@@ -1,0 +1,160 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/pipeline.yaml
+#
+# Purpose:
+#     Defines the execution behavior and orchestration of the MedFabric
+#     platform pipeline.
+#
+# Business Context:
+#     This configuration controls which platform layers execute,
+#     execution order, validation behavior, failure handling,
+#     and pipeline reporting.
+#
+# Scope:
+#     - Pipeline execution
+#     - Layer enablement
+#     - Execution order
+#     - Failure behavior
+#     - Validation
+#     - Performance
+#
+# Notes:
+#     This file controls HOW the pipeline executes.
+#     It does not define business rules or model configuration.
+#
+# Version:
+#     1.0
+#
+# Status:
+#     LOCKED
+###############################################################################
+
+###############################################################################
+# Pipeline Information
+###############################################################################
+
+pipeline:
+
+  name: "MedFabric Full Pipeline"
+
+  version: "1.0"
+
+  description: >
+    End-to-end Healthcare Data & AI Platform execution pipeline.
+
+###############################################################################
+# Execution Mode
+###############################################################################
+
+execution:
+
+  enabled: true
+
+  stop_on_error: true
+
+  continue_on_warning: true
+
+  create_run_history: true
+
+  generate_execution_summary: true
+
+###############################################################################
+# Pipeline Layers
+###############################################################################
+
+layers:
+
+  data_generation: true
+
+  bronze: true
+
+  silver: true
+
+  gold: true
+
+  feature_store: true
+
+  modeling: true
+
+  scoring: true
+
+  governance: true
+
+###############################################################################
+# Execution Order
+###############################################################################
+
+execution_order:
+
+  - data_generation
+  - bronze
+  - silver
+  - gold
+  - feature_store
+  - modeling
+  - scoring
+  - governance
+
+###############################################################################
+# Validation
+###############################################################################
+
+validation:
+
+  validate_before_execution: true
+
+  validate_after_execution: true
+
+  stop_on_validation_failure: true
+
+###############################################################################
+# Performance
+###############################################################################
+
+performance:
+
+  parallel_execution: false
+
+  max_parallel_workers: 1
+
+###############################################################################
+# Output Generation
+###############################################################################
+
+outputs:
+
+  build_metadata: true
+
+  build_pipeline_history: true
+
+  build_data_quality_reports: true
+
+  build_dataset_inventory: true
+
+  build_column_dictionary: true
+
+###############################################################################
+# Failure Handling
+###############################################################################
+
+failure_handling:
+
+  retry_failed_steps: false
+
+  max_retry_attempts: 0
+
+###############################################################################
+# Notifications
+###############################################################################
+
+notifications:
+
+  enabled: false
+
+###############################################################################
+# End of File
+###############################################################################

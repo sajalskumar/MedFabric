@@ -1,0 +1,194 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/data_generation/laboratories.yaml
+#
+# Purpose:
+#     Controls synthetic laboratory result generation.
+#
+# Description:
+#     This configuration defines HOW synthetic laboratory results are generated.
+#     It does NOT contain laboratory reference values, LOINC codes, test names,
+#     result units, or condition mappings. Those belong in the Reference Data
+#     layer.
+#
+# Guiding Principles:
+#     • Configuration defines behavior.
+#     • Reference datasets contain lookup values.
+#     • Python contains business logic only.
+#     • No hardcoded configurable values.
+#
+# Reference Data:
+#     reference/laboratory/
+#     reference/terminology/
+#
+# Used By:
+#     src.data_generation.generators.laboratory_generator
+#
+###############################################################################
+
+###############################################################################
+# CONFIGURATION
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+
+  enabled: true
+
+###############################################################################
+# INPUT DATASETS
+###############################################################################
+
+inputs:
+
+  members_dataset: "data/raw/members.parquet"
+
+  providers_dataset: "data/raw/providers.parquet"
+
+  facilities_dataset: "data/raw/facilities.parquet"
+
+  enrollment_dataset: "data/raw/enrollment.parquet"
+
+###############################################################################
+# LAB RESULT VOLUME
+###############################################################################
+
+laboratory_volume:
+
+  average_results_per_member_per_year: 4
+
+  minimum_results_per_member: 0
+
+  maximum_results_per_member: 40
+
+###############################################################################
+# LABORATORY TESTS
+###############################################################################
+
+laboratory_tests:
+
+  use_reference_dataset: true
+
+  source: "reference/laboratory/laboratory_test_reference.parquet"
+
+###############################################################################
+# CONDITION TO TEST MAPPING
+###############################################################################
+
+condition_mapping:
+
+  use_reference_dataset: true
+
+  source: "reference/laboratory/condition_lab_mapping.parquet"
+
+###############################################################################
+# RESULT UNITS
+###############################################################################
+
+result_units:
+
+  use_reference_dataset: true
+
+  source: "reference/laboratory/result_unit_reference.parquet"
+
+###############################################################################
+# LOINC
+###############################################################################
+
+loinc:
+
+  use_reference_dataset: true
+
+  source: "reference/terminology/loinc_reference.parquet"
+
+###############################################################################
+# RESULT GENERATION
+###############################################################################
+
+results:
+
+  generate_numeric_results: true
+
+  generate_abnormal_flags: true
+
+  generate_reference_ranges: true
+
+  generate_result_status: true
+
+###############################################################################
+# DATES
+###############################################################################
+
+dates:
+
+  generate_collection_datetime: true
+
+  generate_result_datetime: true
+
+###############################################################################
+# REPRODUCIBILITY
+###############################################################################
+
+reproducibility:
+
+  use_global_random_seed: true
+
+###############################################################################
+# VALIDATION
+###############################################################################
+
+validation:
+
+  require_lab_result_id: true
+
+  require_member_id: true
+
+  require_provider_id: true
+
+  require_facility_id: true
+
+  require_test_name: true
+
+  require_loinc_code: true
+
+  require_result_value: true
+
+  require_result_unit: true
+
+  require_collection_datetime: true
+
+  require_unique_lab_result_ids: true
+
+###############################################################################
+# OUTPUT
+###############################################################################
+
+output:
+
+  dataset_name: "laboratory_results"
+
+  file_name: "laboratory_results.parquet"
+
+  output_format: "parquet"
+
+###############################################################################
+# METADATA
+###############################################################################
+
+metadata:
+
+  generate_dataset_metadata: true
+
+  generate_column_metadata: true
+
+  generate_statistics: true
+
+  generate_lineage: true
+
+###############################################################################
+# END OF FILE
+###############################################################################

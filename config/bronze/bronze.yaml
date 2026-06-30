@@ -1,0 +1,310 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/bronze/bronze.yaml
+#
+# Purpose:
+#     Master configuration for the MedFabric Bronze Layer.
+#
+# Description:
+#     The Bronze Layer implements the Copy + Audit ingestion pattern.
+#     It reads Raw datasets from data/raw/, preserves source business columns
+#     exactly as-is, appends standardized Bronze audit columns, validates the
+#     output, writes Bronze datasets to data/bronze/, and generates metadata.
+#
+# Bronze Philosophy:
+#     Bronze = Copy + Audit
+#
+#     Bronze does NOT:
+#       - Rename business columns
+#       - Standardize business values
+#       - Join datasets
+#       - Deduplicate records
+#       - Derive business columns
+#       - Aggregate data
+#       - Apply business rules
+#
+# Used By:
+#     src/ingestion/build_bronze_layer.py
+#
+###############################################################################
+
+###############################################################################
+# CONFIGURATION
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+
+  enabled: true
+
+###############################################################################
+# EXECUTION
+###############################################################################
+
+execution:
+
+  fail_fast: true
+
+  run_all_datasets: true
+
+  enable_parallel_processing: false
+
+  worker_count: 1
+
+###############################################################################
+# BRONZE AUDIT COLUMNS
+###############################################################################
+
+audit:
+
+  add_audit_columns: true
+
+  bronze_run_id_column: "bronze_run_id"
+
+  bronze_load_timestamp_column: "bronze_load_timestamp"
+
+  bronze_source_dataset_column: "bronze_source_dataset"
+
+  bronze_pipeline_version_column: "bronze_pipeline_version"
+
+  bronze_record_hash_column: "bronze_record_hash"
+
+  bronze_record_status_column: "bronze_record_status"
+
+  default_record_status: "Active"
+
+###############################################################################
+# METADATA
+###############################################################################
+
+metadata:
+
+  generate_dataset_metadata: true
+
+  generate_column_metadata: true
+
+  generate_statistics: true
+
+  generate_lineage: true
+
+###############################################################################
+# VALIDATION
+###############################################################################
+
+validation:
+
+  allow_empty: false
+
+  require_input_exists: true
+
+  require_output_exists: true
+
+  validate_row_count_match: true
+
+  validate_audit_columns: true
+
+  validate_record_hash: true
+
+###############################################################################
+# OUTPUT
+###############################################################################
+
+output:
+
+  output_format: "parquet"
+
+  overwrite_existing_files: true
+
+###############################################################################
+# DATASETS
+###############################################################################
+
+datasets:
+
+  members:
+
+    enabled: true
+
+    dataset_name: "bronze.members"
+
+    source_dataset_name: "raw.members"
+
+    input_path: "data/raw/members.parquet"
+
+    output_path: "data/bronze/members.parquet"
+
+    primary_key:
+      - "member_id"
+
+  organizations:
+
+    enabled: true
+
+    dataset_name: "bronze.organizations"
+
+    source_dataset_name: "raw.organizations"
+
+    input_path: "data/raw/organizations.parquet"
+
+    output_path: "data/bronze/organizations.parquet"
+
+    primary_key:
+      - "organization_id"
+
+  providers:
+
+    enabled: true
+
+    dataset_name: "bronze.providers"
+
+    source_dataset_name: "raw.providers"
+
+    input_path: "data/raw/providers.parquet"
+
+    output_path: "data/bronze/providers.parquet"
+
+    primary_key:
+      - "provider_id"
+
+  facilities:
+
+    enabled: true
+
+    dataset_name: "bronze.facilities"
+
+    source_dataset_name: "raw.facilities"
+
+    input_path: "data/raw/facilities.parquet"
+
+    output_path: "data/bronze/facilities.parquet"
+
+    primary_key:
+      - "facility_id"
+
+  enrollment:
+
+    enabled: true
+
+    dataset_name: "bronze.enrollment"
+
+    source_dataset_name: "raw.enrollment"
+
+    input_path: "data/raw/enrollment.parquet"
+
+    output_path: "data/bronze/enrollment.parquet"
+
+    primary_key:
+      - "enrollment_id"
+
+  member_months:
+
+    enabled: true
+
+    dataset_name: "bronze.member_months"
+
+    source_dataset_name: "raw.member_months"
+
+    input_path: "data/raw/member_months.parquet"
+
+    output_path: "data/bronze/member_months.parquet"
+
+    primary_key:
+      - "member_month_id"
+
+  encounters:
+
+    enabled: true
+
+    dataset_name: "bronze.encounters"
+
+    source_dataset_name: "raw.encounters"
+
+    input_path: "data/raw/encounters.parquet"
+
+    output_path: "data/bronze/encounters.parquet"
+
+    primary_key:
+      - "encounter_id"
+
+  claim_headers:
+
+    enabled: true
+
+    dataset_name: "bronze.claim_headers"
+
+    source_dataset_name: "raw.claim_headers"
+
+    input_path: "data/raw/claim_headers.parquet"
+
+    output_path: "data/bronze/claim_headers.parquet"
+
+    primary_key:
+      - "claim_id"
+
+  claim_lines:
+
+    enabled: true
+
+    dataset_name: "bronze.claim_lines"
+
+    source_dataset_name: "raw.claim_lines"
+
+    input_path: "data/raw/claim_lines.parquet"
+
+    output_path: "data/bronze/claim_lines.parquet"
+
+    primary_key:
+      - "claim_line_id"
+
+  pharmacy_claims:
+
+    enabled: true
+
+    dataset_name: "bronze.pharmacy_claims"
+
+    source_dataset_name: "raw.pharmacy_claims"
+
+    input_path: "data/raw/pharmacy_claims.parquet"
+
+    output_path: "data/bronze/pharmacy_claims.parquet"
+
+    primary_key:
+      - "pharmacy_claim_id"
+
+  laboratory_results:
+
+    enabled: true
+
+    dataset_name: "bronze.laboratory_results"
+
+    source_dataset_name: "raw.laboratory_results"
+
+    input_path: "data/raw/laboratory_results.parquet"
+
+    output_path: "data/bronze/laboratory_results.parquet"
+
+    primary_key:
+      - "lab_result_id"
+
+  sdoh:
+
+    enabled: true
+
+    dataset_name: "bronze.sdoh"
+
+    source_dataset_name: "raw.sdoh"
+
+    input_path: "data/raw/sdoh.parquet"
+
+    output_path: "data/bronze/sdoh.parquet"
+
+    primary_key:
+      - "sdoh_id"
+
+###############################################################################
+# END OF FILE
+###############################################################################

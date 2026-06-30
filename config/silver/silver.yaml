@@ -1,0 +1,287 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/silver/silver.yaml
+#
+# Purpose:
+#     Master configuration for the MedFabric Silver Layer.
+#
+# Description:
+#     The Silver Layer standardizes and conforms Bronze datasets into enterprise
+#     healthcare dimensions and facts.
+#
+# Silver Philosophy:
+#     Silver = Conform + Standardize
+#
+# Used By:
+#     src/silver/build_silver_layer.py
+#
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+
+  enabled: true
+
+execution:
+
+  fail_fast: true
+
+  run_all_datasets: true
+
+  enable_parallel_processing: false
+
+  worker_count: 1
+
+metadata:
+
+  generate_dataset_metadata: true
+
+  generate_column_metadata: true
+
+  generate_statistics: true
+
+  generate_lineage: true
+
+validation:
+
+  allow_empty: false
+
+  require_input_exists: true
+
+  require_output_exists: true
+
+  validate_required_columns: true
+
+  validate_primary_key: true
+
+  validate_no_null_keys: true
+
+  validate_referential_integrity: true
+
+output:
+
+  output_format: "parquet"
+
+  overwrite_existing_files: true
+
+audit:
+
+  source_layer: "bronze"
+
+  target_layer: "silver"
+
+  silver_load_timestamp_column: "silver_load_timestamp"
+
+  silver_run_id_column: "silver_run_id"
+
+  silver_record_status_column: "silver_record_status"
+
+  default_record_status: "Active"
+
+dimensions:
+
+  dim_member:
+
+    enabled: true
+
+    dataset_name: "silver.dim_member"
+
+    input_path: "data/bronze/members.parquet"
+
+    output_path: "data/silver/dim_member.parquet"
+
+    primary_key:
+      - "member_id"
+
+  dim_provider:
+
+    enabled: true
+
+    dataset_name: "silver.dim_provider"
+
+    input_path: "data/bronze/providers.parquet"
+
+    output_path: "data/silver/dim_provider.parquet"
+
+    primary_key:
+      - "provider_id"
+
+  dim_organization:
+
+    enabled: true
+
+    dataset_name: "silver.dim_organization"
+
+    input_path: "data/bronze/organizations.parquet"
+
+    output_path: "data/silver/dim_organization.parquet"
+
+    primary_key:
+      - "organization_id"
+
+  dim_facility:
+
+    enabled: true
+
+    dataset_name: "silver.dim_facility"
+
+    input_path: "data/bronze/facilities.parquet"
+
+    output_path: "data/silver/dim_facility.parquet"
+
+    primary_key:
+      - "facility_id"
+
+  dim_date:
+
+    enabled: true
+
+    dataset_name: "silver.dim_date"
+
+    output_path: "data/silver/dim_date.parquet"
+
+    primary_key:
+      - "date_key"
+
+    start_date: "2020-01-01"
+
+    end_date: "2026-12-31"
+
+  dim_clinical_terminology:
+
+    enabled: true
+
+    dataset_name: "silver.dim_clinical_terminology"
+
+    output_path: "data/silver/dim_clinical_terminology.parquet"
+
+    primary_key:
+      - "terminology_key"
+
+    reference_inputs:
+
+      icd10: "reference/terminology/icd10_reference.parquet"
+
+      cpt: "reference/terminology/cpt_reference.parquet"
+
+      hcpcs: "reference/terminology/hcpcs_reference.parquet"
+
+      loinc: "reference/terminology/loinc_reference.parquet"
+
+      revenue_codes: "reference/terminology/revenue_code_reference.parquet"
+
+      place_of_service: "reference/terminology/place_of_service_reference.parquet"
+
+facts:
+
+  fact_enrollment:
+
+    enabled: true
+
+    dataset_name: "silver.fact_enrollment"
+
+    input_path: "data/bronze/enrollment.parquet"
+
+    output_path: "data/silver/fact_enrollment.parquet"
+
+    primary_key:
+      - "enrollment_id"
+
+  fact_member_month:
+
+    enabled: true
+
+    dataset_name: "silver.fact_member_month"
+
+    input_path: "data/bronze/member_months.parquet"
+
+    output_path: "data/silver/fact_member_month.parquet"
+
+    primary_key:
+      - "member_month_id"
+
+  fact_encounter:
+
+    enabled: true
+
+    dataset_name: "silver.fact_encounter"
+
+    input_path: "data/bronze/encounters.parquet"
+
+    output_path: "data/silver/fact_encounter.parquet"
+
+    primary_key:
+      - "encounter_id"
+
+  fact_claim_header:
+
+    enabled: true
+
+    dataset_name: "silver.fact_claim_header"
+
+    input_path: "data/bronze/claim_headers.parquet"
+
+    output_path: "data/silver/fact_claim_header.parquet"
+
+    primary_key:
+      - "claim_id"
+
+  fact_claim_line:
+
+    enabled: true
+
+    dataset_name: "silver.fact_claim_line"
+
+    input_path: "data/bronze/claim_lines.parquet"
+
+    output_path: "data/silver/fact_claim_line.parquet"
+
+    primary_key:
+      - "claim_line_id"
+
+  fact_pharmacy:
+
+    enabled: true
+
+    dataset_name: "silver.fact_pharmacy"
+
+    input_path: "data/bronze/pharmacy_claims.parquet"
+
+    output_path: "data/silver/fact_pharmacy.parquet"
+
+    primary_key:
+      - "pharmacy_claim_id"
+
+  fact_laboratory:
+
+    enabled: true
+
+    dataset_name: "silver.fact_laboratory"
+
+    input_path: "data/bronze/laboratory_results.parquet"
+
+    output_path: "data/silver/fact_laboratory.parquet"
+
+    primary_key:
+      - "lab_result_id"
+
+  fact_sdoh:
+
+    enabled: true
+
+    dataset_name: "silver.fact_sdoh"
+
+    input_path: "data/bronze/sdoh.parquet"
+
+    output_path: "data/silver/fact_sdoh.parquet"
+
+    primary_key:
+      - "sdoh_id"
+
+###############################################################################
+# END OF FILE
+###############################################################################

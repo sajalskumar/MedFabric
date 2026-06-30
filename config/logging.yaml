@@ -1,0 +1,158 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/logging.yaml
+#
+# Purpose:
+#     Defines centralized logging settings for all MedFabric modules.
+#
+# Business Context:
+#     Logging provides observability for pipeline execution, troubleshooting,
+#     auditability, and operational monitoring.
+#
+# Scope:
+#     - Log levels
+#     - Log folders
+#     - Log formats
+#     - Pipeline logs
+#     - Module logs
+#     - Error logs
+#     - Audit logs
+#
+# Version:
+#     1.0
+#
+# Status:
+#     LOCKED
+###############################################################################
+
+logging:
+
+  enabled: true
+
+  default_level: "INFO"
+
+  valid_levels:
+    - "DEBUG"
+    - "INFO"
+    - "WARNING"
+    - "ERROR"
+    - "CRITICAL"
+
+  timestamp_format: "%Y-%m-%d %H:%M:%S"
+
+  include_run_id: true
+
+  include_module_name: true
+
+  include_log_level: true
+
+  include_timestamp: true
+
+###############################################################################
+# Log Destinations
+###############################################################################
+
+destinations:
+
+  console:
+    enabled: true
+    level: "INFO"
+
+  pipeline_file:
+    enabled: true
+    level: "INFO"
+    directory: "logs/pipeline"
+    filename_prefix: "pipeline"
+
+  module_file:
+    enabled: true
+    level: "INFO"
+    directory: "logs/modules"
+    filename_prefix: "module"
+
+  error_file:
+    enabled: true
+    level: "ERROR"
+    directory: "logs/errors"
+    filename_prefix: "error"
+
+  audit_file:
+    enabled: true
+    level: "INFO"
+    directory: "logs/audit"
+    filename_prefix: "audit"
+
+###############################################################################
+# Log Message Format
+###############################################################################
+
+format:
+
+  standard: "[%(asctime)s] [RUN_ID=%(run_id)s] [%(levelname)s] [%(name)s] %(message)s"
+
+  console: "[%(levelname)s] %(message)s"
+
+###############################################################################
+# Rotation Settings
+###############################################################################
+
+rotation:
+
+  enabled: false
+
+  max_bytes: 10485760
+
+  backup_count: 5
+
+###############################################################################
+# Execution Metrics
+###############################################################################
+
+metrics:
+
+  log_start_event: true
+
+  log_end_event: true
+
+  log_duration: true
+
+  log_row_counts: true
+
+  log_validation_summary: true
+
+  log_configuration_summary: true
+
+###############################################################################
+# Error Handling
+###############################################################################
+
+errors:
+
+  capture_stack_trace: true
+
+  write_to_error_log: true
+
+  fail_on_logging_error: false
+
+###############################################################################
+# Audit Logging
+###############################################################################
+
+audit:
+
+  enabled: true
+
+  log_config_files_used: true
+
+  log_input_datasets: true
+
+  log_output_datasets: true
+
+  log_user: false
+
+###############################################################################
+# End of File
+###############################################################################

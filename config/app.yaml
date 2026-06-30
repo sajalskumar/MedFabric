@@ -1,0 +1,113 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/app.yaml
+#
+# Purpose:
+#     Defines global application settings used throughout the MedFabric platform.
+#
+# Business Context:
+#     This file contains platform-wide configuration that applies regardless of
+#     the specific data layer, analytics module, or predictive model being
+#     executed.
+#
+# Scope:
+#     - Platform metadata
+#     - Environment configuration
+#     - Runtime behavior
+#     - Time zone
+#     - Default file formats
+#
+# Notes:
+#     - Do NOT store file paths in this file.
+#     - Do NOT store logging settings in this file.
+#     - Do NOT store model-specific configuration in this file.
+#     - Those settings belong in their respective YAML configuration files.
+#
+# Version:
+#     1.0
+#
+# Status:
+#     LOCKED
+###############################################################################
+
+###############################################################################
+# Application Information
+###############################################################################
+
+application:
+
+  name: "MedFabric"
+
+  description: >
+    Enterprise Healthcare Data & AI Platform
+
+  version: "1.0.0"
+
+  release: "Release 1"
+
+  environment: "local"
+
+###############################################################################
+# Runtime Configuration
+###############################################################################
+
+runtime:
+
+  timezone: "America/Phoenix"
+
+  encoding: "utf-8"
+
+  default_file_format: "parquet"
+
+  overwrite_existing_outputs: true
+
+  create_missing_directories: true
+
+###############################################################################
+# Platform Settings
+###############################################################################
+
+platform:
+
+  healthcare_domain: "Payer"
+
+  enable_governance: true
+
+  enable_metadata: true
+
+  enable_data_quality: true
+
+  enable_pipeline_history: true
+
+  enable_audit_logging: true
+
+###############################################################################
+# Data Standards
+###############################################################################
+
+data:
+
+  default_date_format: "%Y-%m-%d"
+
+  default_datetime_format: "%Y-%m-%d %H:%M:%S"
+
+  null_value: null
+
+###############################################################################
+# Development Settings
+###############################################################################
+
+development:
+
+  debug_mode: false
+
+  verbose_logging: false
+
+  stop_pipeline_on_error: true
+
+###############################################################################
+# End of File
+###############################################################################

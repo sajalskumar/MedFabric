@@ -1,0 +1,172 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/paths.yaml
+#
+# Purpose:
+#     Defines all project directories and storage locations used throughout the
+#     MedFabric platform.
+#
+# Business Context:
+#     This file acts as the single source of truth for directory locations.
+#     No Python module should hardcode file or folder paths.
+#
+# Scope:
+#     - Configuration
+#     - Documentation
+#     - Source Code
+#     - Data Layers
+#     - Logs
+#     - Models
+#     - Notebooks
+#     - Tests
+#
+# Notes:
+#     - All paths are relative to the project root.
+#     - Cloud deployments can replace these values without modifying Python code.
+#
+# Version:
+#     1.0
+#
+# Status:
+#     LOCKED
+###############################################################################
+
+###############################################################################
+# Project Root
+###############################################################################
+
+project:
+
+  root: "."
+
+###############################################################################
+# Configuration
+###############################################################################
+
+config:
+
+  root: "config"
+
+  models: "config/models"
+
+###############################################################################
+# Documentation
+###############################################################################
+
+documentation:
+
+  root: "docs"
+
+###############################################################################
+# Source Code
+###############################################################################
+
+source:
+
+  root: "src"
+
+###############################################################################
+# Data Directories
+###############################################################################
+
+data:
+
+  root: "data"
+
+  raw: "data/raw"
+
+  bronze: "data/bronze"
+
+  silver: "data/silver"
+
+  gold: "data/gold"
+
+  feature_store: "data/feature_store"
+
+  modeling: "data/modeling"
+
+  scoring: "data/scoring"
+
+  metadata: "data/metadata"
+
+  quality: "data/quality"
+
+  audit: "data/audit"
+
+###############################################################################
+# Logs
+###############################################################################
+
+logs:
+
+  root: "logs"
+
+  pipeline: "logs/pipeline"
+
+  modules: "logs/modules"
+
+  errors: "logs/errors"
+
+  audit: "logs/audit"
+
+###############################################################################
+# Models
+###############################################################################
+
+models:
+
+  root: "models"
+
+###############################################################################
+# Notebooks
+###############################################################################
+
+notebooks:
+
+  root: "notebooks"
+
+###############################################################################
+# Tests
+###############################################################################
+
+tests:
+
+  root: "tests"
+
+###############################################################################
+# Temporary Working Area
+###############################################################################
+
+temporary:
+
+  root: "temp"
+
+###############################################################################
+# Future Cloud Storage
+#
+# Reserved for future cloud migration.
+# Values are intentionally left blank during local development.
+###############################################################################
+
+cloud:
+
+  provider: ""
+
+  raw: ""
+
+  bronze: ""
+
+  silver: ""
+
+  gold: ""
+
+  feature_store: ""
+
+  models: ""
+
+###############################################################################
+# End of File
+###############################################################################

@@ -1,0 +1,249 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/gold/gold.yaml
+#
+# Purpose:
+#     Master configuration for the MedFabric Gold Layer.
+#
+# Description:
+#     The Gold Layer creates business-ready analytical marts from Silver
+#     dimensions and facts.
+#
+# Gold Philosophy:
+#     Gold = Summarize + Analyze
+#
+# Used By:
+#     src/gold/build_gold_layer.py
+#
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+
+  enabled: true
+
+execution:
+
+  fail_fast: true
+
+  run_all_datasets: true
+
+  enable_parallel_processing: false
+
+  worker_count: 1
+
+metadata:
+
+  generate_dataset_metadata: true
+
+  generate_column_metadata: true
+
+  generate_statistics: true
+
+  generate_lineage: true
+
+validation:
+
+  allow_empty: false
+
+  require_input_exists: true
+
+  require_output_exists: true
+
+  validate_required_columns: true
+
+  validate_primary_key: true
+
+  validate_no_null_keys: true
+
+output:
+
+  output_format: "parquet"
+
+  overwrite_existing_files: true
+
+audit:
+
+  source_layer: "silver"
+
+  target_layer: "gold"
+
+  gold_load_timestamp_column: "gold_load_timestamp"
+
+  gold_run_id_column: "gold_run_id"
+
+  gold_record_status_column: "gold_record_status"
+
+  default_record_status: "Active"
+
+inputs:
+
+  dim_member: "data/silver/dim_member.parquet"
+
+  dim_provider: "data/silver/dim_provider.parquet"
+
+  dim_organization: "data/silver/dim_organization.parquet"
+
+  dim_facility: "data/silver/dim_facility.parquet"
+
+  dim_date: "data/silver/dim_date.parquet"
+
+  dim_clinical_terminology: "data/silver/dim_clinical_terminology.parquet"
+
+  fact_enrollment: "data/silver/fact_enrollment.parquet"
+
+  fact_member_month: "data/silver/fact_member_month.parquet"
+
+  fact_encounter: "data/silver/fact_encounter.parquet"
+
+  fact_claim_header: "data/silver/fact_claim_header.parquet"
+
+  fact_claim_line: "data/silver/fact_claim_line.parquet"
+
+  fact_pharmacy: "data/silver/fact_pharmacy.parquet"
+
+  fact_laboratory: "data/silver/fact_laboratory.parquet"
+
+  fact_sdoh: "data/silver/fact_sdoh.parquet"
+
+marts:
+
+  member_360:
+
+    enabled: true
+
+    dataset_name: "gold.member_360"
+
+    output_path: "data/gold/member_360.parquet"
+
+    primary_key:
+      - "member_id"
+
+  enrollment_summary:
+
+    enabled: true
+
+    dataset_name: "gold.enrollment_summary"
+
+    output_path: "data/gold/enrollment_summary.parquet"
+
+    primary_key:
+      - "summary_key"
+
+  utilization_summary:
+
+    enabled: true
+
+    dataset_name: "gold.utilization_summary"
+
+    output_path: "data/gold/utilization_summary.parquet"
+
+    primary_key:
+      - "summary_key"
+
+  cost_summary:
+
+    enabled: true
+
+    dataset_name: "gold.cost_summary"
+
+    output_path: "data/gold/cost_summary.parquet"
+
+    primary_key:
+      - "summary_key"
+
+  pmpm_summary:
+
+    enabled: true
+
+    dataset_name: "gold.pmpm_summary"
+
+    output_path: "data/gold/pmpm_summary.parquet"
+
+    primary_key:
+      - "summary_key"
+
+  provider_performance:
+
+    enabled: true
+
+    dataset_name: "gold.provider_performance"
+
+    output_path: "data/gold/provider_performance.parquet"
+
+    primary_key:
+      - "provider_id"
+
+  organization_performance:
+
+    enabled: true
+
+    dataset_name: "gold.organization_performance"
+
+    output_path: "data/gold/organization_performance.parquet"
+
+    primary_key:
+      - "organization_id"
+
+  facility_performance:
+
+    enabled: true
+
+    dataset_name: "gold.facility_performance"
+
+    output_path: "data/gold/facility_performance.parquet"
+
+    primary_key:
+      - "facility_id"
+
+  clinical_summary:
+
+    enabled: true
+
+    dataset_name: "gold.clinical_summary"
+
+    output_path: "data/gold/clinical_summary.parquet"
+
+    primary_key:
+      - "summary_key"
+
+  pharmacy_summary:
+
+    enabled: true
+
+    dataset_name: "gold.pharmacy_summary"
+
+    output_path: "data/gold/pharmacy_summary.parquet"
+
+    primary_key:
+      - "summary_key"
+
+  laboratory_summary:
+
+    enabled: true
+
+    dataset_name: "gold.laboratory_summary"
+
+    output_path: "data/gold/laboratory_summary.parquet"
+
+    primary_key:
+      - "summary_key"
+
+  sdoh_summary:
+
+    enabled: true
+
+    dataset_name: "gold.sdoh_summary"
+
+    output_path: "data/gold/sdoh_summary.parquet"
+
+    primary_key:
+      - "summary_key"
+
+###############################################################################
+# END OF FILE
+###############################################################################
