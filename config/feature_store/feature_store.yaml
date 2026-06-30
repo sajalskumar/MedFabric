@@ -1,0 +1,265 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/feature_store/feature_store.yaml
+#
+# Purpose:
+#     Master configuration for the MedFabric Feature Store.
+#
+# Description:
+#     The Feature Store transforms Gold analytical datasets into reusable,
+#     versioned machine learning features that can be consumed by multiple
+#     predictive models.
+#
+# Feature Store Philosophy:
+#     Build Once • Reuse Everywhere
+#
+# Used By:
+#     src/feature_store/build_feature_store.py
+#
+###############################################################################
+
+###############################################################################
+# CONFIGURATION
+###############################################################################
+
+configuration:
+
+  version: "1.0"
+
+  enabled: true
+
+###############################################################################
+# EXECUTION
+###############################################################################
+
+execution:
+
+  fail_fast: true
+
+  run_all_feature_groups: true
+
+  enable_parallel_processing: false
+
+  worker_count: 1
+
+###############################################################################
+# METADATA
+###############################################################################
+
+metadata:
+
+  generate_dataset_metadata: true
+
+  generate_column_metadata: true
+
+  generate_statistics: true
+
+  generate_lineage: true
+
+###############################################################################
+# VALIDATION
+###############################################################################
+
+validation:
+
+  allow_empty: false
+
+  require_input_exists: true
+
+  require_output_exists: true
+
+  validate_required_columns: true
+
+  validate_primary_key: true
+
+###############################################################################
+# OUTPUT
+###############################################################################
+
+output:
+
+  output_format: "parquet"
+
+  overwrite_existing_files: true
+
+###############################################################################
+# AUDIT
+###############################################################################
+
+audit:
+
+  source_layer: "gold"
+
+  target_layer: "feature_store"
+
+  feature_store_run_id_column: "feature_store_run_id"
+
+  feature_store_load_timestamp_column: "feature_store_load_timestamp"
+
+  feature_store_record_status_column: "feature_store_record_status"
+
+  default_record_status: "Active"
+
+###############################################################################
+# INPUT DATASETS
+###############################################################################
+
+inputs:
+
+  member_360: "data/gold/member_360.parquet"
+
+  enrollment_summary: "data/gold/enrollment_summary.parquet"
+
+  utilization_summary: "data/gold/utilization_summary.parquet"
+
+  cost_summary: "data/gold/cost_summary.parquet"
+
+  pmpm_summary: "data/gold/pmpm_summary.parquet"
+
+  provider_performance: "data/gold/provider_performance.parquet"
+
+  organization_performance: "data/gold/organization_performance.parquet"
+
+  facility_performance: "data/gold/facility_performance.parquet"
+
+  clinical_summary: "data/gold/clinical_summary.parquet"
+
+  pharmacy_summary: "data/gold/pharmacy_summary.parquet"
+
+  laboratory_summary: "data/gold/laboratory_summary.parquet"
+
+  sdoh_summary: "data/gold/sdoh_summary.parquet"
+
+###############################################################################
+# FEATURE GROUPS
+###############################################################################
+
+feature_groups:
+
+  demographic_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.demographic_features"
+
+    output_path: "data/feature_store/demographic_features.parquet"
+
+    entity_key:
+      - "member_id"
+
+  enrollment_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.enrollment_features"
+
+    output_path: "data/feature_store/enrollment_features.parquet"
+
+    entity_key:
+      - "member_id"
+
+  claims_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.claims_features"
+
+    output_path: "data/feature_store/claims_features.parquet"
+
+    entity_key:
+      - "member_id"
+
+  cost_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.cost_features"
+
+    output_path: "data/feature_store/cost_features.parquet"
+
+    entity_key:
+      - "member_id"
+
+  utilization_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.utilization_features"
+
+    output_path: "data/feature_store/utilization_features.parquet"
+
+    entity_key:
+      - "member_id"
+
+  laboratory_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.laboratory_features"
+
+    output_path: "data/feature_store/laboratory_features.parquet"
+
+    entity_key:
+      - "member_id"
+
+  pharmacy_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.pharmacy_features"
+
+    output_path: "data/feature_store/pharmacy_features.parquet"
+
+    entity_key:
+      - "member_id"
+
+  sdoh_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.sdoh_features"
+
+    output_path: "data/feature_store/sdoh_features.parquet"
+
+    entity_key:
+      - "member_id"
+
+  provider_attribution_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.provider_attribution_features"
+
+    output_path: "data/feature_store/provider_attribution_features.parquet"
+
+    entity_key:
+      - "provider_id"
+
+  temporal_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.temporal_features"
+
+    output_path: "data/feature_store/temporal_features.parquet"
+
+    entity_key:
+      - "member_id"
+
+  risk_features:
+
+    enabled: true
+
+    dataset_name: "feature_store.risk_features"
+
+    output_path: "data/feature_store/risk_features.parquet"
+
+    entity_key:
+      - "member_id"
+
+###############################################################################
+# END OF FILE
+###############################################################################
