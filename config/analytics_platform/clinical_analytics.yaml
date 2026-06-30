@@ -1,0 +1,471 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/analytics_platform/clinical_analytics.yaml
+#
+# Layer:
+#   Layer 2B - Clinical Analytics
+#
+# Purpose:
+#   Defines configuration for Clinical Analytics built on top of MedFabric
+#   Layer 1 outputs and Layer 2 Population Health outputs.
+#
+# Schema Alignment Notes:
+#   The current Feature Store clinical inputs are aggregate member-level feature
+#   files, not diagnosis-line or lab-result detail files.
+#
+#   claims_features.parquet contains:
+#     - member_id
+#     - total_claims
+#     - total_allowed_amount
+#     - total_paid_amount
+#     - has_claim_activity
+#
+#   laboratory_features.parquet contains:
+#     - member_id
+#     - total_lab_results
+#     - abnormal_lab_results
+#     - abnormal_lab_rate
+#
+#   pharmacy_features.parquet contains:
+#     - member_id
+#     - total_pharmacy_claims
+#     - total_pharmacy_paid_amount
+#     - has_pharmacy_activity
+#
+#   risk_features.parquet contains:
+#     - member_id
+#     - total_claims
+#     - total_paid_amount
+#     - total_pharmacy_claims
+#     - total_lab_results
+#     - abnormal_lab_results
+#     - latest_sdoh_risk_score
+#     - high_cost_risk_signal
+#     - sdoh_risk_signal
+#     - clinical_risk_signal
+#
+# Design Decision:
+#   Because diagnosis codes are not available in the current Feature Store
+#   contract, this Clinical Analytics configuration builds signal-based
+#   registries for now.
+#
+#   ICD-based disease registries can be upgraded later when detailed clinical
+#   diagnosis columns are exposed from Silver, Gold, or a future clinical
+#   feature group.
+#
+# Inputs:
+#   Feature Store:
+#     - data/feature_store/claims_features.parquet
+#     - data/feature_store/laboratory_features.parquet
+#     - data/feature_store/pharmacy_features.parquet
+#     - data/feature_store/risk_features.parquet
+#     - data/feature_store/demographic_features.parquet
+#
+#   Population Health:
+#     - data/analytics_platform/population_health/member_segmentation.parquet
+#     - data/analytics_platform/population_health/risk_stratification.parquet
+#
+# Outputs:
+#   data/analytics_platform/clinical_analytics/
+#
+# Run:
+#   python -m src.analytics_platform.clinical_analytics.build_clinical_analytics_layer
+#
+###############################################################################
+
+clinical_analytics:
+  layer_name: "Layer 2B - Clinical Analytics"
+  domain_name: "Clinical Analytics"
+  output_format: "parquet"
+  enabled: true
+
+###############################################################################
+# Logging
+###############################################################################
+
+logging:
+  level: "INFO"
+  module_log_dir: "logs/modules"
+  log_file_name: "clinical_analytics.log"
+
+###############################################################################
+# Paths
+###############################################################################
+
+paths:
+
+  ###########################################################################
+  # Input Datasets
+  ###########################################################################
+
+  inputs:
+
+    claims_features:
+      path: "data/feature_store/claims_features.parquet"
+      format: "parquet"
+      required: true
+
+    laboratory_features:
+      path: "data/feature_store/laboratory_features.parquet"
+      format: "parquet"
+      required: true
+
+    pharmacy_features:
+      path: "data/feature_store/pharmacy_features.parquet"
+      format: "parquet"
+      required: false
+
+    risk_features:
+      path: "data/feature_store/risk_features.parquet"
+      format: "parquet"
+      required: true
+
+    demographic_features:
+      path: "data/feature_store/demographic_features.parquet"
+      format: "parquet"
+      required: true
+
+    member_segmentation:
+      path: "data/analytics_platform/population_health/member_segmentation.parquet"
+      format: "parquet"
+      required: true
+
+    risk_stratification:
+      path: "data/analytics_platform/population_health/risk_stratification.parquet"
+      format: "parquet"
+      required: true
+
+  ###########################################################################
+  # Output Datasets
+  ###########################################################################
+
+  outputs:
+
+    clinical_analytics_root:
+      path: "data/analytics_platform/clinical_analytics"
+
+    condition_registry:
+      path: "data/analytics_platform/clinical_analytics/condition_registry"
+
+    diabetes_registry:
+      path: "data/analytics_platform/clinical_analytics/diabetes_registry"
+
+    hypertension_registry:
+      path: "data/analytics_platform/clinical_analytics/hypertension_registry"
+
+    chf_registry:
+      path: "data/analytics_platform/clinical_analytics/chf_registry"
+
+    copd_registry:
+      path: "data/analytics_platform/clinical_analytics/copd_registry"
+
+    ckd_registry:
+      path: "data/analytics_platform/clinical_analytics/ckd_registry"
+
+    asthma_registry:
+      path: "data/analytics_platform/clinical_analytics/asthma_registry"
+
+    cancer_registry:
+      path: "data/analytics_platform/clinical_analytics/cancer_registry"
+
+    behavioral_health_registry:
+      path: "data/analytics_platform/clinical_analytics/behavioral_health_registry"
+
+  ###########################################################################
+  # Metadata Outputs
+  ###########################################################################
+
+  metadata_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/metadata"
+
+    clinical_analytics_dataset_inventory:
+      path: "data/analytics_platform/metadata/clinical_analytics_dataset_inventory"
+
+    clinical_analytics_column_dictionary:
+      path: "data/analytics_platform/metadata/clinical_analytics_column_dictionary"
+
+    clinical_analytics_rule_catalog:
+      path: "data/analytics_platform/metadata/clinical_analytics_rule_catalog"
+
+  ###########################################################################
+  # Audit Outputs
+  ###########################################################################
+
+  audit_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/audit"
+
+    clinical_analytics_audit_records:
+      path: "data/analytics_platform/audit/clinical_analytics_audit_records"
+
+    clinical_analytics_validation_results:
+      path: "data/analytics_platform/audit/clinical_analytics_validation_results"
+
+    clinical_analytics_execution_summary:
+      path: "data/analytics_platform/audit/clinical_analytics_execution_summary"
+
+###############################################################################
+# Join Keys
+###############################################################################
+
+join_keys:
+
+  member_key: "member_id"
+  condition_key: "condition_name"
+  registry_key: "registry_name"
+
+###############################################################################
+# Registry Framework
+###############################################################################
+
+registry_framework:
+  enabled: true
+
+  base_member_dataset: "demographic_features"
+  member_key: "member_id"
+
+  enrichment_datasets:
+    - "risk_stratification"
+    - "member_segmentation"
+
+###############################################################################
+# Condition Registry
+###############################################################################
+
+condition_registry:
+  enabled: true
+
+  source_datasets:
+    - "claims_features"
+    - "laboratory_features"
+    - "pharmacy_features"
+    - "risk_features"
+
+  member_key: "member_id"
+
+  condition_signals:
+
+    claim_activity_signal:
+      condition_name: "Claim Activity"
+      condition_category: "Utilization"
+      source_dataset: "claims_features"
+      signal_column: "has_claim_activity"
+      operator: "equals"
+      value: true
+      evidence_column: "total_claims"
+
+    abnormal_lab_signal:
+      condition_name: "Abnormal Laboratory Activity"
+      condition_category: "Laboratory"
+      source_dataset: "laboratory_features"
+      signal_column: "abnormal_lab_results"
+      operator: "greater_than"
+      value: 0
+      evidence_column: "abnormal_lab_results"
+
+    high_abnormal_lab_rate_signal:
+      condition_name: "High Abnormal Laboratory Rate"
+      condition_category: "Laboratory"
+      source_dataset: "laboratory_features"
+      signal_column: "abnormal_lab_rate"
+      operator: "greater_than_or_equal"
+      value: 0.50
+      evidence_column: "abnormal_lab_rate"
+
+    pharmacy_activity_signal:
+      condition_name: "Pharmacy Activity"
+      condition_category: "Pharmacy"
+      source_dataset: "pharmacy_features"
+      signal_column: "has_pharmacy_activity"
+      operator: "equals"
+      value: true
+      evidence_column: "total_pharmacy_claims"
+
+    clinical_risk_signal:
+      condition_name: "Clinical Risk Signal"
+      condition_category: "Risk"
+      source_dataset: "risk_features"
+      signal_column: "clinical_risk_signal"
+      operator: "equals"
+      value: 1
+      evidence_column: "clinical_risk_signal"
+
+###############################################################################
+# Disease Registry Definitions
+###############################################################################
+
+disease_registries:
+
+  diabetes:
+    enabled: true
+    output_name: "diabetes_registry"
+    registry_name: "Diabetes Registry"
+    condition_name: "Diabetes"
+    condition_category: "Endocrine"
+    registry_method: "signal_based_placeholder"
+    source_dataset: "laboratory_features"
+    signal_column: "abnormal_lab_rate"
+    operator: "greater_than_or_equal"
+    value: 0.50
+    evidence_column: "abnormal_lab_results"
+    note: "Signal-based placeholder until ICD or diagnosis-level diabetes evidence is exposed."
+
+  hypertension:
+    enabled: true
+    output_name: "hypertension_registry"
+    registry_name: "Hypertension Registry"
+    condition_name: "Hypertension"
+    condition_category: "Cardiovascular"
+    registry_method: "signal_based_placeholder"
+    source_dataset: "risk_features"
+    signal_column: "clinical_risk_signal"
+    operator: "equals"
+    value: 1
+    evidence_column: "clinical_risk_signal"
+    note: "Signal-based placeholder until ICD or diagnosis-level hypertension evidence is exposed."
+
+  chf:
+    enabled: true
+    output_name: "chf_registry"
+    registry_name: "CHF Registry"
+    condition_name: "Congestive Heart Failure"
+    condition_category: "Cardiovascular"
+    registry_method: "signal_based_placeholder"
+    source_dataset: "risk_features"
+    signal_column: "clinical_risk_signal"
+    operator: "equals"
+    value: 1
+    evidence_column: "clinical_risk_signal"
+    note: "Signal-based placeholder until ICD or diagnosis-level CHF evidence is exposed."
+
+  copd:
+    enabled: true
+    output_name: "copd_registry"
+    registry_name: "COPD Registry"
+    condition_name: "COPD"
+    condition_category: "Respiratory"
+    registry_method: "signal_based_placeholder"
+    source_dataset: "claims_features"
+    signal_column: "has_claim_activity"
+    operator: "equals"
+    value: true
+    evidence_column: "total_claims"
+    note: "Signal-based placeholder until ICD or diagnosis-level COPD evidence is exposed."
+
+  ckd:
+    enabled: true
+    output_name: "ckd_registry"
+    registry_name: "CKD Registry"
+    condition_name: "Chronic Kidney Disease"
+    condition_category: "Renal"
+    registry_method: "signal_based_placeholder"
+    source_dataset: "laboratory_features"
+    signal_column: "abnormal_lab_results"
+    operator: "greater_than"
+    value: 0
+    evidence_column: "abnormal_lab_results"
+    note: "Signal-based placeholder until ICD or kidney-specific lab evidence is exposed."
+
+  asthma:
+    enabled: true
+    output_name: "asthma_registry"
+    registry_name: "Asthma Registry"
+    condition_name: "Asthma"
+    condition_category: "Respiratory"
+    registry_method: "signal_based_placeholder"
+    source_dataset: "claims_features"
+    signal_column: "has_claim_activity"
+    operator: "equals"
+    value: true
+    evidence_column: "total_claims"
+    note: "Signal-based placeholder until ICD or diagnosis-level asthma evidence is exposed."
+
+  cancer:
+    enabled: true
+    output_name: "cancer_registry"
+    registry_name: "Cancer Registry"
+    condition_name: "Cancer"
+    condition_category: "Oncology"
+    registry_method: "signal_based_placeholder"
+    source_dataset: "risk_features"
+    signal_column: "high_cost_risk_signal"
+    operator: "equals"
+    value: 1
+    evidence_column: "high_cost_risk_signal"
+    note: "Signal-based placeholder until ICD or diagnosis-level oncology evidence is exposed."
+
+  behavioral_health:
+    enabled: true
+    output_name: "behavioral_health_registry"
+    registry_name: "Behavioral Health Registry"
+    condition_name: "Behavioral Health"
+    condition_category: "Behavioral Health"
+    registry_method: "signal_based_placeholder"
+    source_dataset: "risk_features"
+    signal_column: "clinical_risk_signal"
+    operator: "equals"
+    value: 1
+    evidence_column: "clinical_risk_signal"
+    note: "Signal-based placeholder until ICD or diagnosis-level behavioral health evidence is exposed."
+
+###############################################################################
+# Validation Rules
+###############################################################################
+
+validation:
+  enabled: true
+
+  rules:
+
+    required_inputs_exist:
+      enabled: true
+      severity: "ERROR"
+
+    required_columns_exist:
+      enabled: true
+      severity: "ERROR"
+
+    datasets_not_empty:
+      enabled: true
+      severity: "ERROR"
+
+    member_key_not_null:
+      enabled: true
+      severity: "ERROR"
+
+    registry_output_row_count_check:
+      enabled: true
+      severity: "WARNING"
+
+###############################################################################
+# Metadata
+###############################################################################
+
+metadata:
+  enabled: true
+
+  include_column_statistics: true
+  include_dataset_inventory: true
+  include_rule_catalog: true
+  include_lineage: true
+
+###############################################################################
+# Audit
+###############################################################################
+
+audit:
+  enabled: true
+
+  include_step_audit: true
+  include_validation_results: true
+  include_execution_summary: true
+
+###############################################################################
+# End of File
+###############################################################################

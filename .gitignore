@@ -89,6 +89,9 @@ data/audit/*
 data/semantic_layer/*
 !data/semantic_layer/.gitkeep
 
+data/analytics_platform/*
+!data/analytics_platform/.gitkeep
+
 ###############################################################################
 # Logs
 #

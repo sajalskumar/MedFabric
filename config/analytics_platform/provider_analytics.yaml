@@ -1,0 +1,453 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/analytics_platform/provider_analytics.yaml
+#
+# Layer:
+#   Layer 2F - Provider Analytics
+#
+# Purpose:
+#   Defines configuration for Provider Analytics built on top of MedFabric
+#   provider-level Gold, Feature Store, Semantic Layer, and Population Health
+#   attribution outputs.
+#
+# Inputs:
+#   Gold Layer:
+#     - data/gold/provider_performance.parquet
+#
+#   Feature Store:
+#     - data/feature_store/provider_attribution_features.parquet
+#
+#   Semantic Layer:
+#     - data/semantic_layer/business_views/provider_attribution_semantic_view.parquet
+#
+#   Population Health:
+#     - data/analytics_platform/population_health/provider_attribution_analytics.parquet
+#
+# Outputs:
+#   data/analytics_platform/provider_analytics/
+#
+# Run:
+#   python -m src.analytics_platform.provider_analytics.build_provider_analytics_layer
+#
+###############################################################################
+
+provider_analytics:
+  layer_name: "Layer 2F - Provider Analytics"
+  domain_name: "Provider Analytics"
+  output_format: "parquet"
+  enabled: true
+
+###############################################################################
+# Logging
+###############################################################################
+
+logging:
+  level: "INFO"
+  module_log_dir: "logs/modules"
+  log_file_name: "provider_analytics.log"
+
+###############################################################################
+# Paths
+###############################################################################
+
+paths:
+
+  ###########################################################################
+  # Input Datasets
+  ###########################################################################
+
+  inputs:
+
+    provider_performance:
+      path: "data/gold/provider_performance.parquet"
+      format: "parquet"
+      required: true
+
+    provider_attribution_features:
+      path: "data/feature_store/provider_attribution_features.parquet"
+      format: "parquet"
+      required: true
+
+    provider_attribution_semantic_view:
+      path: "data/semantic_layer/business_views/provider_attribution_semantic_view.parquet"
+      format: "parquet"
+      required: true
+
+    provider_attribution_analytics:
+      path: "data/analytics_platform/population_health/provider_attribution_analytics.parquet"
+      format: "parquet"
+      required: true
+
+  ###########################################################################
+  # Output Datasets
+  ###########################################################################
+
+  outputs:
+
+    provider_analytics_root:
+      path: "data/analytics_platform/provider_analytics"
+
+    provider_performance_summary:
+      path: "data/analytics_platform/provider_analytics/provider_performance_summary"
+
+    provider_network_summary:
+      path: "data/analytics_platform/provider_analytics/provider_network_summary"
+
+    provider_specialty_summary:
+      path: "data/analytics_platform/provider_analytics/provider_specialty_summary"
+
+    provider_cost_summary:
+      path: "data/analytics_platform/provider_analytics/provider_cost_summary"
+
+    provider_utilization_summary:
+      path: "data/analytics_platform/provider_analytics/provider_utilization_summary"
+
+    high_performing_providers:
+      path: "data/analytics_platform/provider_analytics/high_performing_providers"
+
+  ###########################################################################
+  # Metadata Outputs
+  ###########################################################################
+
+  metadata_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/metadata"
+
+    provider_analytics_dataset_inventory:
+      path: "data/analytics_platform/metadata/provider_analytics_dataset_inventory"
+
+    provider_analytics_column_dictionary:
+      path: "data/analytics_platform/metadata/provider_analytics_column_dictionary"
+
+    provider_analytics_rule_catalog:
+      path: "data/analytics_platform/metadata/provider_analytics_rule_catalog"
+
+  ###########################################################################
+  # Audit Outputs
+  ###########################################################################
+
+  audit_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/audit"
+
+    provider_analytics_audit_records:
+      path: "data/analytics_platform/audit/provider_analytics_audit_records"
+
+    provider_analytics_validation_results:
+      path: "data/analytics_platform/audit/provider_analytics_validation_results"
+
+    provider_analytics_execution_summary:
+      path: "data/analytics_platform/audit/provider_analytics_execution_summary"
+
+###############################################################################
+# Join Keys
+###############################################################################
+
+join_keys:
+
+  provider_key: "provider_id"
+  specialty_key: "specialty_description"
+  organization_key: "organization_name"
+  network_key: "network_status"
+
+###############################################################################
+# Provider Analytics Framework
+###############################################################################
+
+provider_framework:
+  enabled: true
+
+  base_provider_dataset: "provider_performance"
+  provider_key: "provider_id"
+
+  enrichment_datasets:
+    - "provider_attribution_features"
+    - "provider_attribution_semantic_view"
+    - "provider_attribution_analytics"
+
+###############################################################################
+# Provider Performance Summary
+###############################################################################
+
+provider_performance_summary:
+  enabled: true
+
+  source_dataset: "provider_performance"
+  provider_key: "provider_id"
+
+  required_columns:
+    - "provider_id"
+    - "provider_name"
+    - "provider_type"
+    - "specialty_description"
+    - "organization_name"
+    - "network_status"
+    - "is_primary_care"
+    - "attribution_eligible"
+    - "claim_count"
+    - "encounter_count"
+    - "total_paid_amount"
+    - "total_allowed_amount"
+
+  output_columns:
+    - "provider_id"
+    - "provider_name"
+    - "provider_type"
+    - "specialty_description"
+    - "organization_name"
+    - "network_status"
+    - "is_primary_care"
+    - "attribution_eligible"
+    - "claim_count"
+    - "encounter_count"
+    - "total_paid_amount"
+    - "total_allowed_amount"
+
+  calculated_metrics:
+
+    paid_per_claim:
+      numerator: "total_paid_amount"
+      denominator: "claim_count"
+      description: "Average paid amount per claim."
+
+    allowed_per_claim:
+      numerator: "total_allowed_amount"
+      denominator: "claim_count"
+      description: "Average allowed amount per claim."
+
+    paid_per_encounter:
+      numerator: "total_paid_amount"
+      denominator: "encounter_count"
+      description: "Average paid amount per encounter."
+
+###############################################################################
+# Provider Network Summary
+###############################################################################
+
+provider_network_summary:
+  enabled: true
+
+  source_dataset: "provider_performance"
+  group_by:
+    - "network_status"
+
+  metrics:
+
+    provider_count:
+      calculation_type: "count_distinct"
+      column: "provider_id"
+
+    primary_care_provider_count:
+      calculation_type: "sum_boolean"
+      column: "is_primary_care"
+
+    attribution_eligible_provider_count:
+      calculation_type: "sum_boolean"
+      column: "attribution_eligible"
+
+    total_claim_count:
+      calculation_type: "sum"
+      column: "claim_count"
+
+    total_encounter_count:
+      calculation_type: "sum"
+      column: "encounter_count"
+
+    total_paid_amount:
+      calculation_type: "sum"
+      column: "total_paid_amount"
+
+###############################################################################
+# Provider Specialty Summary
+###############################################################################
+
+provider_specialty_summary:
+  enabled: true
+
+  source_dataset: "provider_performance"
+  group_by:
+    - "specialty_description"
+
+  metrics:
+
+    provider_count:
+      calculation_type: "count_distinct"
+      column: "provider_id"
+
+    total_claim_count:
+      calculation_type: "sum"
+      column: "claim_count"
+
+    total_encounter_count:
+      calculation_type: "sum"
+      column: "encounter_count"
+
+    total_paid_amount:
+      calculation_type: "sum"
+      column: "total_paid_amount"
+
+    average_paid_amount:
+      calculation_type: "mean"
+      column: "total_paid_amount"
+
+###############################################################################
+# Provider Cost Summary
+###############################################################################
+
+provider_cost_summary:
+  enabled: true
+
+  source_dataset: "provider_performance"
+  provider_key: "provider_id"
+
+  required_columns:
+    - "provider_id"
+    - "provider_name"
+    - "specialty_description"
+    - "total_paid_amount"
+    - "total_allowed_amount"
+    - "claim_count"
+    - "encounter_count"
+
+  cost_metrics:
+
+    paid_per_claim:
+      numerator: "total_paid_amount"
+      denominator: "claim_count"
+
+    allowed_per_claim:
+      numerator: "total_allowed_amount"
+      denominator: "claim_count"
+
+    paid_per_encounter:
+      numerator: "total_paid_amount"
+      denominator: "encounter_count"
+
+  ranking:
+
+    rank_column: "total_paid_amount"
+    rank_method: "descending"
+    output_rank_column: "provider_cost_rank"
+
+###############################################################################
+# Provider Utilization Summary
+###############################################################################
+
+provider_utilization_summary:
+  enabled: true
+
+  source_dataset: "provider_performance"
+  provider_key: "provider_id"
+
+  required_columns:
+    - "provider_id"
+    - "provider_name"
+    - "specialty_description"
+    - "claim_count"
+    - "encounter_count"
+
+  utilization_metrics:
+
+    claims_per_encounter:
+      numerator: "claim_count"
+      denominator: "encounter_count"
+
+  ranking:
+
+    rank_column: "encounter_count"
+    rank_method: "descending"
+    output_rank_column: "provider_utilization_rank"
+
+###############################################################################
+# High Performing Providers
+###############################################################################
+
+high_performing_providers:
+  enabled: true
+
+  source_dataset: "provider_performance_summary"
+
+  performance_rules:
+
+    high_volume_low_cost:
+      enabled: true
+      label: "High Volume Low Cost"
+      min_encounter_count: 100
+      max_paid_per_encounter: 1000
+      priority_rank: 1
+      description: "Providers with high encounter volume and low paid amount per encounter."
+
+    high_volume_provider:
+      enabled: true
+      label: "High Volume Provider"
+      min_encounter_count: 100
+      priority_rank: 2
+      description: "Providers with high encounter volume."
+
+    attribution_ready_provider:
+      enabled: true
+      label: "Attribution Ready Provider"
+      attribution_eligible_required: true
+      priority_rank: 3
+      description: "Providers eligible for attribution."
+
+###############################################################################
+# Validation Rules
+###############################################################################
+
+validation:
+  enabled: true
+
+  rules:
+
+    required_inputs_exist:
+      enabled: true
+      severity: "ERROR"
+
+    required_columns_exist:
+      enabled: true
+      severity: "ERROR"
+
+    datasets_not_empty:
+      enabled: true
+      severity: "ERROR"
+
+    provider_key_not_null:
+      enabled: true
+      severity: "ERROR"
+
+    provider_output_row_count_check:
+      enabled: true
+      severity: "WARNING"
+
+###############################################################################
+# Metadata
+###############################################################################
+
+metadata:
+  enabled: true
+
+  include_column_statistics: true
+  include_dataset_inventory: true
+  include_rule_catalog: true
+  include_lineage: true
+
+###############################################################################
+# Audit
+###############################################################################
+
+audit:
+  enabled: true
+
+  include_step_audit: true
+  include_validation_results: true
+  include_execution_summary: true
+
+###############################################################################
+# End of File
+###############################################################################

@@ -1,0 +1,407 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/analytics_platform/value_based_care.yaml
+#
+# Layer:
+#   Layer 2H - Value-Based Care
+#
+# Purpose:
+#   Defines configuration for Value-Based Care analytics built on top of
+#   Provider Analytics, Predictive Analytics, Care Management, and Gold outputs.
+#
+# Inputs:
+#   Provider Analytics:
+#     - data/analytics_platform/provider_analytics/provider_performance_summary.parquet
+#     - data/analytics_platform/provider_analytics/provider_cost_summary.parquet
+#     - data/analytics_platform/provider_analytics/provider_utilization_summary.parquet
+#
+#   Predictive Analytics:
+#     - data/analytics_platform/predictive_analytics/member_prediction_summary.parquet
+#
+#   Care Management:
+#     - data/analytics_platform/care_management/program_effectiveness.parquet
+#
+#   Gold Layer:
+#     - data/gold/pmpm_summary.parquet
+#     - data/gold/cost_summary.parquet
+#
+# Outputs:
+#   data/analytics_platform/value_based_care/
+#
+# Run:
+#   python -m src.analytics_platform.value_based_care.build_value_based_care_layer
+#
+###############################################################################
+
+value_based_care:
+  layer_name: "Layer 2H - Value-Based Care"
+  domain_name: "Value-Based Care"
+  output_format: "parquet"
+  enabled: true
+
+###############################################################################
+# Logging
+###############################################################################
+
+logging:
+  level: "INFO"
+  module_log_dir: "logs/modules"
+  log_file_name: "value_based_care.log"
+
+###############################################################################
+# Paths
+###############################################################################
+
+paths:
+
+  ###########################################################################
+  # Input Datasets
+  ###########################################################################
+
+  inputs:
+
+    provider_performance_summary:
+      path: "data/analytics_platform/provider_analytics/provider_performance_summary.parquet"
+      format: "parquet"
+      required: true
+
+    provider_cost_summary:
+      path: "data/analytics_platform/provider_analytics/provider_cost_summary.parquet"
+      format: "parquet"
+      required: true
+
+    provider_utilization_summary:
+      path: "data/analytics_platform/provider_analytics/provider_utilization_summary.parquet"
+      format: "parquet"
+      required: true
+
+    member_prediction_summary:
+      path: "data/analytics_platform/predictive_analytics/member_prediction_summary.parquet"
+      format: "parquet"
+      required: true
+
+    program_effectiveness:
+      path: "data/analytics_platform/care_management/program_effectiveness.parquet"
+      format: "parquet"
+      required: true
+
+    pmpm_summary:
+      path: "data/gold/pmpm_summary.parquet"
+      format: "parquet"
+      required: true
+
+    cost_summary:
+      path: "data/gold/cost_summary.parquet"
+      format: "parquet"
+      required: true
+
+  ###########################################################################
+  # Output Datasets
+  ###########################################################################
+
+  outputs:
+
+    value_based_care_root:
+      path: "data/analytics_platform/value_based_care"
+
+    value_based_contract_summary:
+      path: "data/analytics_platform/value_based_care/value_based_contract_summary"
+
+    provider_incentive_summary:
+      path: "data/analytics_platform/value_based_care/provider_incentive_summary"
+
+    shared_savings_summary:
+      path: "data/analytics_platform/value_based_care/shared_savings_summary"
+
+    risk_adjustment_summary:
+      path: "data/analytics_platform/value_based_care/risk_adjustment_summary"
+
+    bundle_opportunity_summary:
+      path: "data/analytics_platform/value_based_care/bundle_opportunity_summary"
+
+    vbc_executive_scorecard:
+      path: "data/analytics_platform/value_based_care/vbc_executive_scorecard"
+
+  ###########################################################################
+  # Metadata Outputs
+  ###########################################################################
+
+  metadata_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/metadata"
+
+    value_based_care_dataset_inventory:
+      path: "data/analytics_platform/metadata/value_based_care_dataset_inventory"
+
+    value_based_care_column_dictionary:
+      path: "data/analytics_platform/metadata/value_based_care_column_dictionary"
+
+    value_based_care_rule_catalog:
+      path: "data/analytics_platform/metadata/value_based_care_rule_catalog"
+
+  ###########################################################################
+  # Audit Outputs
+  ###########################################################################
+
+  audit_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/audit"
+
+    value_based_care_audit_records:
+      path: "data/analytics_platform/audit/value_based_care_audit_records"
+
+    value_based_care_validation_results:
+      path: "data/analytics_platform/audit/value_based_care_validation_results"
+
+    value_based_care_execution_summary:
+      path: "data/analytics_platform/audit/value_based_care_execution_summary"
+
+###############################################################################
+# Join Keys
+###############################################################################
+
+join_keys:
+
+  provider_key: "provider_id"
+  member_key: "member_id"
+  contract_key: "value_based_contract_name"
+
+###############################################################################
+# Value-Based Care Framework
+###############################################################################
+
+value_based_care_framework:
+  enabled: true
+
+  provider_dataset: "provider_performance_summary"
+  provider_key: "provider_id"
+
+  financial_datasets:
+    - "pmpm_summary"
+    - "cost_summary"
+
+  analytics_datasets:
+    - "provider_cost_summary"
+    - "provider_utilization_summary"
+    - "member_prediction_summary"
+    - "program_effectiveness"
+
+###############################################################################
+# Value-Based Contract Summary
+###############################################################################
+
+value_based_contract_summary:
+  enabled: true
+
+  contract_name: "MedFabric Synthetic Value-Based Contract"
+  contract_type: "Shared Savings"
+  payment_model: "Upside Shared Savings"
+  measurement_period: "Synthetic Current Period"
+
+  source_datasets:
+    provider_dataset: "provider_performance_summary"
+    pmpm_dataset: "pmpm_summary"
+    cost_dataset: "cost_summary"
+
+  financial_columns:
+    total_paid_amount: "total_paid_amount"
+    total_allowed_amount: "total_allowed_amount"
+    pmpm_paid_amount: "pmpm_paid_amount"
+    pmpm_allowed_amount: "pmpm_allowed_amount"
+    member_month_count: "member_month_count"
+
+  benchmark:
+    benchmark_pmpm_paid_amount: 2500.00
+    benchmark_pmpm_allowed_amount: 3000.00
+    minimum_savings_rate: 0.02
+    provider_share_rate: 0.50
+
+###############################################################################
+# Provider Incentive Summary
+###############################################################################
+
+provider_incentive_summary:
+  enabled: true
+
+  source_dataset: "provider_performance_summary"
+  provider_key: "provider_id"
+
+  incentive_rules:
+
+    attribution_eligible_bonus:
+      enabled: true
+      incentive_name: "Attribution Eligible Bonus"
+      rule_column: "attribution_eligible"
+      operator: "equals"
+      value: true
+      incentive_amount: 1000.00
+      description: "Base incentive for attribution eligible providers."
+
+    primary_care_bonus:
+      enabled: true
+      incentive_name: "Primary Care Bonus"
+      rule_column: "is_primary_care"
+      operator: "equals"
+      value: true
+      incentive_amount: 1500.00
+      description: "Additional incentive for primary care providers."
+
+    low_cost_efficiency_bonus:
+      enabled: true
+      incentive_name: "Low Cost Efficiency Bonus"
+      rule_column: "paid_per_encounter"
+      operator: "less_than_or_equal"
+      value: 1000.00
+      incentive_amount: 2500.00
+      description: "Incentive for providers below paid-per-encounter threshold."
+
+###############################################################################
+# Shared Savings Summary
+###############################################################################
+
+shared_savings_summary:
+  enabled: true
+
+  source_dataset: "pmpm_summary"
+
+  savings_method: "pmpm_benchmark_comparison"
+
+  benchmark:
+    benchmark_pmpm_paid_amount: 2500.00
+    minimum_savings_rate: 0.02
+    provider_share_rate: 0.50
+
+###############################################################################
+# Risk Adjustment Summary
+###############################################################################
+
+risk_adjustment_summary:
+  enabled: true
+
+  source_dataset: "member_prediction_summary"
+
+  risk_columns:
+    max_prediction_score: "max_prediction_score"
+    average_prediction_score: "average_prediction_score"
+    positive_prediction_count: "positive_prediction_count"
+
+  risk_bands:
+
+    very_high_risk:
+      label: "Very High Risk"
+      min_score: 0.85
+      max_score: 1.00
+      risk_weight: 2.00
+
+    high_risk:
+      label: "High Risk"
+      min_score: 0.70
+      max_score: 0.849999
+      risk_weight: 1.50
+
+    moderate_risk:
+      label: "Moderate Risk"
+      min_score: 0.40
+      max_score: 0.699999
+      risk_weight: 1.00
+
+    low_risk:
+      label: "Low Risk"
+      min_score: 0.00
+      max_score: 0.399999
+      risk_weight: 0.50
+
+###############################################################################
+# Bundle Opportunity Summary
+###############################################################################
+
+bundle_opportunity_summary:
+  enabled: true
+
+  source_dataset: "cost_summary"
+
+  group_by:
+    - "claim_type"
+    - "encounter_type"
+
+  opportunity_rules:
+
+    high_cost_bundle_opportunity:
+      enabled: true
+      opportunity_name: "High Cost Bundle Opportunity"
+      rule_column: "total_paid_amount"
+      operator: "greater_than_or_equal"
+      value: 1000000
+      opportunity_priority_rank: 1
+      description: "High cost claim/encounter categories suitable for bundle analysis."
+
+###############################################################################
+# VBC Executive Scorecard
+###############################################################################
+
+vbc_executive_scorecard:
+  enabled: true
+
+  source_assets:
+    - "value_based_contract_summary"
+    - "provider_incentive_summary"
+    - "shared_savings_summary"
+    - "risk_adjustment_summary"
+    - "bundle_opportunity_summary"
+
+###############################################################################
+# Validation Rules
+###############################################################################
+
+validation:
+  enabled: true
+
+  rules:
+
+    required_inputs_exist:
+      enabled: true
+      severity: "ERROR"
+
+    required_columns_exist:
+      enabled: true
+      severity: "ERROR"
+
+    datasets_not_empty:
+      enabled: true
+      severity: "ERROR"
+
+    value_based_output_row_count_check:
+      enabled: true
+      severity: "WARNING"
+
+###############################################################################
+# Metadata
+###############################################################################
+
+metadata:
+  enabled: true
+
+  include_column_statistics: true
+  include_dataset_inventory: true
+  include_rule_catalog: true
+  include_lineage: true
+
+###############################################################################
+# Audit
+###############################################################################
+
+audit:
+  enabled: true
+
+  include_step_audit: true
+  include_validation_results: true
+  include_execution_summary: true
+
+###############################################################################
+# End of File
+###############################################################################

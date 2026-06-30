@@ -1,0 +1,522 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/analytics_platform/quality_analytics.yaml
+#
+# Layer:
+#   Layer 2C - Quality Analytics
+#
+# Purpose:
+#   Defines configuration for Quality Analytics built on top of MedFabric
+#   Layer 1 Feature Store outputs and Layer 2 Analytics Platform outputs.
+#
+# Business Context:
+#   Quality Analytics identifies quality opportunities, care gaps, preventive
+#   care signals, medication adherence signals, and measure-style summaries.
+#
+# Schema Alignment Notes:
+#   This configuration is aligned to the actual aggregate datasets currently
+#   available in the MedFabric pipeline.
+#
+#   Current inputs are member-level aggregate feature files and Layer 2 outputs.
+#   They do not yet contain HEDIS denominator/numerator event detail, procedure
+#   codes, vaccine events, diagnosis dates, medication fill dates, or clinical
+#   service-line events.
+#
+#   Therefore, this version builds signal-based Quality Analytics assets.
+#
+#   Future versions can upgrade these rules to true HEDIS/CMS logic once detailed
+#   quality measure evidence is exposed from Silver, Gold, or a future quality
+#   feature group.
+#
+# Inputs:
+#   Feature Store:
+#     - data/feature_store/claims_features.parquet
+#     - data/feature_store/pharmacy_features.parquet
+#     - data/feature_store/laboratory_features.parquet
+#     - data/feature_store/risk_features.parquet
+#
+#   Population Health:
+#     - data/analytics_platform/population_health/member_segmentation.parquet
+#     - data/analytics_platform/population_health/risk_stratification.parquet
+#
+#   Clinical Analytics:
+#     - data/analytics_platform/clinical_analytics/condition_registry.parquet
+#
+# Outputs:
+#   data/analytics_platform/quality_analytics/
+#
+# Run:
+#   python -m src.analytics_platform.quality_analytics.build_quality_analytics_layer
+#
+###############################################################################
+
+quality_analytics:
+  layer_name: "Layer 2C - Quality Analytics"
+  domain_name: "Quality Analytics"
+  output_format: "parquet"
+  enabled: true
+
+###############################################################################
+# Logging
+###############################################################################
+
+logging:
+  level: "INFO"
+  module_log_dir: "logs/modules"
+  log_file_name: "quality_analytics.log"
+
+###############################################################################
+# Paths
+###############################################################################
+
+paths:
+
+  ###########################################################################
+  # Input Datasets
+  ###########################################################################
+
+  inputs:
+
+    claims_features:
+      path: "data/feature_store/claims_features.parquet"
+      format: "parquet"
+      required: true
+
+    pharmacy_features:
+      path: "data/feature_store/pharmacy_features.parquet"
+      format: "parquet"
+      required: true
+
+    laboratory_features:
+      path: "data/feature_store/laboratory_features.parquet"
+      format: "parquet"
+      required: true
+
+    risk_features:
+      path: "data/feature_store/risk_features.parquet"
+      format: "parquet"
+      required: true
+
+    member_segmentation:
+      path: "data/analytics_platform/population_health/member_segmentation.parquet"
+      format: "parquet"
+      required: true
+
+    risk_stratification:
+      path: "data/analytics_platform/population_health/risk_stratification.parquet"
+      format: "parquet"
+      required: true
+
+    condition_registry:
+      path: "data/analytics_platform/clinical_analytics/condition_registry.parquet"
+      format: "parquet"
+      required: true
+
+  ###########################################################################
+  # Output Datasets
+  ###########################################################################
+
+  outputs:
+
+    quality_analytics_root:
+      path: "data/analytics_platform/quality_analytics"
+
+    quality_measures:
+      path: "data/analytics_platform/quality_analytics/quality_measures"
+
+    care_gaps:
+      path: "data/analytics_platform/quality_analytics/care_gaps"
+
+    preventive_care:
+      path: "data/analytics_platform/quality_analytics/preventive_care"
+
+    medication_adherence:
+      path: "data/analytics_platform/quality_analytics/medication_adherence"
+
+    hedis_summary:
+      path: "data/analytics_platform/quality_analytics/hedis_summary"
+
+    cms_summary:
+      path: "data/analytics_platform/quality_analytics/cms_summary"
+
+  ###########################################################################
+  # Metadata Outputs
+  ###########################################################################
+
+  metadata_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/metadata"
+
+    quality_analytics_dataset_inventory:
+      path: "data/analytics_platform/metadata/quality_analytics_dataset_inventory"
+
+    quality_analytics_column_dictionary:
+      path: "data/analytics_platform/metadata/quality_analytics_column_dictionary"
+
+    quality_analytics_rule_catalog:
+      path: "data/analytics_platform/metadata/quality_analytics_rule_catalog"
+
+  ###########################################################################
+  # Audit Outputs
+  ###########################################################################
+
+  audit_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/audit"
+
+    quality_analytics_audit_records:
+      path: "data/analytics_platform/audit/quality_analytics_audit_records"
+
+    quality_analytics_validation_results:
+      path: "data/analytics_platform/audit/quality_analytics_validation_results"
+
+    quality_analytics_execution_summary:
+      path: "data/analytics_platform/audit/quality_analytics_execution_summary"
+
+###############################################################################
+# Join Keys
+###############################################################################
+
+join_keys:
+
+  member_key: "member_id"
+  measure_key: "measure_name"
+  gap_key: "care_gap_name"
+
+###############################################################################
+# Quality Analytics Framework
+###############################################################################
+
+quality_framework:
+  enabled: true
+
+  base_member_dataset: "risk_features"
+  member_key: "member_id"
+
+  enrichment_datasets:
+    - "member_segmentation"
+    - "risk_stratification"
+
+###############################################################################
+# Quality Measure Rules
+###############################################################################
+
+quality_measures:
+  enabled: true
+
+  measures:
+
+    claim_activity_measure:
+      enabled: true
+      measure_name: "Claim Activity Measure"
+      measure_category: "Utilization"
+      measure_type: "signal_based_quality_measure"
+      source_dataset: "claims_features"
+      denominator_rule:
+        column: "member_id"
+        rule_type: "all_members"
+      numerator_rule:
+        column: "has_claim_activity"
+        operator: "equals"
+        value: true
+      description: "Signal-based measure showing members with claim activity."
+
+    pharmacy_activity_measure:
+      enabled: true
+      measure_name: "Pharmacy Activity Measure"
+      measure_category: "Medication"
+      measure_type: "signal_based_quality_measure"
+      source_dataset: "pharmacy_features"
+      denominator_rule:
+        column: "member_id"
+        rule_type: "all_members"
+      numerator_rule:
+        column: "has_pharmacy_activity"
+        operator: "equals"
+        value: true
+      description: "Signal-based measure showing members with pharmacy activity."
+
+    laboratory_activity_measure:
+      enabled: true
+      measure_name: "Laboratory Activity Measure"
+      measure_category: "Laboratory"
+      measure_type: "signal_based_quality_measure"
+      source_dataset: "laboratory_features"
+      denominator_rule:
+        column: "member_id"
+        rule_type: "all_members"
+      numerator_rule:
+        column: "total_lab_results"
+        operator: "greater_than"
+        value: 0
+      description: "Signal-based measure showing members with laboratory result activity."
+
+    abnormal_lab_measure:
+      enabled: true
+      measure_name: "Abnormal Laboratory Measure"
+      measure_category: "Laboratory"
+      measure_type: "signal_based_quality_measure"
+      source_dataset: "laboratory_features"
+      denominator_rule:
+        column: "member_id"
+        rule_type: "all_members"
+      numerator_rule:
+        column: "abnormal_lab_results"
+        operator: "greater_than"
+        value: 0
+      description: "Signal-based measure showing members with abnormal laboratory results."
+
+    clinical_risk_measure:
+      enabled: true
+      measure_name: "Clinical Risk Signal Measure"
+      measure_category: "Clinical Risk"
+      measure_type: "signal_based_quality_measure"
+      source_dataset: "risk_features"
+      denominator_rule:
+        column: "member_id"
+        rule_type: "all_members"
+      numerator_rule:
+        column: "clinical_risk_signal"
+        operator: "equals"
+        value: 1
+      description: "Signal-based measure showing members with a clinical risk signal."
+
+###############################################################################
+# Care Gap Rules
+###############################################################################
+
+care_gaps:
+  enabled: true
+
+  gaps:
+
+    no_claim_activity_gap:
+      enabled: true
+      care_gap_name: "No Claim Activity Gap"
+      care_gap_category: "Utilization"
+      source_dataset: "claims_features"
+      gap_rule:
+        column: "has_claim_activity"
+        operator: "equals"
+        value: false
+      severity: "Medium"
+      description: "Members with no claim activity signal."
+
+    no_pharmacy_activity_gap:
+      enabled: true
+      care_gap_name: "No Pharmacy Activity Gap"
+      care_gap_category: "Medication"
+      source_dataset: "pharmacy_features"
+      gap_rule:
+        column: "has_pharmacy_activity"
+        operator: "equals"
+        value: false
+      severity: "Medium"
+      description: "Members with no pharmacy activity signal."
+
+    high_abnormal_lab_gap:
+      enabled: true
+      care_gap_name: "High Abnormal Laboratory Rate Gap"
+      care_gap_category: "Laboratory"
+      source_dataset: "laboratory_features"
+      gap_rule:
+        column: "abnormal_lab_rate"
+        operator: "greater_than_or_equal"
+        value: 0.50
+      severity: "High"
+      description: "Members with abnormal laboratory rate above configured threshold."
+
+    high_clinical_risk_gap:
+      enabled: true
+      care_gap_name: "High Clinical Risk Signal Gap"
+      care_gap_category: "Clinical Risk"
+      source_dataset: "risk_features"
+      gap_rule:
+        column: "clinical_risk_signal"
+        operator: "equals"
+        value: 1
+      severity: "High"
+      description: "Members with clinical risk signal requiring quality review."
+
+    high_cost_risk_gap:
+      enabled: true
+      care_gap_name: "High Cost Risk Signal Gap"
+      care_gap_category: "Cost Risk"
+      source_dataset: "risk_features"
+      gap_rule:
+        column: "high_cost_risk_signal"
+        operator: "equals"
+        value: 1
+      severity: "High"
+      description: "Members with high cost risk signal requiring care quality review."
+
+###############################################################################
+# Preventive Care Rules
+###############################################################################
+
+preventive_care:
+  enabled: true
+
+  preventive_signals:
+
+    laboratory_monitoring_signal:
+      enabled: true
+      preventive_care_name: "Laboratory Monitoring Signal"
+      preventive_care_category: "Monitoring"
+      source_dataset: "laboratory_features"
+      signal_rule:
+        column: "total_lab_results"
+        operator: "greater_than"
+        value: 0
+      description: "Members with evidence of laboratory monitoring activity."
+
+    pharmacy_engagement_signal:
+      enabled: true
+      preventive_care_name: "Pharmacy Engagement Signal"
+      preventive_care_category: "Medication"
+      source_dataset: "pharmacy_features"
+      signal_rule:
+        column: "has_pharmacy_activity"
+        operator: "equals"
+        value: true
+      description: "Members with evidence of pharmacy engagement activity."
+
+    claims_engagement_signal:
+      enabled: true
+      preventive_care_name: "Claims Engagement Signal"
+      preventive_care_category: "Utilization"
+      source_dataset: "claims_features"
+      signal_rule:
+        column: "has_claim_activity"
+        operator: "equals"
+        value: true
+      description: "Members with evidence of healthcare utilization."
+
+###############################################################################
+# Medication Adherence Rules
+###############################################################################
+
+medication_adherence:
+  enabled: true
+
+  adherence_signals:
+
+    pharmacy_activity_adherence_signal:
+      enabled: true
+      adherence_name: "Pharmacy Activity Adherence Signal"
+      adherence_category: "Medication"
+      source_dataset: "pharmacy_features"
+      signal_rule:
+        column: "has_pharmacy_activity"
+        operator: "equals"
+        value: true
+      evidence_column: "total_pharmacy_claims"
+      description: "Signal-based medication adherence proxy based on pharmacy activity."
+
+    low_pharmacy_activity_gap:
+      enabled: true
+      adherence_name: "Low Pharmacy Activity Gap"
+      adherence_category: "Medication"
+      source_dataset: "pharmacy_features"
+      signal_rule:
+        column: "total_pharmacy_claims"
+        operator: "less_than"
+        value: 2
+      evidence_column: "total_pharmacy_claims"
+      description: "Signal-based medication adherence gap proxy for members with low pharmacy claim activity."
+
+###############################################################################
+# HEDIS Summary
+###############################################################################
+
+hedis_summary:
+  enabled: true
+
+  summary_method: "signal_based_placeholder"
+
+  measures_included:
+    - "claim_activity_measure"
+    - "pharmacy_activity_measure"
+    - "laboratory_activity_measure"
+    - "abnormal_lab_measure"
+    - "clinical_risk_measure"
+
+  note: "Placeholder summary until true HEDIS denominator/numerator logic is implemented using detailed events."
+
+###############################################################################
+# CMS Summary
+###############################################################################
+
+cms_summary:
+  enabled: true
+
+  summary_method: "signal_based_placeholder"
+
+  measures_included:
+    - "clinical_risk_measure"
+    - "abnormal_lab_measure"
+    - "high_clinical_risk_gap"
+    - "high_cost_risk_gap"
+
+  note: "Placeholder CMS-style summary until true CMS measure logic is implemented using detailed events."
+
+###############################################################################
+# Validation Rules
+###############################################################################
+
+validation:
+  enabled: true
+
+  rules:
+
+    required_inputs_exist:
+      enabled: true
+      severity: "ERROR"
+
+    required_columns_exist:
+      enabled: true
+      severity: "ERROR"
+
+    datasets_not_empty:
+      enabled: true
+      severity: "ERROR"
+
+    member_key_not_null:
+      enabled: true
+      severity: "ERROR"
+
+    quality_output_row_count_check:
+      enabled: true
+      severity: "WARNING"
+
+###############################################################################
+# Metadata
+###############################################################################
+
+metadata:
+  enabled: true
+
+  include_column_statistics: true
+  include_dataset_inventory: true
+  include_rule_catalog: true
+  include_lineage: true
+
+###############################################################################
+# Audit
+###############################################################################
+
+audit:
+  enabled: true
+
+  include_step_audit: true
+  include_validation_results: true
+  include_execution_summary: true
+
+###############################################################################
+# End of File
+###############################################################################

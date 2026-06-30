@@ -1,0 +1,242 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/analytics_platform/analytics_platform.yaml
+#
+# Layer:
+#   Layer 2 - Analytics Platform
+#
+# Purpose:
+#   Defines the master orchestration configuration for the MedFabric Analytics
+#   Platform.
+#
+#   This file controls Layer 2 execution order, enabled analytics domains,
+#   domain configuration paths, domain Python module paths, logging, metadata,
+#   audit, validation, and orchestration behavior.
+#
+# Important Design Rule:
+#   This is a layer-level orchestration configuration file.
+#
+#   It must NOT contain domain-specific business rules such as cohort logic,
+#   registry rules, quality measure logic, model thresholds, scorecard rules,
+#   care management rules, or value-based care calculations.
+#
+#   Domain-specific rules belong in domain YAML files such as:
+#
+#     - config/analytics_platform/population_health.yaml
+#     - config/analytics_platform/clinical_analytics.yaml
+#     - config/analytics_platform/quality_analytics.yaml
+#     - config/analytics_platform/predictive_analytics.yaml
+#     - config/analytics_platform/provider_analytics.yaml
+#     - config/analytics_platform/care_management.yaml
+#     - config/analytics_platform/value_based_care.yaml
+#
+# Inputs:
+#   This master configuration does not directly define business input datasets.
+#   Each analytics domain defines its own Layer 1 input contracts.
+#
+# Outputs:
+#   data/analytics_platform/metadata/
+#   data/analytics_platform/audit/
+#
+# Run:
+#   python -m src.analytics_platform.build_analytics_platform
+#
+###############################################################################
+
+analytics_platform:
+  layer_name: "Layer 2 - Analytics Platform"
+  platform_name: "MedFabric Analytics Platform"
+  version: "1.0"
+  enabled: true
+  output_format: "parquet"
+
+###############################################################################
+# Logging
+###############################################################################
+
+logging:
+  level: "INFO"
+  module_log_dir: "logs/modules"
+  log_file_name: "analytics_platform.log"
+
+###############################################################################
+# Execution Sequence
+###############################################################################
+
+execution:
+
+  fail_fast: true
+  continue_on_domain_failure: false
+  write_summary_after_each_domain: true
+
+  sequence:
+    - "population_health"
+    - "clinical_analytics"
+    - "quality_analytics"
+    - "predictive_analytics"
+    - "provider_analytics"
+    - "care_management"
+    - "value_based_care"
+
+###############################################################################
+# Domain Registry
+###############################################################################
+
+domains:
+
+  population_health:
+    enabled: true
+    required: true
+    domain_name: "Population Health"
+    config_path: "config/analytics_platform/population_health.yaml"
+    module_path: "src.analytics_platform.population_health.build_population_health_layer"
+    function_name: "build_population_health_layer"
+    expected_output_dir: "data/analytics_platform/population_health"
+
+  clinical_analytics:
+    enabled: true
+    required: true
+    domain_name: "Clinical Analytics"
+    config_path: "config/analytics_platform/clinical_analytics.yaml"
+    module_path: "src.analytics_platform.clinical_analytics.build_clinical_analytics_layer"
+    function_name: "build_clinical_analytics_layer"
+    expected_output_dir: "data/analytics_platform/clinical_analytics"
+
+  quality_analytics:
+    enabled: true
+    required: true
+    domain_name: "Quality Analytics"
+    config_path: "config/analytics_platform/quality_analytics.yaml"
+    module_path: "src.analytics_platform.quality_analytics.build_quality_analytics_layer"
+    function_name: "build_quality_analytics_layer"
+    expected_output_dir: "data/analytics_platform/quality_analytics"
+
+  predictive_analytics:
+    enabled: true
+    required: true
+    domain_name: "Predictive Analytics"
+    config_path: "config/analytics_platform/predictive_analytics.yaml"
+    module_path: "src.analytics_platform.predictive_analytics.build_predictive_analytics_layer"
+    function_name: "build_predictive_analytics_layer"
+    expected_output_dir: "data/analytics_platform/predictive_analytics"
+
+  provider_analytics:
+    enabled: true
+    required: true
+    domain_name: "Provider Analytics"
+    config_path: "config/analytics_platform/provider_analytics.yaml"
+    module_path: "src.analytics_platform.provider_analytics.build_provider_analytics_layer"
+    function_name: "build_provider_analytics_layer"
+    expected_output_dir: "data/analytics_platform/provider_analytics"
+
+  care_management:
+    enabled: true
+    required: true
+    domain_name: "Care Management"
+    config_path: "config/analytics_platform/care_management.yaml"
+    module_path: "src.analytics_platform.care_management.build_care_management_layer"
+    function_name: "build_care_management_layer"
+    expected_output_dir: "data/analytics_platform/care_management"
+
+  value_based_care:
+    enabled: true
+    required: true
+    domain_name: "Value-Based Care"
+    config_path: "config/analytics_platform/value_based_care.yaml"
+    module_path: "src.analytics_platform.value_based_care.build_value_based_care_layer"
+    function_name: "build_value_based_care_layer"
+    expected_output_dir: "data/analytics_platform/value_based_care"
+
+###############################################################################
+# Paths
+###############################################################################
+
+paths:
+
+  outputs:
+
+    analytics_platform_root:
+      path: "data/analytics_platform"
+
+  metadata_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/metadata"
+
+    analytics_platform_domain_registry:
+      path: "data/analytics_platform/metadata/analytics_platform_domain_registry"
+
+    analytics_platform_execution_plan:
+      path: "data/analytics_platform/metadata/analytics_platform_execution_plan"
+
+  audit_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/audit"
+
+    analytics_platform_audit_records:
+      path: "data/analytics_platform/audit/analytics_platform_audit_records"
+
+    analytics_platform_validation_results:
+      path: "data/analytics_platform/audit/analytics_platform_validation_results"
+
+    analytics_platform_execution_summary:
+      path: "data/analytics_platform/audit/analytics_platform_execution_summary"
+
+###############################################################################
+# Validation
+###############################################################################
+
+validation:
+  enabled: true
+
+  rules:
+
+    config_file_exists:
+      enabled: true
+      severity: "ERROR"
+
+    module_importable:
+      enabled: true
+      severity: "ERROR"
+
+    function_exists:
+      enabled: true
+      severity: "ERROR"
+
+    enabled_domain_has_config:
+      enabled: true
+      severity: "ERROR"
+
+    expected_output_dir_exists:
+      enabled: true
+      severity: "WARNING"
+
+###############################################################################
+# Metadata
+###############################################################################
+
+metadata:
+  enabled: true
+
+  include_domain_registry: true
+  include_execution_plan: true
+  include_execution_summary: true
+
+###############################################################################
+# Audit
+###############################################################################
+
+audit:
+  enabled: true
+
+  include_step_audit: true
+  include_validation_results: true
+  include_execution_summary: true
+
+###############################################################################
+# End of File
+###############################################################################

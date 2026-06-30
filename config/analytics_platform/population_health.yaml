@@ -1,0 +1,457 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/analytics_platform/population_health.yaml
+#
+# Layer:
+#   Layer 2A - Population Health Analytics
+#
+# Purpose:
+#   Defines configuration for Population Health analytics built on top of
+#   MedFabric Layer 1 outputs.
+#
+# Inputs:
+#   Gold Layer:
+#     - data/gold/member_360.parquet
+#
+#   Feature Store:
+#     - data/feature_store/demographic_features.parquet
+#     - data/feature_store/enrollment_features.parquet
+#     - data/feature_store/cost_features.parquet
+#     - data/feature_store/utilization_features.parquet
+#     - data/feature_store/risk_features.parquet
+#     - data/feature_store/provider_attribution_features.parquet
+#     - data/feature_store/sdoh_features.parquet
+#
+#   Semantic Layer:
+#     - data/semantic_layer/business_views/member_360_semantic_view.parquet
+#     - data/semantic_layer/business_views/provider_attribution_semantic_view.parquet
+#
+# Schema Alignment Notes:
+#   This file is aligned to the actual Feature Store artifacts currently present
+#   in data/feature_store/.
+#
+#   risk_features.parquet does not contain composite_risk_score.
+#   It contains latest_sdoh_risk_score and risk signal columns.
+#
+#   utilization_features.parquet does not contain total_encounter_count.
+#   It contains total_claims, total_lab_results, and total_pharmacy_claims.
+#
+#   provider_attribution_features.parquet is provider-level.
+#   It does not contain member_id.
+#
+# Outputs:
+#   data/analytics_platform/population_health/
+#
+# Run:
+#   python -m src.analytics_platform.population_health.build_population_health_layer
+#
+###############################################################################
+
+population_health:
+  layer_name: "Layer 2A - Population Health Analytics"
+  domain_name: "Population Health"
+  output_format: "parquet"
+  enabled: true
+
+###############################################################################
+# Logging
+###############################################################################
+
+logging:
+  level: "INFO"
+  module_log_dir: "logs/modules"
+  log_file_name: "population_health.log"
+
+###############################################################################
+# Paths
+###############################################################################
+
+paths:
+
+  ###########################################################################
+  # Input Datasets
+  ###########################################################################
+
+  inputs:
+
+    member_360:
+      path: "data/gold/member_360.parquet"
+      format: "parquet"
+      required: false
+
+    demographic_features:
+      path: "data/feature_store/demographic_features.parquet"
+      format: "parquet"
+      required: true
+
+    enrollment_features:
+      path: "data/feature_store/enrollment_features.parquet"
+      format: "parquet"
+      required: true
+
+    cost_features:
+      path: "data/feature_store/cost_features.parquet"
+      format: "parquet"
+      required: true
+
+    utilization_features:
+      path: "data/feature_store/utilization_features.parquet"
+      format: "parquet"
+      required: true
+
+    risk_features:
+      path: "data/feature_store/risk_features.parquet"
+      format: "parquet"
+      required: true
+
+    provider_attribution_features:
+      path: "data/feature_store/provider_attribution_features.parquet"
+      format: "parquet"
+      required: true
+
+    sdoh_features:
+      path: "data/feature_store/sdoh_features.parquet"
+      format: "parquet"
+      required: false
+
+    member_360_semantic_view:
+      path: "data/semantic_layer/business_views/member_360_semantic_view.parquet"
+      format: "parquet"
+      required: true
+
+    provider_attribution_semantic_view:
+      path: "data/semantic_layer/business_views/provider_attribution_semantic_view.parquet"
+      format: "parquet"
+      required: true
+
+  ###########################################################################
+  # Output Datasets
+  ###########################################################################
+
+  outputs:
+
+    population_health_root:
+      path: "data/analytics_platform/population_health"
+
+    population_cohorts:
+      path: "data/analytics_platform/population_health/population_cohorts"
+
+    risk_stratification:
+      path: "data/analytics_platform/population_health/risk_stratification"
+
+    member_segmentation:
+      path: "data/analytics_platform/population_health/member_segmentation"
+
+    provider_attribution_analytics:
+      path: "data/analytics_platform/population_health/provider_attribution_analytics"
+
+  ###########################################################################
+  # Metadata Outputs
+  ###########################################################################
+
+  metadata_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/metadata"
+
+    population_health_dataset_inventory:
+      path: "data/analytics_platform/metadata/population_health_dataset_inventory"
+
+    population_health_column_dictionary:
+      path: "data/analytics_platform/metadata/population_health_column_dictionary"
+
+    population_health_rule_catalog:
+      path: "data/analytics_platform/metadata/population_health_rule_catalog"
+
+  ###########################################################################
+  # Audit Outputs
+  ###########################################################################
+
+  audit_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/audit"
+
+    population_health_audit_records:
+      path: "data/analytics_platform/audit/population_health_audit_records"
+
+    population_health_validation_results:
+      path: "data/analytics_platform/audit/population_health_validation_results"
+
+    population_health_execution_summary:
+      path: "data/analytics_platform/audit/population_health_execution_summary"
+
+###############################################################################
+# Join Keys
+###############################################################################
+
+join_keys:
+
+  member_key: "member_id"
+  provider_key: "provider_id"
+  plan_key: "plan_id"
+  organization_key: "organization_id"
+
+###############################################################################
+# Population Cohort Rules
+###############################################################################
+
+population_cohorts:
+  enabled: true
+
+  source_dataset: "member_360_semantic_view"
+
+  required_columns:
+    - "member_id"
+
+  cohorts:
+
+    total_population:
+      description: "All members available in the Population Health input universe."
+      rule_type: "all_members"
+      enabled: true
+
+    high_cost_population:
+      description: "Members identified using configured cost threshold."
+      rule_type: "numeric_threshold"
+      source_dataset: "cost_features"
+      column: "total_paid_amount"
+      operator: "greater_than_or_equal"
+      threshold: 50000
+      enabled: true
+
+    high_utilizer_population:
+      description: "Members identified using configured total claims threshold."
+      rule_type: "numeric_threshold"
+      source_dataset: "utilization_features"
+      column: "total_claims"
+      operator: "greater_than_or_equal"
+      threshold: 10
+      enabled: true
+
+    high_risk_population:
+      description: "Members identified using the available configured risk score column."
+      rule_type: "numeric_threshold"
+      source_dataset: "risk_features"
+      column: "latest_sdoh_risk_score"
+      operator: "greater_than_or_equal"
+      threshold: 0.75
+      enabled: true
+
+    sdoh_vulnerable_population:
+      description: "Members with elevated social risk based on latest SDOH risk score."
+      rule_type: "numeric_threshold"
+      source_dataset: "risk_features"
+      column: "latest_sdoh_risk_score"
+      operator: "greater_than_or_equal"
+      threshold: 0.70
+      enabled: true
+
+###############################################################################
+# Risk Stratification Rules
+###############################################################################
+
+risk_stratification:
+  enabled: true
+
+  source_dataset: "risk_features"
+  member_key: "member_id"
+  risk_score_column: "latest_sdoh_risk_score"
+
+  required_columns:
+    - "member_id"
+    - "latest_sdoh_risk_score"
+
+  tiers:
+
+    very_high_risk:
+      min_value: 0.85
+      max_value: 1.00
+      label: "Very High Risk"
+      priority_rank: 1
+
+    high_risk:
+      min_value: 0.70
+      max_value: 0.849999
+      label: "High Risk"
+      priority_rank: 2
+
+    moderate_risk:
+      min_value: 0.40
+      max_value: 0.699999
+      label: "Moderate Risk"
+      priority_rank: 3
+
+    low_risk:
+      min_value: 0.00
+      max_value: 0.399999
+      label: "Low Risk"
+      priority_rank: 4
+
+###############################################################################
+# Member Segmentation Rules
+###############################################################################
+
+member_segmentation:
+  enabled: true
+
+  base_dataset: "demographic_features"
+  member_key: "member_id"
+
+  required_datasets:
+    - "demographic_features"
+    - "cost_features"
+    - "utilization_features"
+    - "risk_features"
+
+  segments:
+
+    catastrophic:
+      description: "Very high cost and very high risk members."
+      conditions:
+        - dataset: "cost_features"
+          column: "total_paid_amount"
+          operator: "greater_than_or_equal"
+          value: 100000
+        - dataset: "risk_features"
+          column: "latest_sdoh_risk_score"
+          operator: "greater_than_or_equal"
+          value: 0.85
+      priority_rank: 1
+
+    complex_chronic:
+      description: "Members with high risk and high utilization."
+      conditions:
+        - dataset: "risk_features"
+          column: "latest_sdoh_risk_score"
+          operator: "greater_than_or_equal"
+          value: 0.70
+        - dataset: "utilization_features"
+          column: "total_claims"
+          operator: "greater_than_or_equal"
+          value: 8
+      priority_rank: 2
+
+    rising_risk:
+      description: "Members with moderate risk who may become high risk."
+      conditions:
+        - dataset: "risk_features"
+          column: "latest_sdoh_risk_score"
+          operator: "greater_than_or_equal"
+          value: 0.40
+        - dataset: "risk_features"
+          column: "latest_sdoh_risk_score"
+          operator: "less_than"
+          value: 0.70
+      priority_rank: 3
+
+    healthy:
+      description: "Members with low risk and low utilization."
+      conditions:
+        - dataset: "risk_features"
+          column: "latest_sdoh_risk_score"
+          operator: "less_than"
+          value: 0.40
+        - dataset: "utilization_features"
+          column: "total_claims"
+          operator: "less_than"
+          value: 3
+      priority_rank: 4
+
+###############################################################################
+# Provider Attribution Analytics
+###############################################################################
+
+provider_attribution_analytics:
+  enabled: true
+
+  source_dataset: "provider_attribution_features"
+  member_key: "provider_id"
+  provider_key: "provider_id"
+
+  required_columns:
+    - "provider_id"
+
+  metrics:
+
+    attribution_record_count:
+      calculation_type: "count_rows"
+      description: "Number of provider attribution feature records."
+
+    total_provider_claim_count:
+      calculation_type: "sum"
+      column: "claim_count"
+      description: "Total claim count attributed to each provider."
+
+    total_provider_encounter_count:
+      calculation_type: "sum"
+      column: "encounter_count"
+      description: "Total encounter count attributed to each provider."
+
+    total_provider_paid_amount:
+      calculation_type: "sum"
+      column: "total_paid_amount"
+      description: "Total paid amount attributed to each provider."
+
+###############################################################################
+# Validation Rules
+###############################################################################
+
+validation:
+  enabled: true
+
+  rules:
+
+    required_inputs_exist:
+      enabled: true
+      severity: "ERROR"
+
+    required_columns_exist:
+      enabled: true
+      severity: "ERROR"
+
+    datasets_not_empty:
+      enabled: true
+      severity: "ERROR"
+
+    member_key_not_null:
+      enabled: true
+      severity: "ERROR"
+
+    duplicate_member_key_warning:
+      enabled: true
+      severity: "WARNING"
+
+    output_row_count_check:
+      enabled: true
+      severity: "WARNING"
+
+###############################################################################
+# Metadata
+###############################################################################
+
+metadata:
+  enabled: true
+
+  include_column_statistics: true
+  include_dataset_inventory: true
+  include_rule_catalog: true
+  include_lineage: true
+
+###############################################################################
+# Audit
+###############################################################################
+
+audit:
+  enabled: true
+
+  include_step_audit: true
+  include_validation_results: true
+  include_execution_summary: true
+
+###############################################################################
+# End of File
+###############################################################################

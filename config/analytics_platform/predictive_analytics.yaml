@@ -1,0 +1,446 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/analytics_platform/predictive_analytics.yaml
+#
+# Layer:
+#   Layer 2E - Predictive Analytics
+#
+# Purpose:
+#   Defines configuration for Predictive Analytics built on top of MedFabric
+#   Model Training & Scoring outputs.
+#
+# Architectural Rule:
+#   Predictive Analytics consumes scored model outputs.
+#
+#   Predictive Analytics does NOT train models.
+#   Predictive Analytics does NOT create model artifacts.
+#   Predictive Analytics does NOT depend on Feature Store directly for scoring.
+#
+#   The dependency flow is:
+#
+#     Feature Store
+#       ↓
+#     Layer 2D - Model Training & Scoring
+#       ↓
+#     data/scoring/
+#       ↓
+#     Layer 2E - Predictive Analytics
+#
+# Inputs:
+#   Scoring Outputs:
+#     - data/scoring/high_cost_scores.parquet
+#     - data/scoring/readmission_scores.parquet
+#     - data/scoring/er_utilization_scores.parquet
+#     - data/scoring/rising_risk_scores.parquet
+#     - data/scoring/chronic_progression_scores.parquet
+#     - data/scoring/medication_non_adherence_scores.parquet
+#     - data/scoring/avoidable_admission_scores.parquet
+#     - data/scoring/care_gap_closure_scores.parquet
+#
+#   Modeling Metadata:
+#     - data/metadata/modeling_model_registry.parquet
+#
+# Outputs:
+#   data/analytics_platform/predictive_analytics/
+#
+# Run:
+#   python -m src.analytics_platform.predictive_analytics.build_predictive_analytics_layer
+#
+###############################################################################
+
+predictive_analytics:
+  layer_name: "Layer 2E - Predictive Analytics"
+  domain_name: "Predictive Analytics"
+  output_format: "parquet"
+  enabled: true
+
+###############################################################################
+# Logging
+###############################################################################
+
+logging:
+  level: "INFO"
+  module_log_dir: "logs/modules"
+  log_file_name: "predictive_analytics.log"
+
+###############################################################################
+# Paths
+###############################################################################
+
+paths:
+
+  ###########################################################################
+  # Input Datasets
+  ###########################################################################
+
+  inputs:
+
+    high_cost_scores:
+      path: "data/scoring/high_cost_scores.parquet"
+      format: "parquet"
+      required: true
+
+    readmission_scores:
+      path: "data/scoring/readmission_scores.parquet"
+      format: "parquet"
+      required: true
+
+    er_utilization_scores:
+      path: "data/scoring/er_utilization_scores.parquet"
+      format: "parquet"
+      required: true
+
+    rising_risk_scores:
+      path: "data/scoring/rising_risk_scores.parquet"
+      format: "parquet"
+      required: true
+
+    chronic_progression_scores:
+      path: "data/scoring/chronic_progression_scores.parquet"
+      format: "parquet"
+      required: true
+
+    medication_non_adherence_scores:
+      path: "data/scoring/medication_non_adherence_scores.parquet"
+      format: "parquet"
+      required: true
+
+    avoidable_admission_scores:
+      path: "data/scoring/avoidable_admission_scores.parquet"
+      format: "parquet"
+      required: true
+
+    care_gap_closure_scores:
+      path: "data/scoring/care_gap_closure_scores.parquet"
+      format: "parquet"
+      required: true
+
+    modeling_model_registry:
+      path: "data/metadata/modeling_model_registry.parquet"
+      format: "parquet"
+      required: true
+
+  ###########################################################################
+  # Output Datasets
+  ###########################################################################
+
+  outputs:
+
+    predictive_analytics_root:
+      path: "data/analytics_platform/predictive_analytics"
+
+    unified_prediction_registry:
+      path: "data/analytics_platform/predictive_analytics/unified_prediction_registry"
+
+    member_prediction_summary:
+      path: "data/analytics_platform/predictive_analytics/member_prediction_summary"
+
+    model_risk_distribution:
+      path: "data/analytics_platform/predictive_analytics/model_risk_distribution"
+
+    high_priority_member_registry:
+      path: "data/analytics_platform/predictive_analytics/high_priority_member_registry"
+
+    prediction_model_summary:
+      path: "data/analytics_platform/predictive_analytics/prediction_model_summary"
+
+  ###########################################################################
+  # Metadata Outputs
+  ###########################################################################
+
+  metadata_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/metadata"
+
+    predictive_analytics_dataset_inventory:
+      path: "data/analytics_platform/metadata/predictive_analytics_dataset_inventory"
+
+    predictive_analytics_column_dictionary:
+      path: "data/analytics_platform/metadata/predictive_analytics_column_dictionary"
+
+    predictive_analytics_rule_catalog:
+      path: "data/analytics_platform/metadata/predictive_analytics_rule_catalog"
+
+  ###########################################################################
+  # Audit Outputs
+  ###########################################################################
+
+  audit_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/audit"
+
+    predictive_analytics_audit_records:
+      path: "data/analytics_platform/audit/predictive_analytics_audit_records"
+
+    predictive_analytics_validation_results:
+      path: "data/analytics_platform/audit/predictive_analytics_validation_results"
+
+    predictive_analytics_execution_summary:
+      path: "data/analytics_platform/audit/predictive_analytics_execution_summary"
+
+###############################################################################
+# Join Keys
+###############################################################################
+
+join_keys:
+
+  member_key: "member_id"
+  model_key: "model_key"
+
+###############################################################################
+# Model Score Registry
+###############################################################################
+
+model_score_registry:
+
+  high_cost:
+    enabled: true
+    source_dataset: "high_cost_scores"
+    model_name: "High Cost Model"
+    score_column: "high_cost_risk_score"
+    prediction_column: "high_cost_prediction"
+    tier_column: "high_cost_risk_tier"
+
+  readmission:
+    enabled: true
+    source_dataset: "readmission_scores"
+    model_name: "Readmission Model"
+    score_column: "readmission_risk_score"
+    prediction_column: "readmission_prediction"
+    tier_column: "readmission_risk_tier"
+
+  er_utilization:
+    enabled: true
+    source_dataset: "er_utilization_scores"
+    model_name: "ER Utilization Model"
+    score_column: "er_utilization_risk_score"
+    prediction_column: "er_utilization_prediction"
+    tier_column: "er_utilization_risk_tier"
+
+  rising_risk:
+    enabled: true
+    source_dataset: "rising_risk_scores"
+    model_name: "Rising Risk Model"
+    score_column: "rising_risk_score"
+    prediction_column: "rising_risk_prediction"
+    tier_column: "rising_risk_tier"
+
+  chronic_progression:
+    enabled: true
+    source_dataset: "chronic_progression_scores"
+    model_name: "Chronic Progression Model"
+    score_column: "chronic_progression_risk_score"
+    prediction_column: "chronic_progression_prediction"
+    tier_column: "chronic_progression_risk_tier"
+
+  medication_non_adherence:
+    enabled: true
+    source_dataset: "medication_non_adherence_scores"
+    model_name: "Medication Non-Adherence Model"
+    score_column: "medication_non_adherence_risk_score"
+    prediction_column: "medication_non_adherence_prediction"
+    tier_column: "medication_non_adherence_risk_tier"
+
+  avoidable_admission:
+    enabled: true
+    source_dataset: "avoidable_admission_scores"
+    model_name: "Avoidable Admission Model"
+    score_column: "avoidable_admission_risk_score"
+    prediction_column: "avoidable_admission_prediction"
+    tier_column: "avoidable_admission_risk_tier"
+
+  care_gap_closure:
+    enabled: true
+    source_dataset: "care_gap_closure_scores"
+    model_name: "Care Gap Closure Model"
+    score_column: "care_gap_closure_score"
+    prediction_column: "care_gap_closure_prediction"
+    tier_column: "care_gap_closure_tier"
+
+###############################################################################
+# Unified Prediction Registry
+###############################################################################
+
+unified_prediction_registry:
+  enabled: true
+
+  output_grain: "member_model"
+
+  standard_columns:
+    - "member_id"
+    - "model_key"
+    - "model_name"
+    - "prediction_score"
+    - "prediction_flag"
+    - "prediction_tier"
+    - "modeling_layer_run_id"
+    - "scored_at_utc"
+
+###############################################################################
+# Member Prediction Summary
+###############################################################################
+
+member_prediction_summary:
+  enabled: true
+
+  aggregation_grain: "member"
+
+  summary_metrics:
+    max_prediction_score:
+      calculation_type: "max"
+      source_column: "prediction_score"
+
+    average_prediction_score:
+      calculation_type: "mean"
+      source_column: "prediction_score"
+
+    positive_prediction_count:
+      calculation_type: "sum"
+      source_column: "prediction_flag"
+
+    model_count:
+      calculation_type: "count_distinct"
+      source_column: "model_key"
+
+###############################################################################
+# High Priority Member Registry
+###############################################################################
+
+high_priority_member_registry:
+  enabled: true
+
+  source_dataset: "member_prediction_summary"
+
+  priority_rules:
+
+    very_high_priority:
+      label: "Very High Priority"
+      min_score: 0.85
+      min_positive_predictions: 2
+      priority_rank: 1
+
+    high_priority:
+      label: "High Priority"
+      min_score: 0.70
+      min_positive_predictions: 1
+      priority_rank: 2
+
+    moderate_priority:
+      label: "Moderate Priority"
+      min_score: 0.40
+      min_positive_predictions: 1
+      priority_rank: 3
+
+    low_priority:
+      label: "Low Priority"
+      min_score: 0.00
+      min_positive_predictions: 0
+      priority_rank: 4
+
+###############################################################################
+# Model Risk Distribution
+###############################################################################
+
+model_risk_distribution:
+  enabled: true
+
+  group_by:
+    - "model_key"
+    - "model_name"
+    - "prediction_tier"
+
+  metrics:
+
+    member_count:
+      calculation_type: "count_distinct"
+      source_column: "member_id"
+
+    average_prediction_score:
+      calculation_type: "mean"
+      source_column: "prediction_score"
+
+    positive_prediction_count:
+      calculation_type: "sum"
+      source_column: "prediction_flag"
+
+###############################################################################
+# Prediction Model Summary
+###############################################################################
+
+prediction_model_summary:
+  enabled: true
+
+  source_dataset: "modeling_model_registry"
+
+  include_model_registry: true
+  include_scoring_record_counts: true
+  include_score_distribution: true
+
+###############################################################################
+# Validation Rules
+###############################################################################
+
+validation:
+  enabled: true
+
+  rules:
+
+    required_inputs_exist:
+      enabled: true
+      severity: "ERROR"
+
+    required_columns_exist:
+      enabled: true
+      severity: "ERROR"
+
+    datasets_not_empty:
+      enabled: true
+      severity: "ERROR"
+
+    member_key_not_null:
+      enabled: true
+      severity: "ERROR"
+
+    model_score_columns_exist:
+      enabled: true
+      severity: "ERROR"
+
+    unified_registry_row_count_check:
+      enabled: true
+      severity: "WARNING"
+
+    prediction_summary_row_count_check:
+      enabled: true
+      severity: "WARNING"
+
+###############################################################################
+# Metadata
+###############################################################################
+
+metadata:
+  enabled: true
+
+  include_column_statistics: true
+  include_dataset_inventory: true
+  include_rule_catalog: true
+  include_lineage: true
+
+###############################################################################
+# Audit
+###############################################################################
+
+audit:
+  enabled: true
+
+  include_step_audit: true
+  include_validation_results: true
+  include_execution_summary: true
+
+###############################################################################
+# End of File
+###############################################################################

@@ -1,0 +1,417 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/analytics_platform/care_management.yaml
+#
+# Layer:
+#   Layer 2G - Care Management
+#
+# Purpose:
+#   Defines configuration for Care Management analytics built on top of
+#   Population Health, Clinical Analytics, Quality Analytics, Predictive
+#   Analytics, and Provider Analytics outputs.
+#
+# Inputs:
+#   Population Health:
+#     - data/analytics_platform/population_health/member_segmentation.parquet
+#     - data/analytics_platform/population_health/risk_stratification.parquet
+#
+#   Clinical Analytics:
+#     - data/analytics_platform/clinical_analytics/condition_registry.parquet
+#
+#   Quality Analytics:
+#     - data/analytics_platform/quality_analytics/care_gaps.parquet
+#
+#   Predictive Analytics:
+#     - data/analytics_platform/predictive_analytics/high_priority_member_registry.parquet
+#
+#   Provider Analytics:
+#     - data/analytics_platform/provider_analytics/provider_performance_summary.parquet
+#
+# Outputs:
+#   data/analytics_platform/care_management/
+#
+# Run:
+#   python -m src.analytics_platform.care_management.build_care_management_layer
+#
+###############################################################################
+
+care_management:
+  layer_name: "Layer 2G - Care Management"
+  domain_name: "Care Management"
+  output_format: "parquet"
+  enabled: true
+
+###############################################################################
+# Logging
+###############################################################################
+
+logging:
+  level: "INFO"
+  module_log_dir: "logs/modules"
+  log_file_name: "care_management.log"
+
+###############################################################################
+# Paths
+###############################################################################
+
+paths:
+
+  ###########################################################################
+  # Input Datasets
+  ###########################################################################
+
+  inputs:
+
+    member_segmentation:
+      path: "data/analytics_platform/population_health/member_segmentation.parquet"
+      format: "parquet"
+      required: true
+
+    risk_stratification:
+      path: "data/analytics_platform/population_health/risk_stratification.parquet"
+      format: "parquet"
+      required: true
+
+    condition_registry:
+      path: "data/analytics_platform/clinical_analytics/condition_registry.parquet"
+      format: "parquet"
+      required: true
+
+    care_gaps:
+      path: "data/analytics_platform/quality_analytics/care_gaps.parquet"
+      format: "parquet"
+      required: true
+
+    high_priority_member_registry:
+      path: "data/analytics_platform/predictive_analytics/high_priority_member_registry.parquet"
+      format: "parquet"
+      required: true
+
+    provider_performance_summary:
+      path: "data/analytics_platform/provider_analytics/provider_performance_summary.parquet"
+      format: "parquet"
+      required: true
+
+  ###########################################################################
+  # Output Datasets
+  ###########################################################################
+
+  outputs:
+
+    care_management_root:
+      path: "data/analytics_platform/care_management"
+
+    care_programs:
+      path: "data/analytics_platform/care_management/care_programs"
+
+    case_management_worklist:
+      path: "data/analytics_platform/care_management/case_management_worklist"
+
+    transitions_of_care:
+      path: "data/analytics_platform/care_management/transitions_of_care"
+
+    disease_management:
+      path: "data/analytics_platform/care_management/disease_management"
+
+    outreach_tracking:
+      path: "data/analytics_platform/care_management/outreach_tracking"
+
+    program_effectiveness:
+      path: "data/analytics_platform/care_management/program_effectiveness"
+
+  ###########################################################################
+  # Metadata Outputs
+  ###########################################################################
+
+  metadata_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/metadata"
+
+    care_management_dataset_inventory:
+      path: "data/analytics_platform/metadata/care_management_dataset_inventory"
+
+    care_management_column_dictionary:
+      path: "data/analytics_platform/metadata/care_management_column_dictionary"
+
+    care_management_rule_catalog:
+      path: "data/analytics_platform/metadata/care_management_rule_catalog"
+
+  ###########################################################################
+  # Audit Outputs
+  ###########################################################################
+
+  audit_outputs:
+
+    default_output_dir:
+      path: "data/analytics_platform/audit"
+
+    care_management_audit_records:
+      path: "data/analytics_platform/audit/care_management_audit_records"
+
+    care_management_validation_results:
+      path: "data/analytics_platform/audit/care_management_validation_results"
+
+    care_management_execution_summary:
+      path: "data/analytics_platform/audit/care_management_execution_summary"
+
+###############################################################################
+# Join Keys
+###############################################################################
+
+join_keys:
+
+  member_key: "member_id"
+  provider_key: "provider_id"
+  program_key: "care_program_name"
+
+###############################################################################
+# Care Management Framework
+###############################################################################
+
+care_management_framework:
+  enabled: true
+
+  base_member_dataset: "high_priority_member_registry"
+  member_key: "member_id"
+
+  enrichment_datasets:
+    - "member_segmentation"
+    - "risk_stratification"
+    - "condition_registry"
+    - "care_gaps"
+
+###############################################################################
+# Care Programs
+###############################################################################
+
+care_programs:
+  enabled: true
+
+  program_rules:
+
+    complex_case_management:
+      enabled: true
+      care_program_name: "Complex Case Management"
+      care_program_category: "Case Management"
+      source_dataset: "high_priority_member_registry"
+      rule_column: "priority_label"
+      operator: "equals"
+      value: "Very High Priority"
+      program_priority_rank: 1
+      description: "Members with very high predictive priority."
+
+    chronic_disease_management:
+      enabled: true
+      care_program_name: "Chronic Disease Management"
+      care_program_category: "Disease Management"
+      source_dataset: "member_segmentation"
+      rule_column: "member_segment"
+      operator: "in"
+      value:
+        - "complex_chronic"
+        - "catastrophic"
+      program_priority_rank: 2
+      description: "Members in chronic or catastrophic segments."
+
+    quality_gap_management:
+      enabled: true
+      care_program_name: "Quality Gap Management"
+      care_program_category: "Quality"
+      source_dataset: "care_gaps"
+      rule_column: "care_gap_severity"
+      operator: "in"
+      value:
+        - "High"
+        - "Medium"
+      program_priority_rank: 3
+      description: "Members with open care gaps."
+
+    risk_navigation:
+      enabled: true
+      care_program_name: "Risk Navigation"
+      care_program_category: "Risk"
+      source_dataset: "risk_stratification"
+      rule_column: "risk_tier"
+      operator: "in"
+      value:
+        - "Very High Risk"
+        - "High Risk"
+        - "Unassigned"
+      program_priority_rank: 4
+      description: "Members with elevated or unassigned risk signals."
+
+###############################################################################
+# Case Management Worklist
+###############################################################################
+
+case_management_worklist:
+  enabled: true
+
+  source_dataset: "care_programs"
+
+  priority_columns:
+    - "program_priority_rank"
+    - "priority_rank"
+    - "segment_priority_rank"
+    - "risk_priority_rank"
+
+  output_columns:
+    - "member_id"
+    - "care_program_name"
+    - "care_program_category"
+    - "program_priority_rank"
+    - "priority_label"
+    - "priority_rank"
+    - "member_segment"
+    - "risk_tier"
+    - "top_risk_model_key"
+    - "top_risk_model_name"
+    - "top_risk_score"
+
+###############################################################################
+# Transitions of Care
+###############################################################################
+
+transitions_of_care:
+  enabled: true
+
+  source_dataset: "high_priority_member_registry"
+
+  transition_rules:
+
+    high_risk_transition_candidate:
+      enabled: true
+      transition_name: "High Risk Transition Candidate"
+      transition_category: "Risk Transition"
+      rule_column: "top_risk_score"
+      operator: "greater_than_or_equal"
+      value: 0.85
+      transition_priority_rank: 1
+      description: "Members requiring transition-style outreach based on high predicted risk."
+
+###############################################################################
+# Disease Management
+###############################################################################
+
+disease_management:
+  enabled: true
+
+  source_dataset: "condition_registry"
+
+  disease_rules:
+
+    clinical_risk_management:
+      enabled: true
+      disease_program_name: "Clinical Risk Management"
+      disease_category: "Risk"
+      rule_column: "condition_name"
+      operator: "equals"
+      value: "Clinical Risk Signal"
+      disease_priority_rank: 1
+      description: "Members with clinical risk condition signals."
+
+    abnormal_lab_management:
+      enabled: true
+      disease_program_name: "Abnormal Laboratory Management"
+      disease_category: "Laboratory"
+      rule_column: "condition_category"
+      operator: "equals"
+      value: "Laboratory"
+      disease_priority_rank: 2
+      description: "Members with abnormal laboratory activity signals."
+
+###############################################################################
+# Outreach Tracking
+###############################################################################
+
+outreach_tracking:
+  enabled: true
+
+  source_dataset: "case_management_worklist"
+
+  default_outreach_status: "Pending"
+  default_outreach_channel: "Care Manager Review"
+  default_owner_role: "Care Management Team"
+
+###############################################################################
+# Program Effectiveness
+###############################################################################
+
+program_effectiveness:
+  enabled: true
+
+  source_dataset: "care_programs"
+
+  group_by:
+    - "care_program_name"
+    - "care_program_category"
+
+  metrics:
+
+    member_count:
+      calculation_type: "count_distinct"
+      column: "member_id"
+
+    average_program_priority:
+      calculation_type: "mean"
+      column: "program_priority_rank"
+
+###############################################################################
+# Validation Rules
+###############################################################################
+
+validation:
+  enabled: true
+
+  rules:
+
+    required_inputs_exist:
+      enabled: true
+      severity: "ERROR"
+
+    required_columns_exist:
+      enabled: true
+      severity: "ERROR"
+
+    datasets_not_empty:
+      enabled: true
+      severity: "ERROR"
+
+    member_key_not_null:
+      enabled: true
+      severity: "ERROR"
+
+    care_management_output_row_count_check:
+      enabled: true
+      severity: "WARNING"
+
+###############################################################################
+# Metadata
+###############################################################################
+
+metadata:
+  enabled: true
+
+  include_column_statistics: true
+  include_dataset_inventory: true
+  include_rule_catalog: true
+  include_lineage: true
+
+###############################################################################
+# Audit
+###############################################################################
+
+audit:
+  enabled: true
+
+  include_step_audit: true
+  include_validation_results: true
+  include_execution_summary: true
+
+###############################################################################
+# End of File
+###############################################################################
