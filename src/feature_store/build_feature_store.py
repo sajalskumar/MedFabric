@@ -363,7 +363,11 @@ def safe_select_columns(
     requested_columns: List[str],
 ) -> pd.DataFrame:
     """
-    Select columns that exist in the DataFrame.
+    Select only requested columns that exist in the source DataFrame.
+
+    This helper keeps builders resilient when Gold marts evolve over time.
+    Missing columns are skipped rather than causing immediate failure.
+    Required key validation still happens later through validate_feature_group().
     """
     available_columns = [
         column_name
@@ -372,6 +376,49 @@ def safe_select_columns(
     ]
 
     return dataframe[available_columns].copy()
+
+
+def fill_numeric_feature(
+    dataframe: pd.DataFrame,
+    column_name: str,
+    default_value: float = 0.0,
+) -> pd.DataFrame:
+    """
+    Convert a feature column to numeric and fill missing values.
+
+    Why this exists:
+        Pandas is deprecating silent dtype downcasting behavior on fillna().
+        Explicit numeric conversion avoids FutureWarning messages and makes
+        feature data types deterministic.
+    """
+    if column_name in dataframe.columns:
+        dataframe[column_name] = (
+            pd.to_numeric(dataframe[column_name], errors="coerce")
+            .fillna(default_value)
+        )
+
+    return dataframe
+
+
+def fill_integer_feature(
+    dataframe: pd.DataFrame,
+    column_name: str,
+    default_value: int = 0,
+) -> pd.DataFrame:
+    """
+    Convert a feature column to integer and fill missing values.
+
+    This is used for count-like features such as total claims, lab result
+    counts, pharmacy claim counts, and encounter counts.
+    """
+    if column_name in dataframe.columns:
+        dataframe[column_name] = (
+            pd.to_numeric(dataframe[column_name], errors="coerce")
+            .fillna(default_value)
+            .astype("int64")
+        )
+
+    return dataframe
 
 
 def build_demographic_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -402,6 +449,11 @@ def build_demographic_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     features = safe_select_columns(member_360, requested_columns)
 
     if "age_years" in features.columns:
+        features["age_years"] = pd.to_numeric(
+            features["age_years"],
+            errors="coerce",
+        )
+
         features["age_band"] = pd.cut(
             features["age_years"],
             bins=[-1, 17, 44, 64, 200],
@@ -434,8 +486,16 @@ def build_enrollment_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     features = safe_select_columns(member_360, requested_columns)
 
     if "coverage_start_date" in features.columns and "coverage_end_date" in features.columns:
-        features["coverage_start_date"] = pd.to_datetime(features["coverage_start_date"], errors="coerce")
-        features["coverage_end_date"] = pd.to_datetime(features["coverage_end_date"], errors="coerce")
+        features["coverage_start_date"] = pd.to_datetime(
+            features["coverage_start_date"],
+            errors="coerce",
+        )
+
+        features["coverage_end_date"] = pd.to_datetime(
+            features["coverage_end_date"],
+            errors="coerce",
+        )
+
         features["coverage_days"] = (
             features["coverage_end_date"] - features["coverage_start_date"]
         ).dt.days
@@ -458,8 +518,12 @@ def build_claims_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
     features = safe_select_columns(member_360, requested_columns)
 
+    features = fill_integer_feature(features, "total_claims", 0)
+    features = fill_numeric_feature(features, "total_allowed_amount", 0.0)
+    features = fill_numeric_feature(features, "total_paid_amount", 0.0)
+
     if "total_claims" in features.columns:
-        features["has_claim_activity"] = features["total_claims"].fillna(0) > 0
+        features["has_claim_activity"] = features["total_claims"] > 0
 
     return features
 
@@ -479,18 +543,18 @@ def build_cost_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
     features = safe_select_columns(member_360, requested_columns)
 
-    numeric_columns = [
+    for column_name in [
         "total_allowed_amount",
         "total_paid_amount",
         "total_pharmacy_paid_amount",
-    ]
-
-    for column_name in numeric_columns:
-        if column_name in features.columns:
-            features[column_name] = features[column_name].fillna(0)
+    ]:
+        features = fill_numeric_feature(features, column_name, 0.0)
 
     if "total_paid_amount" in features.columns:
-        features["high_cost_member_flag"] = features["total_paid_amount"] >= features["total_paid_amount"].quantile(0.90)
+        features["high_cost_member_flag"] = (
+            features["total_paid_amount"]
+            >= features["total_paid_amount"].quantile(0.90)
+        )
 
     return features
 
@@ -510,9 +574,12 @@ def build_utilization_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
     features = safe_select_columns(member_360, requested_columns)
 
-    for column_name in ["total_claims", "total_lab_results", "total_pharmacy_claims"]:
-        if column_name in features.columns:
-            features[column_name] = features[column_name].fillna(0)
+    for column_name in [
+        "total_claims",
+        "total_lab_results",
+        "total_pharmacy_claims",
+    ]:
+        features = fill_integer_feature(features, column_name, 0)
 
     return features
 
@@ -520,6 +587,10 @@ def build_utilization_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 def build_laboratory_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """
     Build member laboratory features from Gold Member 360.
+
+    This builder creates count-based lab features and a derived abnormal lab
+    rate. Numeric conversion is explicit to avoid Pandas FutureWarning messages
+    related to silent downcasting after fillna().
     """
     member_360 = inputs["member_360"]
 
@@ -532,12 +603,19 @@ def build_laboratory_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     features = safe_select_columns(member_360, requested_columns)
 
     for column_name in ["total_lab_results", "abnormal_lab_results"]:
-        if column_name in features.columns:
-            features[column_name] = features[column_name].fillna(0)
+        features = fill_integer_feature(features, column_name, 0)
 
     if "total_lab_results" in features.columns and "abnormal_lab_results" in features.columns:
-        features["abnormal_lab_rate"] = features["abnormal_lab_results"] / features["total_lab_results"].replace(0, pd.NA)
-        features["abnormal_lab_rate"] = features["abnormal_lab_rate"].fillna(0)
+        denominator = features["total_lab_results"].replace(0, pd.NA)
+
+        features["abnormal_lab_rate"] = (
+            pd.to_numeric(
+                features["abnormal_lab_results"] / denominator,
+                errors="coerce",
+            )
+            .fillna(0.0)
+            .astype("float64")
+        )
 
     return features
 
@@ -556,9 +634,8 @@ def build_pharmacy_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
     features = safe_select_columns(member_360, requested_columns)
 
-    for column_name in ["total_pharmacy_claims", "total_pharmacy_paid_amount"]:
-        if column_name in features.columns:
-            features[column_name] = features[column_name].fillna(0)
+    features = fill_integer_feature(features, "total_pharmacy_claims", 0)
+    features = fill_numeric_feature(features, "total_pharmacy_paid_amount", 0.0)
 
     if "total_pharmacy_claims" in features.columns:
         features["has_pharmacy_activity"] = features["total_pharmacy_claims"] > 0
@@ -580,9 +657,8 @@ def build_sdoh_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
     features = safe_select_columns(member_360, requested_columns)
 
-    for column_name in ["sdoh_assessments", "latest_sdoh_risk_score"]:
-        if column_name in features.columns:
-            features[column_name] = features[column_name].fillna(0)
+    features = fill_integer_feature(features, "sdoh_assessments", 0)
+    features = fill_numeric_feature(features, "latest_sdoh_risk_score", 0.0)
 
     if "latest_sdoh_risk_score" in features.columns:
         features["high_sdoh_risk_flag"] = features["latest_sdoh_risk_score"] >= 8
@@ -606,9 +682,10 @@ def build_provider_attribution_features(inputs: Dict[str, pd.DataFrame]) -> pd.D
 
     features = safe_select_columns(provider_performance, requested_columns)
 
-    for column_name in ["claim_count", "encounter_count", "total_paid_amount", "total_allowed_amount"]:
-        if column_name in features.columns:
-            features[column_name] = features[column_name].fillna(0)
+    features = fill_integer_feature(features, "claim_count", 0)
+    features = fill_integer_feature(features, "encounter_count", 0)
+    features = fill_numeric_feature(features, "total_paid_amount", 0.0)
+    features = fill_numeric_feature(features, "total_allowed_amount", 0.0)
 
     if "claim_count" in features.columns:
         features["active_provider_flag"] = features["claim_count"] > 0
@@ -632,7 +709,10 @@ def build_temporal_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
     for column_name in ["coverage_start_date", "coverage_end_date"]:
         if column_name in features.columns:
-            features[column_name] = pd.to_datetime(features[column_name], errors="coerce")
+            features[column_name] = pd.to_datetime(
+                features[column_name],
+                errors="coerce",
+            )
 
     if "coverage_start_date" in features.columns:
         features["coverage_start_year"] = features["coverage_start_date"].dt.year
@@ -647,7 +727,7 @@ def build_temporal_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 def build_risk_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """
-    Build reusable member risk features from multiple Feature Store concepts.
+    Build reusable member risk features from Gold Member 360.
     """
     member_360 = inputs["member_360"]
 
@@ -664,22 +744,19 @@ def build_risk_features(inputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
     features = safe_select_columns(member_360, requested_columns)
 
-    numeric_columns = [
-        "age_years",
-        "total_claims",
-        "total_paid_amount",
-        "total_pharmacy_claims",
-        "total_lab_results",
-        "abnormal_lab_results",
-        "latest_sdoh_risk_score",
-    ]
-
-    for column_name in numeric_columns:
-        if column_name in features.columns:
-            features[column_name] = features[column_name].fillna(0)
+    features = fill_numeric_feature(features, "age_years", 0.0)
+    features = fill_integer_feature(features, "total_claims", 0)
+    features = fill_numeric_feature(features, "total_paid_amount", 0.0)
+    features = fill_integer_feature(features, "total_pharmacy_claims", 0)
+    features = fill_integer_feature(features, "total_lab_results", 0)
+    features = fill_integer_feature(features, "abnormal_lab_results", 0)
+    features = fill_numeric_feature(features, "latest_sdoh_risk_score", 0.0)
 
     if "total_paid_amount" in features.columns:
-        features["high_cost_risk_signal"] = features["total_paid_amount"] >= features["total_paid_amount"].quantile(0.90)
+        features["high_cost_risk_signal"] = (
+            features["total_paid_amount"]
+            >= features["total_paid_amount"].quantile(0.90)
+        )
 
     if "latest_sdoh_risk_score" in features.columns:
         features["sdoh_risk_signal"] = features["latest_sdoh_risk_score"] >= 8
@@ -732,7 +809,9 @@ def build_feature_store(context) -> Dict[str, pd.DataFrame]:
     )
 
     if not bool(configuration_config.get("enabled", True)):
-        logger.warning("Feature Store is disabled in config/feature_store/feature_store.yaml.")
+        logger.warning(
+            "Feature Store is disabled in config/feature_store/feature_store.yaml."
+        )
         return {}
 
     inputs = load_feature_store_inputs(
