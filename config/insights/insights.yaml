@@ -1,0 +1,778 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/insights/insights.yaml
+#
+# Layer:
+#   Layer 3 - Insights
+#
+# Purpose:
+#   Defines the full configuration for the MedFabric Insights layer.
+#
+# Business Context:
+#   The Insights layer converts completed Analytics Platform outputs into
+#   executive-ready, reporting-ready, and operationally useful datasets.
+#
+#   This layer is intended for dashboards, scorecards, reporting marts,
+#   portfolio demonstration, and final business-facing outputs.
+#
+# Architectural Rule:
+#   Layer 3 consumes Layer 2 Analytics Platform outputs only.
+#
+#   It does NOT read:
+#     - raw data
+#     - bronze data
+#     - silver data
+#     - gold data
+#     - feature store data
+#     - modeling training data
+#     - semantic layer data
+#
+#   All business analytics must already be curated in Layer 2.
+#
+# Inputs:
+#   data/analytics_platform/population_health/
+#   data/analytics_platform/clinical_analytics/
+#   data/analytics_platform/quality_analytics/
+#   data/analytics_platform/predictive_analytics/
+#   data/analytics_platform/provider_analytics/
+#   data/analytics_platform/care_management/
+#   data/analytics_platform/value_based_care/
+#
+# Outputs:
+#   data/insights/executive/
+#   data/insights/financial/
+#   data/insights/clinical/
+#   data/insights/population/
+#   data/insights/provider/
+#   data/insights/quality/
+#   data/insights/care_management/
+#   data/insights/value_based_care/
+#   data/insights/metadata/
+#   data/insights/audit/
+#
+# Run:
+#   python -m src.insights.build_insights_platform
+#
+###############################################################################
+
+
+###############################################################################
+# Layer Configuration
+#
+# Defines the high-level identity and output behavior for Layer 3.
+###############################################################################
+
+insights:
+  layer_name: "Layer 3 - Insights"
+  domain_name: "Insights"
+  output_format: "parquet"
+  enabled: true
+
+
+###############################################################################
+# Logging Configuration
+#
+# Controls logging for all Insights jobs.
+###############################################################################
+
+logging:
+  level: "INFO"
+  module_log_dir: "logs/modules"
+  pipeline_log_dir: "logs/pipeline"
+  audit_log_dir: "logs/audit"
+  error_log_dir: "logs/errors"
+  log_file_name: "insights.log"
+
+
+###############################################################################
+# Join Keys
+#
+# Standard keys used when validating or summarizing datasets.
+###############################################################################
+
+join_keys:
+  member_key: "member_id"
+  provider_key: "provider_id"
+  model_key: "model_key"
+
+
+###############################################################################
+# Paths
+#
+# All input datasets come from Layer 2 Analytics Platform outputs.
+# All output datasets are written under data/insights/.
+###############################################################################
+
+paths:
+
+  ###########################################################################
+  # Input Datasets
+  #
+  # These are Layer 2 outputs used by Layer 3 reporting domains.
+  # Most are optional because reporting should still run when one domain is
+  # unavailable, unless a specific reporting module requires it.
+  ###########################################################################
+
+  inputs:
+
+    #########################################################################
+    # Population Health Inputs
+    #########################################################################
+
+    population_health_summary:
+      path: "data/analytics_platform/population_health/population_health_summary.parquet"
+      format: "parquet"
+      required: false
+
+    population_segment_registry:
+      path: "data/analytics_platform/population_health/population_segment_registry.parquet"
+      format: "parquet"
+      required: false
+
+    #########################################################################
+    # Clinical Analytics Inputs
+    #########################################################################
+
+    clinical_condition_summary:
+      path: "data/analytics_platform/clinical_analytics/clinical_condition_summary.parquet"
+      format: "parquet"
+      required: false
+
+    condition_registry:
+      path: "data/analytics_platform/clinical_analytics/condition_registry.parquet"
+      format: "parquet"
+      required: false
+
+    #########################################################################
+    # Quality Analytics Inputs
+    #########################################################################
+
+    quality_gap_summary:
+      path: "data/analytics_platform/quality_analytics/quality_gap_summary.parquet"
+      format: "parquet"
+      required: false
+
+    quality_gap_registry:
+      path: "data/analytics_platform/quality_analytics/quality_gap_registry.parquet"
+      format: "parquet"
+      required: false
+
+    #########################################################################
+    # Predictive Analytics Inputs
+    #########################################################################
+
+    unified_prediction_registry:
+      path: "data/analytics_platform/predictive_analytics/unified_prediction_registry.parquet"
+      format: "parquet"
+      required: false
+
+    member_prediction_summary:
+      path: "data/analytics_platform/predictive_analytics/member_prediction_summary.parquet"
+      format: "parquet"
+      required: false
+
+    high_priority_member_registry:
+      path: "data/analytics_platform/predictive_analytics/high_priority_member_registry.parquet"
+      format: "parquet"
+      required: false
+
+    model_risk_distribution:
+      path: "data/analytics_platform/predictive_analytics/model_risk_distribution.parquet"
+      format: "parquet"
+      required: false
+
+    prediction_model_summary:
+      path: "data/analytics_platform/predictive_analytics/prediction_model_summary.parquet"
+      format: "parquet"
+      required: false
+
+    #########################################################################
+    # Provider Analytics Inputs
+    #########################################################################
+
+    provider_performance_summary:
+      path: "data/analytics_platform/provider_analytics/provider_performance_summary.parquet"
+      format: "parquet"
+      required: false
+
+    provider_network_summary:
+      path: "data/analytics_platform/provider_analytics/provider_network_summary.parquet"
+      format: "parquet"
+      required: false
+
+    provider_specialty_summary:
+      path: "data/analytics_platform/provider_analytics/provider_specialty_summary.parquet"
+      format: "parquet"
+      required: false
+
+    provider_cost_summary:
+      path: "data/analytics_platform/provider_analytics/provider_cost_summary.parquet"
+      format: "parquet"
+      required: false
+
+    provider_utilization_summary:
+      path: "data/analytics_platform/provider_analytics/provider_utilization_summary.parquet"
+      format: "parquet"
+      required: false
+
+    high_performing_providers:
+      path: "data/analytics_platform/provider_analytics/high_performing_providers.parquet"
+      format: "parquet"
+      required: false
+
+    #########################################################################
+    # Care Management Inputs
+    #########################################################################
+
+    care_programs:
+      path: "data/analytics_platform/care_management/care_programs.parquet"
+      format: "parquet"
+      required: false
+
+    case_management_worklist:
+      path: "data/analytics_platform/care_management/case_management_worklist.parquet"
+      format: "parquet"
+      required: false
+
+    transitions_of_care:
+      path: "data/analytics_platform/care_management/transitions_of_care.parquet"
+      format: "parquet"
+      required: false
+
+    disease_management:
+      path: "data/analytics_platform/care_management/disease_management.parquet"
+      format: "parquet"
+      required: false
+
+    outreach_tracking:
+      path: "data/analytics_platform/care_management/outreach_tracking.parquet"
+      format: "parquet"
+      required: false
+
+    program_effectiveness:
+      path: "data/analytics_platform/care_management/program_effectiveness.parquet"
+      format: "parquet"
+      required: false
+
+    #########################################################################
+    # Value-Based Care Inputs
+    #########################################################################
+
+    value_based_contract_summary:
+      path: "data/analytics_platform/value_based_care/value_based_contract_summary.parquet"
+      format: "parquet"
+      required: false
+
+    provider_incentive_summary:
+      path: "data/analytics_platform/value_based_care/provider_incentive_summary.parquet"
+      format: "parquet"
+      required: false
+
+    shared_savings_summary:
+      path: "data/analytics_platform/value_based_care/shared_savings_summary.parquet"
+      format: "parquet"
+      required: false
+
+    risk_adjustment_summary:
+      path: "data/analytics_platform/value_based_care/risk_adjustment_summary.parquet"
+      format: "parquet"
+      required: false
+
+    bundle_opportunity_summary:
+      path: "data/analytics_platform/value_based_care/bundle_opportunity_summary.parquet"
+      format: "parquet"
+      required: false
+
+    vbc_executive_scorecard:
+      path: "data/analytics_platform/value_based_care/vbc_executive_scorecard.parquet"
+      format: "parquet"
+      required: false
+
+
+  ###########################################################################
+  # Output Datasets
+  ###########################################################################
+
+  outputs:
+    executive_kpi_scorecard: "data/insights/executive/executive_kpi_scorecard"
+    executive_summary: "data/insights/executive/executive_summary"
+    executive_domain_status: "data/insights/executive/executive_domain_status"
+
+    financial_reporting_summary: "data/insights/financial/financial_reporting_summary"
+    clinical_reporting_summary: "data/insights/clinical/clinical_reporting_summary"
+    population_reporting_summary: "data/insights/population/population_reporting_summary"
+    provider_reporting_summary: "data/insights/provider/provider_reporting_summary"
+    quality_reporting_summary: "data/insights/quality/quality_reporting_summary"
+    care_management_reporting_summary: "data/insights/care_management/care_management_reporting_summary"
+    value_based_care_reporting_summary: "data/insights/value_based_care/value_based_care_reporting_summary"
+
+
+  ###########################################################################
+  # Metadata Outputs
+  ###########################################################################
+
+  metadata_outputs:
+    insights_dataset_inventory: "data/insights/metadata/insights_dataset_inventory"
+    insights_column_dictionary: "data/insights/metadata/insights_column_dictionary"
+    insights_rule_catalog: "data/insights/metadata/insights_rule_catalog"
+
+
+  ###########################################################################
+  # Audit Outputs
+  ###########################################################################
+
+  audit_outputs:
+    insights_audit_records: "data/insights/audit/insights_audit_records"
+    insights_validation_results: "data/insights/audit/insights_validation_results"
+    insights_execution_summary: "data/insights/audit/insights_execution_summary"
+
+
+###############################################################################
+# Executive Insights
+#
+# Purpose:
+#   Produces executive-level KPIs and summary datasets.
+###############################################################################
+
+executive_insights:
+  enabled: true
+  domain_name: "Executive Insights"
+
+  ###########################################################################
+  # Executive KPI Scorecard
+  #
+  # Each KPI is calculated from a configured Layer 2 dataset.
+  ###########################################################################
+
+  kpi_scorecard:
+    enabled: true
+    output_name: "executive_kpi_scorecard"
+
+    kpis:
+
+      population_member_count:
+        # Number of unique members represented in the population analytics layer.
+        source_dataset: "population_segment_registry"
+        calculation_type: "count_distinct"
+        column: "member_id"
+        label: "Population Members"
+        category: "Population Health"
+
+      high_priority_member_count:
+        # Number of members prioritized by predictive analytics.
+        source_dataset: "high_priority_member_registry"
+        calculation_type: "count_distinct"
+        column: "member_id"
+        label: "High Priority Members"
+        category: "Predictive Analytics"
+
+      provider_count:
+        # Number of unique providers represented in provider analytics.
+        source_dataset: "provider_performance_summary"
+        calculation_type: "count_distinct"
+        column: "provider_id"
+        label: "Providers"
+        category: "Provider Analytics"
+
+      high_performing_provider_count:
+        # Number of providers matching configured high-performance rules.
+        source_dataset: "high_performing_providers"
+        calculation_type: "count_distinct"
+        column: "provider_id"
+        label: "High Performing Providers"
+        category: "Provider Analytics"
+
+      care_program_member_count:
+        # Number of unique members assigned to care programs.
+        source_dataset: "care_programs"
+        calculation_type: "count_distinct"
+        column: "member_id"
+        label: "Care Program Members"
+        category: "Care Management"
+
+      open_case_count:
+        # Number of rows in the care management worklist.
+        source_dataset: "case_management_worklist"
+        calculation_type: "count_rows"
+        label: "Open Care Management Cases"
+        category: "Care Management"
+
+      transition_member_count:
+        # Number of members identified for transitions-of-care follow-up.
+        source_dataset: "transitions_of_care"
+        calculation_type: "count_distinct"
+        column: "member_id"
+        label: "Transition of Care Members"
+        category: "Care Management"
+
+      gross_savings_amount:
+        # Gross savings compared to configured benchmark.
+        source_dataset: "shared_savings_summary"
+        calculation_type: "sum"
+        column: "gross_savings_amount"
+        label: "Gross Savings"
+        category: "Value-Based Care"
+
+      shared_savings_amount:
+        # Provider share of savings when minimum savings threshold is met.
+        source_dataset: "shared_savings_summary"
+        calculation_type: "sum"
+        column: "provider_shared_savings_amount"
+        label: "Provider Shared Savings"
+        category: "Value-Based Care"
+
+      total_incentive_amount:
+        # Total provider incentive amount generated by VBC rules.
+        source_dataset: "provider_incentive_summary"
+        calculation_type: "sum"
+        column: "incentive_amount"
+        label: "Provider Incentives"
+        category: "Value-Based Care"
+
+
+  ###########################################################################
+  # Executive Summary
+  ###########################################################################
+
+  executive_summary:
+    enabled: true
+    output_name: "executive_summary"
+    source_assets:
+      - "executive_kpi_scorecard"
+      - "financial_reporting_summary"
+      - "clinical_reporting_summary"
+      - "population_reporting_summary"
+      - "provider_reporting_summary"
+      - "quality_reporting_summary"
+      - "care_management_reporting_summary"
+      - "value_based_care_reporting_summary"
+
+
+  ###########################################################################
+  # Executive Domain Status
+  #
+  # Shows whether each Layer 2 domain produced the expected reporting inputs.
+  ###########################################################################
+
+  domain_status:
+    enabled: true
+    output_name: "executive_domain_status"
+
+    domains:
+      population_health:
+        display_name: "Population Health"
+        required_datasets:
+          - "population_segment_registry"
+
+      clinical_analytics:
+        display_name: "Clinical Analytics"
+        required_datasets:
+          - "condition_registry"
+
+      quality_analytics:
+        display_name: "Quality Analytics"
+        required_datasets:
+          - "quality_gap_registry"
+
+      predictive_analytics:
+        display_name: "Predictive Analytics"
+        required_datasets:
+          - "member_prediction_summary"
+          - "high_priority_member_registry"
+
+      provider_analytics:
+        display_name: "Provider Analytics"
+        required_datasets:
+          - "provider_performance_summary"
+
+      care_management:
+        display_name: "Care Management"
+        required_datasets:
+          - "care_programs"
+          - "case_management_worklist"
+
+      value_based_care:
+        display_name: "Value-Based Care"
+        required_datasets:
+          - "shared_savings_summary"
+          - "vbc_executive_scorecard"
+
+
+###############################################################################
+# Financial Reporting
+###############################################################################
+
+financial_reporting:
+  enabled: true
+  output_name: "financial_reporting_summary"
+
+  source_datasets:
+    - "shared_savings_summary"
+    - "value_based_contract_summary"
+    - "provider_incentive_summary"
+    - "provider_cost_summary"
+
+  metrics:
+    gross_savings_amount:
+      # Total gross savings generated against benchmark.
+      source_dataset: "shared_savings_summary"
+      calculation_type: "sum"
+      column: "gross_savings_amount"
+
+    provider_shared_savings_amount:
+      # Total savings shared with providers.
+      source_dataset: "shared_savings_summary"
+      calculation_type: "sum"
+      column: "provider_shared_savings_amount"
+
+    payer_retained_savings_amount:
+      # Total savings retained by payer after provider sharing.
+      source_dataset: "shared_savings_summary"
+      calculation_type: "sum"
+      column: "payer_retained_savings_amount"
+
+    total_incentive_amount:
+      # Total provider incentive payout.
+      source_dataset: "provider_incentive_summary"
+      calculation_type: "sum"
+      column: "incentive_amount"
+
+
+###############################################################################
+# Clinical Reporting
+###############################################################################
+
+clinical_reporting:
+  enabled: true
+  output_name: "clinical_reporting_summary"
+
+  source_datasets:
+    - "condition_registry"
+    - "clinical_condition_summary"
+    - "disease_management"
+
+  metrics:
+    condition_member_count:
+      # Number of unique members in the clinical condition registry.
+      source_dataset: "condition_registry"
+      calculation_type: "count_distinct"
+      column: "member_id"
+
+    disease_management_member_count:
+      # Number of unique members selected for disease management.
+      source_dataset: "disease_management"
+      calculation_type: "count_distinct"
+      column: "member_id"
+
+
+###############################################################################
+# Population Reporting
+###############################################################################
+
+population_reporting:
+  enabled: true
+  output_name: "population_reporting_summary"
+
+  source_datasets:
+    - "population_segment_registry"
+    - "population_health_summary"
+    - "member_prediction_summary"
+
+  metrics:
+    population_member_count:
+      # Number of unique members represented in population health outputs.
+      source_dataset: "population_segment_registry"
+      calculation_type: "count_distinct"
+      column: "member_id"
+
+    predicted_member_count:
+      # Number of members with predictive summary output.
+      source_dataset: "member_prediction_summary"
+      calculation_type: "count_distinct"
+      column: "member_id"
+
+    average_prediction_score:
+      # Average maximum prediction score across members.
+      source_dataset: "member_prediction_summary"
+      calculation_type: "mean"
+      column: "max_prediction_score"
+
+
+###############################################################################
+# Provider Reporting
+###############################################################################
+
+provider_reporting:
+  enabled: true
+  output_name: "provider_reporting_summary"
+
+  source_datasets:
+    - "provider_performance_summary"
+    - "provider_network_summary"
+    - "provider_specialty_summary"
+    - "provider_cost_summary"
+    - "provider_utilization_summary"
+    - "high_performing_providers"
+
+  metrics:
+    provider_count:
+      # Number of unique providers represented in provider analytics.
+      source_dataset: "provider_performance_summary"
+      calculation_type: "count_distinct"
+      column: "provider_id"
+
+    high_performing_provider_count:
+      # Number of unique providers selected by high-performance rules.
+      source_dataset: "high_performing_providers"
+      calculation_type: "count_distinct"
+      column: "provider_id"
+
+
+###############################################################################
+# Quality Reporting
+###############################################################################
+
+quality_reporting:
+  enabled: true
+  output_name: "quality_reporting_summary"
+
+  source_datasets:
+    - "quality_gap_registry"
+    - "quality_gap_summary"
+
+  metrics:
+    quality_gap_member_count:
+      # Number of unique members with quality gaps.
+      source_dataset: "quality_gap_registry"
+      calculation_type: "count_distinct"
+      column: "member_id"
+
+    quality_gap_count:
+      # Number of quality gap records.
+      source_dataset: "quality_gap_registry"
+      calculation_type: "count_rows"
+
+
+###############################################################################
+# Care Management Reporting
+###############################################################################
+
+care_management_reporting:
+  enabled: true
+  output_name: "care_management_reporting_summary"
+
+  source_datasets:
+    - "care_programs"
+    - "case_management_worklist"
+    - "transitions_of_care"
+    - "outreach_tracking"
+    - "program_effectiveness"
+
+  metrics:
+    care_program_member_count:
+      # Number of unique members assigned to care programs.
+      source_dataset: "care_programs"
+      calculation_type: "count_distinct"
+      column: "member_id"
+
+    open_case_count:
+      # Number of open care management worklist records.
+      source_dataset: "case_management_worklist"
+      calculation_type: "count_rows"
+
+    transition_member_count:
+      # Number of unique members selected for transitions-of-care workflows.
+      source_dataset: "transitions_of_care"
+      calculation_type: "count_distinct"
+      column: "member_id"
+
+    outreach_record_count:
+      # Number of outreach tracking records.
+      source_dataset: "outreach_tracking"
+      calculation_type: "count_rows"
+
+
+###############################################################################
+# Value-Based Care Reporting
+###############################################################################
+
+value_based_care_reporting:
+  enabled: true
+  output_name: "value_based_care_reporting_summary"
+
+  source_datasets:
+    - "value_based_contract_summary"
+    - "provider_incentive_summary"
+    - "shared_savings_summary"
+    - "risk_adjustment_summary"
+    - "bundle_opportunity_summary"
+    - "vbc_executive_scorecard"
+
+  metrics:
+    value_based_contract_count:
+      # Number of configured value-based contract summary records.
+      source_dataset: "value_based_contract_summary"
+      calculation_type: "count_rows"
+
+    provider_incentive_count:
+      # Number of provider incentive records.
+      source_dataset: "provider_incentive_summary"
+      calculation_type: "count_rows"
+
+    shared_savings_amount:
+      # Total provider shared savings amount.
+      source_dataset: "shared_savings_summary"
+      calculation_type: "sum"
+      column: "provider_shared_savings_amount"
+
+    risk_band_count:
+      # Number of risk adjustment bands.
+      source_dataset: "risk_adjustment_summary"
+      calculation_type: "count_rows"
+
+    bundle_opportunity_count:
+      # Number of bundle opportunity records.
+      source_dataset: "bundle_opportunity_summary"
+      calculation_type: "count_rows"
+
+
+###############################################################################
+# Validation
+###############################################################################
+
+validation:
+  enabled: true
+  fail_on_missing_required_inputs: true
+  fail_on_empty_required_outputs: false
+  record_optional_missing_inputs: true
+  record_output_row_counts: true
+
+
+###############################################################################
+# Metadata
+###############################################################################
+
+metadata:
+  enabled: true
+  dataset_inventory_enabled: true
+  column_dictionary_enabled: true
+  rule_catalog_enabled: true
+
+
+###############################################################################
+# Audit
+###############################################################################
+
+audit:
+  enabled: true
+  audit_records_enabled: true
+  validation_results_enabled: true
+  execution_summary_enabled: true
+
+
+###############################################################################
+# End of File
+###############################################################################

@@ -25,6 +25,20 @@
 #     diagnosis-level evidence is exposed from Silver, Gold, or a future clinical
 #     feature group.
 #
+# Architecture:
+#     This file contains Clinical Analytics business logic only.
+#
+#     Shared Analytics Platform concerns are handled by:
+#         - src.analytics_platform.common.runtime
+#         - src.analytics_platform.common.io
+#         - src.analytics_platform.common.audit
+#         - src.analytics_platform.common.validation
+#         - src.analytics_platform.common.metadata
+#         - src.analytics_platform.common.rules
+#
+# Inputs:
+#     config/analytics_platform/clinical_analytics.yaml
+#
 # Outputs:
 #     data/analytics_platform/clinical_analytics/
 #     data/analytics_platform/metadata/
@@ -37,17 +51,42 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import sys
 import traceback
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import yaml
+
+from src.analytics_platform.common.audit import (
+    add_failed_audit,
+    add_success_audit,
+    add_warning_audit,
+)
+from src.analytics_platform.common.io import (
+    get_output_format,
+    load_input_datasets,
+    write_output_assets,
+)
+from src.analytics_platform.common.metadata import (
+    add_dataset_record,
+    add_rule_record,
+    write_audit_outputs,
+    write_metadata_outputs,
+)
+from src.analytics_platform.common.rules import apply_operator
+from src.analytics_platform.common.runtime import (
+    AnalyticsBuildResult,
+    AnalyticsDomainRuntime,
+    STATUS_FAILED,
+    STATUS_SUCCESS,
+    create_domain_runtime,
+    normalize_config_file,
+    utc_now,
+)
+from src.analytics_platform.common.validation import require_columns
+from src.common.exception_manager import PipelineError, ValidationError
+from src.common.pipeline_context import create_pipeline_context
 
 
 ###############################################################################
@@ -57,204 +96,44 @@ import yaml
 DEFAULT_CONFIG_PATH = "config/analytics_platform/clinical_analytics.yaml"
 
 DEFAULT_LAYER_NAME = "Layer 2B - Clinical Analytics"
-
 DEFAULT_DOMAIN_NAME = "Clinical Analytics"
+DOMAIN_SECTION = "clinical_analytics"
 
-DEFAULT_OUTPUT_FORMAT = "parquet"
-
-SUPPORTED_FILE_FORMATS = {"parquet", "csv", "json"}
-
-STATUS_SUCCESS = "SUCCESS"
-STATUS_FAILED = "FAILED"
-STATUS_WARNING = "WARNING"
-STATUS_SKIPPED = "SKIPPED"
+LOGGER_NAME = "medfabric.analytics_platform.clinical_analytics"
 
 
 ###############################################################################
-# Runtime Data Classes
+# Configuration and Runtime
 ###############################################################################
-
-@dataclass
-class ClinicalAnalyticsRuntime:
-    """
-    Runtime context for one Clinical Analytics execution.
-    """
-
-    run_id: str
-    project_root: Path
-    config_path: Path
-    start_time_utc: datetime
-    config: Dict[str, Any]
-    logger: logging.Logger
-    layer_name: str
-    domain_name: str
-    audit_records: List[Dict[str, Any]] = field(default_factory=list)
-    validation_records: List[Dict[str, Any]] = field(default_factory=list)
-    dataset_records: List[Dict[str, Any]] = field(default_factory=list)
-    rule_records: List[Dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
-class BuildResult:
-    """
-    Standard build result returned by the Clinical Analytics builder.
-    """
-
-    name: str
-    status: str
-    message: str
-    row_count: int = 0
-    column_count: int = 0
-
-
-###############################################################################
-# General Utilities
-###############################################################################
-
-def utc_now() -> datetime:
-    """
-    Return current UTC timestamp.
-    """
-
-    return datetime.now(timezone.utc)
-
-
-def generate_run_id() -> str:
-    """
-    Generate timestamp-based run identifier.
-    """
-
-    return utc_now().strftime("%Y%m%d_%H%M%S")
-
-
-def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
-    """
-    Resolve configured path relative to project root.
-    """
-
-    path = Path(raw_path)
-
-    if path.is_absolute():
-        return path
-
-    return project_root / path
-
-
-def ensure_directory(path: Path) -> None:
-    """
-    Create directory if it does not already exist.
-    """
-
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def safe_string(value: Any) -> str:
-    """
-    Convert value to safe string for metadata.
-    """
-
-    if value is None:
-        return ""
-
-    return str(value)
-
-
-###############################################################################
-# Logging
-###############################################################################
-
-def configure_logging(
-    project_root: Path,
-    config: Dict[str, Any],
-    run_id: str,
-) -> logging.Logger:
-    """
-    Configure Clinical Analytics logging.
-    """
-
-    logging_config = config.get("logging", {})
-
-    log_level_name = logging_config.get("level", "INFO")
-    log_level = getattr(logging, str(log_level_name).upper(), logging.INFO)
-
-    log_dir_raw = logging_config.get("module_log_dir", "logs/modules")
-    log_dir = normalize_path(project_root, log_dir_raw)
-    ensure_directory(log_dir)
-
-    log_file_name = logging_config.get("log_file_name", "clinical_analytics.log")
-    log_file_path = log_dir / log_file_name
-
-    logger = logging.getLogger("medfabric.analytics_platform.clinical_analytics")
-    logger.setLevel(log_level)
-    logger.handlers.clear()
-    logger.propagate = False
-
-    formatter = logging.Formatter(
-        fmt="[%(asctime)s] [RUN_ID=%(run_id)s] [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    class RunIdFilter(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            record.run_id = run_id
-            return True
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(log_level)
-    stream_handler.setFormatter(formatter)
-    stream_handler.addFilter(RunIdFilter())
-
-    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(RunIdFilter())
-
-    logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
-
-    logger.info("=" * 80)
-    logger.info("MedFabric Clinical Analytics started")
-    logger.info("=" * 80)
-    logger.info("Run ID: %s", run_id)
-    logger.info("Log file: %s", log_file_path)
-
-    return logger
-
-
-###############################################################################
-# Configuration
-###############################################################################
-
-def load_yaml_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load YAML configuration.
-    """
-
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as file:
-        config = yaml.safe_load(file)
-
-    if config is None:
-        raise ValueError(f"Configuration file is empty: {config_path}")
-
-    if not isinstance(config, dict):
-        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
-
-    return config
-
 
 def validate_config(config: Dict[str, Any]) -> None:
     """
+    Purpose
+    -------
     Validate required Clinical Analytics configuration sections.
-    """
 
-    errors: List[str] = []
+    Parameters
+    ----------
+    config:
+        Loaded Clinical Analytics YAML configuration.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    PipelineError
+        Raised when required configuration sections are missing.
+
+    Notes
+    -----
+    Generic YAML loading is handled by ConfigurationManager. This function only
+    validates the Clinical Analytics domain contract.
+    """
 
     required_sections = [
         "clinical_analytics",
-        "logging",
         "paths",
         "join_keys",
         "registry_framework",
@@ -265,538 +144,114 @@ def validate_config(config: Dict[str, Any]) -> None:
         "audit",
     ]
 
-    for section in required_sections:
-        if section not in config:
-            errors.append(f"Missing required configuration section: {section}")
+    missing_sections = [
+        section for section in required_sections if section not in config
+    ]
 
-    paths = config.get("paths", {})
+    paths_config = config.get("paths", {})
 
-    if not isinstance(paths, dict):
-        errors.append("Configuration section 'paths' must be a dictionary.")
-    else:
-        if "inputs" not in paths:
-            errors.append("Missing required configuration section: paths.inputs")
-        if "outputs" not in paths:
-            errors.append("Missing required configuration section: paths.outputs")
-        if "metadata_outputs" not in paths:
-            errors.append("Missing required configuration section: paths.metadata_outputs")
-        if "audit_outputs" not in paths:
-            errors.append("Missing required configuration section: paths.audit_outputs")
+    for subsection in ["inputs", "outputs", "metadata_outputs", "audit_outputs"]:
+        if subsection not in paths_config:
+            missing_sections.append(f"paths.{subsection}")
 
-    output_format = (
-        config.get("clinical_analytics", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
+    if missing_sections:
+        raise PipelineError(
+            "Clinical Analytics configuration validation failed. "
+            f"Missing sections: {missing_sections}"
+        )
+
+
+def initialize_runtime(config_path: str) -> AnalyticsDomainRuntime:
+    """
+    Purpose
+    -------
+    Initialize Clinical Analytics runtime using MedFabric PipelineContext.
+
+    Parameters
+    ----------
+    config_path:
+        Clinical Analytics configuration path.
+
+    Returns
+    -------
+    AnalyticsDomainRuntime
+        Initialized domain runtime.
+
+    Raises
+    ------
+    PipelineError
+        Raised when configuration loading or validation fails.
+
+    Notes
+    -----
+    This replaces local YAML loading, local logging setup, local path handling,
+    and local runtime objects with shared Layer 0 and Layer 2 common services.
+    """
+
+    config_file = normalize_config_file(config_path)
+
+    context = create_pipeline_context(
+        pipeline_name="Layer 2B - Clinical Analytics"
     )
 
-    if output_format not in SUPPORTED_FILE_FORMATS:
-        errors.append(
-            f"Unsupported output_format '{output_format}'. "
-            f"Supported formats: {sorted(SUPPORTED_FILE_FORMATS)}"
-        )
-
-    if errors:
-        raise ValueError(
-            "Clinical Analytics configuration validation failed:\n"
-            + "\n".join(f"- {error}" for error in errors)
-        )
-
-
-def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ClinicalAnalyticsRuntime:
-    """
-    Initialize Clinical Analytics runtime.
-    """
-
-    project_root = Path.cwd()
-    config_path = normalize_path(project_root, config_path_raw)
-    run_id = generate_run_id()
-
-    config = load_yaml_config(config_path)
+    config = context.configuration.load_yaml(config_file)
     validate_config(config)
 
-    clinical_config = config.get("clinical_analytics", {})
-
-    layer_name = clinical_config.get("layer_name", DEFAULT_LAYER_NAME)
-    domain_name = clinical_config.get("domain_name", DEFAULT_DOMAIN_NAME)
-
-    logger = configure_logging(project_root, config, run_id)
-
-    runtime = ClinicalAnalyticsRuntime(
-        run_id=run_id,
-        project_root=project_root,
-        config_path=config_path,
-        start_time_utc=utc_now(),
+    runtime = create_domain_runtime(
+        context=context,
         config=config,
-        logger=logger,
-        layer_name=layer_name,
-        domain_name=domain_name,
+        config_file=config_file,
+        domain_section=DOMAIN_SECTION,
+        default_layer_name=DEFAULT_LAYER_NAME,
+        default_domain_name=DEFAULT_DOMAIN_NAME,
     )
 
-    add_audit_record(
+    add_success_audit(
         runtime=runtime,
         step_name="initialize_runtime",
-        status=STATUS_SUCCESS,
         message="Clinical Analytics runtime initialized successfully.",
+        source_layer="Layer 2 - Analytics Platform",
+        source_dataset=config_file,
     )
 
     return runtime
 
 
 ###############################################################################
-# Audit, Validation, Metadata Records
+# Business Helper Functions
 ###############################################################################
-
-def add_audit_record(
-    runtime: ClinicalAnalyticsRuntime,
-    step_name: str,
-    status: str,
-    message: str,
-    row_count: Optional[int] = None,
-    output_path: Optional[str] = None,
-) -> None:
-    """
-    Add execution audit record.
-    """
-
-    runtime.audit_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "step_name": step_name,
-            "status": status,
-            "message": message,
-            "row_count": row_count,
-            "output_path": output_path,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_validation_record(
-    runtime: ClinicalAnalyticsRuntime,
-    dataset_name: str,
-    rule_name: str,
-    status: str,
-    message: str,
-    failed_count: Optional[int] = None,
-) -> None:
-    """
-    Add validation record.
-    """
-
-    runtime.validation_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "rule_name": rule_name,
-            "status": status,
-            "message": message,
-            "failed_count": failed_count,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_dataset_record(
-    runtime: ClinicalAnalyticsRuntime,
-    dataset_name: str,
-    dataset_type: str,
-    status: str,
-    path: Optional[str],
-    row_count: int,
-    column_count: int,
-    message: str,
-) -> None:
-    """
-    Add dataset inventory record.
-    """
-
-    runtime.dataset_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "dataset_type": dataset_type,
-            "status": status,
-            "path": path,
-            "row_count": row_count,
-            "column_count": column_count,
-            "message": message,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_rule_record(
-    runtime: ClinicalAnalyticsRuntime,
-    rule_group: str,
-    rule_name: str,
-    rule_type: str,
-    description: str,
-    source_dataset: str,
-    rule_config: Dict[str, Any],
-) -> None:
-    """
-    Add rule catalog record.
-    """
-
-    runtime.rule_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "rule_group": rule_group,
-            "rule_name": rule_name,
-            "rule_type": rule_type,
-            "description": description,
-            "source_dataset": source_dataset,
-            "rule_config_json": safe_string(rule_config),
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-###############################################################################
-# Dataset IO
-###############################################################################
-
-def get_output_format(runtime: ClinicalAnalyticsRuntime) -> str:
-    """
-    Return configured output format.
-    """
-
-    return (
-        runtime.config.get("clinical_analytics", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
-    )
-
-
-def read_dataset(path: Path, file_format: Optional[str]) -> pd.DataFrame:
-    """
-    Read dataset from disk.
-    """
-
-    if not path.exists():
-        raise FileNotFoundError(f"Input dataset not found: {path}")
-
-    resolved_format = file_format or path.suffix.replace(".", "").lower()
-
-    if resolved_format == "parquet":
-        return pd.read_parquet(path)
-
-    if resolved_format == "csv":
-        return pd.read_csv(path)
-
-    if resolved_format == "json":
-        return pd.read_json(path)
-
-    raise ValueError(f"Unsupported input file format: {resolved_format}")
-
-
-def output_path_with_format(path: Path, output_format: str) -> Path:
-    """
-    Ensure output path has configured suffix.
-    """
-
-    suffix = f".{output_format}"
-
-    if path.suffix:
-        return path.with_suffix(suffix)
-
-    return Path(str(path) + suffix)
-
-
-def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None:
-    """
-    Write dataframe to disk.
-    """
-
-    ensure_directory(path.parent)
-
-    if file_format == "parquet":
-        dataframe.to_parquet(path, index=False)
-        return
-
-    if file_format == "csv":
-        dataframe.to_csv(path, index=False)
-        return
-
-    if file_format == "json":
-        dataframe.to_json(path, orient="records", indent=2)
-        return
-
-    raise ValueError(f"Unsupported output file format: {file_format}")
-
-
-def load_input_datasets(runtime: ClinicalAnalyticsRuntime) -> Dict[str, pd.DataFrame]:
-    """
-    Load configured Clinical Analytics input datasets.
-    """
-
-    logger = runtime.logger
-    inputs_config = runtime.config.get("paths", {}).get("inputs", {})
-
-    datasets: Dict[str, pd.DataFrame] = {}
-
-    logger.info("START: Load Clinical Analytics input datasets")
-
-    for dataset_name, dataset_config in inputs_config.items():
-        raw_path = dataset_config.get("path")
-        file_format = dataset_config.get("format")
-        required = bool(dataset_config.get("required", True))
-
-        if not raw_path:
-            message = f"No path configured for input dataset: {dataset_name}"
-
-            if required:
-                raise ValueError(message)
-
-            logger.warning("Skipping optional dataset with no configured path: %s", dataset_name)
-            continue
-
-        dataset_path = normalize_path(runtime.project_root, raw_path)
-
-        try:
-            dataframe = read_dataset(dataset_path, file_format)
-            datasets[dataset_name] = dataframe
-
-            logger.info(
-                "Loaded input dataset: %s | Rows: %s | Columns: %s | Path: %s",
-                dataset_name,
-                len(dataframe),
-                len(dataframe.columns),
-                dataset_path,
-            )
-
-            add_dataset_record(
-                runtime=runtime,
-                dataset_name=dataset_name,
-                dataset_type="input",
-                status=STATUS_SUCCESS,
-                path=str(dataset_path),
-                row_count=len(dataframe),
-                column_count=len(dataframe.columns),
-                message="Input dataset loaded successfully.",
-            )
-
-        except Exception as exc:
-            message = f"Failed to load input dataset '{dataset_name}': {exc}"
-
-            if required:
-                add_audit_record(
-                    runtime=runtime,
-                    step_name=f"load_input_dataset:{dataset_name}",
-                    status=STATUS_FAILED,
-                    message=message,
-                    output_path=str(dataset_path),
-                )
-                raise
-
-            logger.warning("Optional input skipped: %s | Reason: %s", dataset_name, exc)
-
-            add_audit_record(
-                runtime=runtime,
-                step_name=f"load_input_dataset:{dataset_name}",
-                status=STATUS_SKIPPED,
-                message=message,
-                output_path=str(dataset_path),
-            )
-
-    logger.info("COMPLETE: Load Clinical Analytics input datasets | Count: %s", len(datasets))
-
-    return datasets
-
-
-###############################################################################
-# Validation Helpers
-###############################################################################
-
-def validate_not_empty(
-    runtime: ClinicalAnalyticsRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-) -> bool:
-    """
-    Validate that dataset is not empty.
-    """
-
-    if dataframe.empty:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="not_empty",
-            status=STATUS_FAILED,
-            message="Dataset is empty.",
-            failed_count=1,
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="not_empty",
-        status=STATUS_SUCCESS,
-        message="Dataset is not empty.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_required_columns(
-    runtime: ClinicalAnalyticsRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    required_columns: Iterable[str],
-) -> bool:
-    """
-    Validate required columns exist.
-    """
-
-    required = list(required_columns)
-    missing = [column for column in required if column not in dataframe.columns]
-
-    if missing:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="required_columns",
-            status=STATUS_FAILED,
-            message=f"Missing required columns: {missing}",
-            failed_count=len(missing),
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="required_columns",
-        status=STATUS_SUCCESS,
-        message="All required columns are present.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_member_key_not_null(
-    runtime: ClinicalAnalyticsRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    member_key: str,
-) -> bool:
-    """
-    Validate member key is present and not null.
-    """
-
-    if member_key not in dataframe.columns:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="member_key_exists",
-            status=STATUS_FAILED,
-            message=f"Missing member key column: {member_key}",
-            failed_count=1,
-        )
-        return False
-
-    null_count = int(dataframe[member_key].isna().sum())
-
-    if null_count > 0:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="member_key_not_null",
-            status=STATUS_FAILED,
-            message=f"Member key contains nulls: {member_key}",
-            failed_count=null_count,
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="member_key_not_null",
-        status=STATUS_SUCCESS,
-        message="Member key is not null.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_inputs(
-    runtime: ClinicalAnalyticsRuntime,
-    datasets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Run input validation.
-    """
-
-    member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-
-    for dataset_name, dataframe in datasets.items():
-        validate_not_empty(runtime, dataframe, dataset_name)
-
-        if member_key in dataframe.columns:
-            validate_member_key_not_null(runtime, dataframe, dataset_name, member_key)
-
-    add_audit_record(
-        runtime=runtime,
-        step_name="validate_inputs",
-        status=STATUS_SUCCESS,
-        message="Clinical Analytics input validation completed.",
-    )
-
-
-###############################################################################
-# Business Rule Helpers
-###############################################################################
-
-def apply_operator(series: pd.Series, operator: str, value: Any) -> pd.Series:
-    """
-    Apply configured comparison operator.
-    """
-
-    if operator == "equals":
-        return series == value
-
-    if operator == "not_equals":
-        return series != value
-
-    if operator == "greater_than":
-        return series > value
-
-    if operator == "greater_than_or_equal":
-        return series >= value
-
-    if operator == "less_than":
-        return series < value
-
-    if operator == "less_than_or_equal":
-        return series <= value
-
-    if operator == "in":
-        return series.isin(value)
-
-    if operator == "not_in":
-        return ~series.isin(value)
-
-    if operator == "is_null":
-        return series.isna()
-
-    if operator == "is_not_null":
-        return series.notna()
-
-    raise ValueError(f"Unsupported operator: {operator}")
-
 
 def build_base_member_universe(
-    runtime: ClinicalAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build base member universe for Clinical Analytics.
+
+    Parameters
+    ----------
+    runtime:
+        Clinical Analytics runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Member-level universe dataframe.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured base member dataset or member key is missing.
+
+    Notes
+    -----
+    This function is available for future registry rules that need a full member
+    universe before applying clinical evidence filters.
     """
 
     framework_config = runtime.config.get("registry_framework", {})
@@ -804,16 +259,20 @@ def build_base_member_universe(
     member_key = framework_config.get("member_key", "member_id")
 
     if base_dataset_name not in datasets:
-        raise ValueError(f"Base member dataset missing: {base_dataset_name}")
+        raise ValidationError(f"Base member dataset missing: {base_dataset_name}")
 
     base_df = datasets[base_dataset_name]
 
-    if member_key not in base_df.columns:
-        raise ValueError(
-            f"Base member dataset '{base_dataset_name}' missing member key: {member_key}"
-        )
+    require_columns(
+        runtime=runtime,
+        dataframe=base_df,
+        dataset_name=base_dataset_name,
+        required_columns=[member_key],
+        source_layer="Layer 1F - Feature Store",
+        source_dataset=base_dataset_name,
+    )
 
-    universe = base_df[[member_key]].drop_duplicates().copy()
+    universe_df = base_df[[member_key]].drop_duplicates().copy()
 
     for enrichment_dataset_name in framework_config.get("enrichment_datasets", []):
         if enrichment_dataset_name not in datasets:
@@ -825,9 +284,9 @@ def build_base_member_universe(
             continue
 
         enrichment_deduped = enrichment_df.drop_duplicates(subset=[member_key]).copy()
-        universe = universe.merge(enrichment_deduped, on=member_key, how="left")
+        universe_df = universe_df.merge(enrichment_deduped, on=member_key, how="left")
 
-    return universe
+    return universe_df
 
 
 ###############################################################################
@@ -835,14 +294,39 @@ def build_base_member_universe(
 ###############################################################################
 
 def build_condition_registry(
-    runtime: ClinicalAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build signal-based condition registry.
+
+    Parameters
+    ----------
+    runtime:
+        Clinical Analytics runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Signal-based condition registry.
+
+    Raises
+    ------
+    ValidationError
+        Raised when required source columns are missing.
+
+    Notes
+    -----
+    This registry is intentionally signal-based because current Layer 1 assets
+    expose aggregate clinical signals rather than diagnosis-line detail.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("condition_registry", {})
 
     if not bool(config.get("enabled", True)):
@@ -850,7 +334,7 @@ def build_condition_registry(
         return pd.DataFrame()
 
     member_key = config.get("member_key", "member_id")
-    condition_rows: List[pd.DataFrame] = []
+    condition_frames: List[pd.DataFrame] = []
 
     logger.info("START: Build signal-based condition registry")
 
@@ -868,57 +352,69 @@ def build_condition_registry(
             rule_group="condition_registry",
             rule_name=signal_name,
             rule_type="signal_based_condition",
-            description=f"Signal-based condition rule for {condition_name}",
-            source_dataset=source_dataset_name,
+            description=f"Signal-based condition rule for {condition_name}.",
+            source_dataset=str(source_dataset_name),
+            source_layer="Layer 1F - Feature Store",
             rule_config=signal_config,
         )
 
         if source_dataset_name not in datasets:
-            logger.warning(
-                "Skipping condition signal %s because source dataset is missing: %s",
-                signal_name,
-                source_dataset_name,
+            add_warning_audit(
+                runtime=runtime,
+                step_name=f"condition_signal:{signal_name}",
+                message=(
+                    f"Skipping condition signal because source dataset is missing: "
+                    f"{source_dataset_name}"
+                ),
+                source_layer="Layer 1F - Feature Store",
+                source_dataset=str(source_dataset_name),
             )
             continue
 
         source_df = datasets[source_dataset_name]
 
         required_columns = [member_key, signal_column]
-        if evidence_column:
+        if evidence_column and evidence_column not in required_columns:
             required_columns.append(evidence_column)
 
-        if not validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset_name,
             required_columns=required_columns,
-        ):
-            continue
+            source_layer="Layer 1F - Feature Store",
+            source_dataset=source_dataset_name,
+        )
 
         mask = apply_operator(source_df[signal_column], operator, value)
-        matched = source_df.loc[mask, [member_key, evidence_column]].copy()
 
-        matched = matched.rename(columns={evidence_column: "condition_evidence_value"})
-        matched["condition_name"] = condition_name
-        matched["condition_category"] = condition_category
-        matched["condition_source"] = source_dataset_name
-        matched["condition_rule"] = signal_name
-        matched["condition_evidence_count"] = 1
-        matched["analytics_layer_run_id"] = runtime.run_id
-        matched["analytics_domain"] = runtime.domain_name
-        matched["analytics_asset_name"] = "condition_registry"
-        matched["built_at_utc"] = utc_now().isoformat()
+        matched_df = source_df.loc[mask, [member_key, evidence_column]].copy()
+        matched_df = matched_df.rename(
+            columns={evidence_column: "condition_evidence_value"}
+        )
 
-        condition_rows.append(matched)
+        matched_df["condition_name"] = condition_name
+        matched_df["condition_category"] = condition_category
+        matched_df["condition_source"] = source_dataset_name
+        matched_df["condition_rule"] = signal_name
+        matched_df["condition_evidence_count"] = 1
+        matched_df["analytics_layer_run_id"] = runtime.context.run_id
+        matched_df["analytics_domain"] = runtime.domain_name
+        matched_df["analytics_asset_name"] = "condition_registry"
+        matched_df["source_layer"] = "Layer 1F - Feature Store"
+        matched_df["source_dataset"] = source_dataset_name
+        matched_df["built_at_utc"] = utc_now().isoformat()
+
+        condition_frames.append(matched_df)
 
         logger.info(
             "Built condition signal: %s | Members: %s",
             signal_name,
-            len(matched),
+            len(matched_df),
         )
 
-    if condition_rows:
-        output_df = pd.concat(condition_rows, ignore_index=True)
+    if condition_frames:
+        output_df = pd.concat(condition_frames, ignore_index=True)
     else:
         output_df = pd.DataFrame(
             columns=[
@@ -932,6 +428,8 @@ def build_condition_registry(
                 "analytics_layer_run_id",
                 "analytics_domain",
                 "analytics_asset_name",
+                "source_layer",
+                "source_dataset",
                 "built_at_utc",
             ]
         )
@@ -945,6 +443,8 @@ def build_condition_registry(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Signal-based condition registry built successfully.",
+        source_layer="Layer 1F - Feature Store",
+        source_dataset="configured_condition_signals",
     )
 
     logger.info("COMPLETE: Build condition registry | Rows: %s", len(output_df))
@@ -957,13 +457,45 @@ def build_condition_registry(
 ###############################################################################
 
 def build_single_disease_registry(
-    runtime: ClinicalAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
     registry_key: str,
     registry_config: Dict[str, Any],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build one signal-based disease registry.
+
+    Parameters
+    ----------
+    runtime:
+        Clinical Analytics runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    registry_key:
+        Registry key from configuration.
+
+    registry_config:
+        Registry rule configuration.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Disease registry output.
+
+    Raises
+    ------
+    ValidationError
+        Raised when source dataset or required source columns are missing.
+
+    Notes
+    -----
+    Disease registries currently use aggregate signals. The output schema keeps
+    source and evidence columns explicit so the logic can later be upgraded to
+    diagnosis-code evidence without breaking downstream consumers.
     """
 
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
@@ -986,12 +518,13 @@ def build_single_disease_registry(
         rule_name=registry_key,
         rule_type=registry_method,
         description=note,
-        source_dataset=source_dataset_name,
+        source_dataset=str(source_dataset_name),
+        source_layer="Layer 1F - Feature Store",
         rule_config=registry_config,
     )
 
     if source_dataset_name not in datasets:
-        raise ValueError(
+        raise ValidationError(
             f"Disease registry source dataset missing for {registry_key}: "
             f"{source_dataset_name}"
         )
@@ -999,20 +532,24 @@ def build_single_disease_registry(
     source_df = datasets[source_dataset_name]
 
     required_columns = [member_key, signal_column]
-    if evidence_column:
+    if evidence_column and evidence_column not in required_columns:
         required_columns.append(evidence_column)
 
-    validate_required_columns(
+    require_columns(
         runtime=runtime,
         dataframe=source_df,
         dataset_name=source_dataset_name,
         required_columns=required_columns,
+        source_layer="Layer 1F - Feature Store",
+        source_dataset=source_dataset_name,
     )
 
     mask = apply_operator(source_df[signal_column], operator, value)
 
     registry_df = source_df.loc[mask, [member_key, evidence_column]].copy()
-    registry_df = registry_df.rename(columns={evidence_column: "registry_evidence_value"})
+    registry_df = registry_df.rename(
+        columns={evidence_column: "registry_evidence_value"}
+    )
 
     registry_df["registry_key"] = registry_key
     registry_df["registry_name"] = registry_name
@@ -1022,23 +559,44 @@ def build_single_disease_registry(
     registry_df["source_dataset"] = source_dataset_name
     registry_df["signal_column"] = signal_column
     registry_df["registry_note"] = note
-    registry_df["analytics_layer_run_id"] = runtime.run_id
+    registry_df["analytics_layer_run_id"] = runtime.context.run_id
     registry_df["analytics_domain"] = runtime.domain_name
     registry_df["analytics_asset_name"] = registry_config.get("output_name", registry_key)
+    registry_df["source_layer"] = "Layer 1F - Feature Store"
     registry_df["built_at_utc"] = utc_now().isoformat()
 
     return registry_df
 
 
 def build_disease_registries(
-    runtime: ClinicalAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> Dict[str, pd.DataFrame]:
     """
-    Build all configured disease registries.
+    Purpose
+    -------
+    Build all configured signal-based disease registries.
+
+    Parameters
+    ----------
+    runtime:
+        Clinical Analytics runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    dict[str, pandas.DataFrame]
+        Disease registry outputs keyed by output asset name.
+
+    Raises
+    ------
+    ValidationError
+        Raised when any enabled disease registry has invalid required inputs.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     registries_config = runtime.config.get("disease_registries", {})
 
     registry_outputs: Dict[str, pd.DataFrame] = {}
@@ -1070,6 +628,8 @@ def build_disease_registries(
             row_count=len(registry_df),
             column_count=len(registry_df.columns),
             message=f"Signal-based disease registry built successfully: {output_name}",
+            source_layer="Layer 1F - Feature Store",
+            source_dataset=registry_config.get("source_dataset"),
         )
 
         logger.info(
@@ -1084,218 +644,76 @@ def build_disease_registries(
 
 
 ###############################################################################
-# Metadata Outputs
-###############################################################################
-
-def build_dataset_inventory(runtime: ClinicalAnalyticsRuntime) -> pd.DataFrame:
-    """
-    Build dataset inventory.
-    """
-
-    return pd.DataFrame(runtime.dataset_records)
-
-
-def build_column_dictionary(
-    runtime: ClinicalAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build output column dictionary.
-    """
-
-    rows: List[Dict[str, Any]] = []
-
-    for dataset_name, dataframe in output_assets.items():
-        for column in dataframe.columns:
-            rows.append(
-                {
-                    "run_id": runtime.run_id,
-                    "layer_name": runtime.layer_name,
-                    "domain_name": runtime.domain_name,
-                    "dataset_name": dataset_name,
-                    "column_name": column,
-                    "data_type": str(dataframe[column].dtype),
-                    "non_null_count": int(dataframe[column].notna().sum()),
-                    "null_count": int(dataframe[column].isna().sum()),
-                    "row_count": int(len(dataframe)),
-                    "event_timestamp_utc": utc_now().isoformat(),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-
-def build_rule_catalog(runtime: ClinicalAnalyticsRuntime) -> pd.DataFrame:
-    """
-    Build rule catalog.
-    """
-
-    return pd.DataFrame(runtime.rule_records)
-
-
-def build_execution_summary(
-    runtime: ClinicalAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build one-row execution summary.
-    """
-
-    end_time = utc_now()
-    duration_seconds = (end_time - runtime.start_time_utc).total_seconds()
-
-    failed_validation_count = sum(
-        1
-        for record in runtime.validation_records
-        if record.get("status") == STATUS_FAILED
-    )
-
-    summary = {
-        "run_id": runtime.run_id,
-        "layer_name": runtime.layer_name,
-        "domain_name": runtime.domain_name,
-        "config_path": str(runtime.config_path),
-        "start_time_utc": runtime.start_time_utc.isoformat(),
-        "end_time_utc": end_time.isoformat(),
-        "duration_seconds": duration_seconds,
-        "output_asset_count": len(output_assets),
-        "audit_record_count": len(runtime.audit_records),
-        "validation_record_count": len(runtime.validation_records),
-        "failed_validation_count": failed_validation_count,
-        "dataset_record_count": len(runtime.dataset_records),
-        "rule_record_count": len(runtime.rule_records),
-        "status": STATUS_SUCCESS if failed_validation_count == 0 else STATUS_WARNING,
-    }
-
-    return pd.DataFrame([summary])
-
-
-###############################################################################
-# Output Writing
-###############################################################################
-
-def get_output_path(
-    runtime: ClinicalAnalyticsRuntime,
-    output_group: str,
-    output_name: str,
-) -> Path:
-    """
-    Resolve configured output path.
-    """
-
-    output_config = runtime.config.get("paths", {}).get(output_group, {})
-    output_entry = output_config.get(output_name)
-
-    if isinstance(output_entry, dict):
-        raw_path = output_entry.get("path")
-    else:
-        raw_path = output_entry
-
-    if not raw_path:
-        raw_path = f"data/analytics_platform/{output_group}/{output_name}"
-
-    return normalize_path(runtime.project_root, raw_path)
-
-
-def write_clinical_outputs(
-    runtime: ClinicalAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write Clinical Analytics output datasets.
-    """
-
-    output_format = get_output_format(runtime)
-
-    for output_name, dataframe in output_assets.items():
-        output_path = get_output_path(runtime, "outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote Clinical Analytics output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-        add_audit_record(
-            runtime=runtime,
-            step_name=f"write_output:{output_name}",
-            status=STATUS_SUCCESS,
-            message="Clinical Analytics output written successfully.",
-            row_count=len(dataframe),
-            output_path=str(output_path),
-        )
-
-
-def write_metadata_and_audit_outputs(
-    runtime: ClinicalAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write metadata and audit outputs.
-    """
-
-    output_format = get_output_format(runtime)
-
-    metadata_assets = {
-        "clinical_analytics_dataset_inventory": build_dataset_inventory(runtime),
-        "clinical_analytics_column_dictionary": build_column_dictionary(runtime, output_assets),
-        "clinical_analytics_rule_catalog": build_rule_catalog(runtime),
-    }
-
-    audit_assets = {
-        "clinical_analytics_audit_records": pd.DataFrame(runtime.audit_records),
-        "clinical_analytics_validation_results": pd.DataFrame(runtime.validation_records),
-        "clinical_analytics_execution_summary": build_execution_summary(runtime, output_assets),
-    }
-
-    for output_name, dataframe in metadata_assets.items():
-        output_path = get_output_path(runtime, "metadata_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote metadata output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-    for output_name, dataframe in audit_assets.items():
-        output_path = get_output_path(runtime, "audit_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote audit output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-
-###############################################################################
 # Main Orchestration
 ###############################################################################
 
-def build_clinical_analytics_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
+def build_clinical_analytics_layer(
+    config_path: str = DEFAULT_CONFIG_PATH,
+) -> AnalyticsBuildResult:
     """
-    Build complete Clinical Analytics layer.
+    Purpose
+    -------
+    Build the complete Clinical Analytics layer.
+
+    Parameters
+    ----------
+    config_path:
+        Clinical Analytics configuration path.
+
+    Returns
+    -------
+    AnalyticsBuildResult
+        Standard build result containing status, message, row count, and column
+        count.
+
+    Raises
+    ------
+    None
+        Exceptions are captured and returned as a failed AnalyticsBuildResult.
+
+    Notes
+    -----
+    This is the public build entry point used by the Analytics Platform master
+    orchestrator.
     """
 
-    runtime: Optional[ClinicalAnalyticsRuntime] = None
+    runtime: Optional[AnalyticsDomainRuntime] = None
 
     try:
         runtime = initialize_runtime(config_path)
-        logger = runtime.logger
+        logger = runtime.get_logger(LOGGER_NAME)
 
-        logger.info("Configuration path: %s", runtime.config_path)
+        logger.info("=" * 80)
+        logger.info("MedFabric Clinical Analytics started")
+        logger.info("=" * 80)
+        logger.info("Configuration file: %s", runtime.config_file)
 
-        datasets = load_input_datasets(runtime)
-        validate_inputs(runtime, datasets)
+        output_format = get_output_format(
+            runtime=runtime,
+            domain_section=DOMAIN_SECTION,
+        )
+
+        datasets = load_input_datasets(
+            runtime=runtime,
+            input_source_layer_map={
+                "demographic_features": "Layer 1F - Feature Store",
+                "claims_features": "Layer 1F - Feature Store",
+                "laboratory_features": "Layer 1F - Feature Store",
+                "pharmacy_features": "Layer 1F - Feature Store",
+                "risk_features": "Layer 1F - Feature Store",
+                "member_360": "Layer 1E - Gold",
+                "member_360_semantic_view": "Layer 1G - Semantic Layer",
+            },
+            key_column_map={
+                "demographic_features": "member_id",
+                "claims_features": "member_id",
+                "laboratory_features": "member_id",
+                "pharmacy_features": "member_id",
+                "risk_features": "member_id",
+                "member_360": "member_id",
+                "member_360_semantic_view": "member_id",
+            },
+        )
 
         condition_registry = build_condition_registry(runtime, datasets)
         disease_registry_outputs = build_disease_registries(runtime, datasets)
@@ -1305,54 +723,95 @@ def build_clinical_analytics_layer(config_path: str = DEFAULT_CONFIG_PATH) -> Bu
         }
         output_assets.update(disease_registry_outputs)
 
-        write_clinical_outputs(runtime, output_assets)
-
-        add_audit_record(
+        write_output_assets(
             runtime=runtime,
-            step_name="build_clinical_analytics_layer",
-            status=STATUS_SUCCESS,
-            message="Clinical Analytics completed successfully.",
+            output_assets=output_assets,
+            output_format=output_format,
         )
 
-        write_metadata_and_audit_outputs(runtime, output_assets)
+        add_success_audit(
+            runtime=runtime,
+            step_name="build_clinical_analytics_layer",
+            message="Clinical Analytics completed successfully.",
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            source_layer="Layer 2B - Clinical Analytics",
+            source_dataset="clinical_analytics_outputs",
+        )
+
+        write_metadata_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            dataset_inventory_name="clinical_analytics_dataset_inventory",
+            column_dictionary_name="clinical_analytics_column_dictionary",
+            rule_catalog_name="clinical_analytics_rule_catalog",
+        )
+
+        write_audit_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            audit_records_name="clinical_analytics_audit_records",
+            validation_results_name="clinical_analytics_validation_results",
+            execution_summary_name="clinical_analytics_execution_summary",
+        )
 
         logger.info("=" * 80)
         logger.info("MedFabric Clinical Analytics completed successfully")
         logger.info("=" * 80)
 
-        return BuildResult(
+        return AnalyticsBuildResult(
             name="clinical_analytics",
             status=STATUS_SUCCESS,
             message="Clinical Analytics completed successfully.",
-            row_count=sum(len(df) for df in output_assets.values()),
-            column_count=sum(len(df.columns) for df in output_assets.values()),
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            column_count=sum(len(dataframe.columns) for dataframe in output_assets.values()),
         )
 
     except Exception as exc:
         if runtime is not None:
-            runtime.logger.error("=" * 80)
-            runtime.logger.error("Clinical Analytics failed")
-            runtime.logger.error("Error: %s", exc)
-            runtime.logger.error("Traceback:\n%s", traceback.format_exc())
-            runtime.logger.error("=" * 80)
+            logger = runtime.get_logger(LOGGER_NAME)
 
-            add_audit_record(
+            logger.error("=" * 80)
+            logger.error("Clinical Analytics failed")
+            logger.error("Error: %s", exc)
+            logger.error("Traceback:\n%s", traceback.format_exc())
+            logger.error("=" * 80)
+
+            add_failed_audit(
                 runtime=runtime,
                 step_name="build_clinical_analytics_layer",
-                status=STATUS_FAILED,
                 message=str(exc),
+                source_layer="Layer 2B - Clinical Analytics",
+                source_dataset="clinical_analytics",
             )
 
             try:
-                write_metadata_and_audit_outputs(runtime, {})
-            except Exception as audit_exc:
-                runtime.logger.error("Failed to write audit outputs: %s", audit_exc)
+                output_format = get_output_format(
+                    runtime=runtime,
+                    domain_section=DOMAIN_SECTION,
+                )
 
-        return BuildResult(
+                write_audit_outputs(
+                    runtime=runtime,
+                    output_assets={},
+                    output_format=output_format,
+                    audit_records_name="clinical_analytics_audit_records",
+                    validation_results_name="clinical_analytics_validation_results",
+                    execution_summary_name="clinical_analytics_execution_summary",
+                )
+            except Exception as audit_exc:
+                logger.error("Failed to write audit outputs: %s", audit_exc)
+
+        return AnalyticsBuildResult(
             name="clinical_analytics",
             status=STATUS_FAILED,
             message=str(exc),
         )
+
+    finally:
+        if runtime is not None:
+            runtime.context.logging.close()
 
 
 ###############################################################################
@@ -1361,10 +820,22 @@ def build_clinical_analytics_layer(config_path: str = DEFAULT_CONFIG_PATH) -> Bu
 
 def main() -> None:
     """
-    Command-line entry point.
+    Purpose
+    -------
+    Command-line entry point for Clinical Analytics.
 
-    Run:
-        python -m src.analytics_platform.clinical_analytics.build_clinical_analytics_layer
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    SystemExit
+        Raised with exit code 1 when execution fails.
     """
 
     config_path = os.environ.get(

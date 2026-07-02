@@ -12,6 +12,33 @@
 #     Builds Value-Based Care analytics outputs from Provider Analytics,
 #     Predictive Analytics, Care Management, and Gold outputs.
 #
+# Architectural Rule:
+#     Value-Based Care consumes already-built upstream analytics outputs.
+#
+#     This file does NOT generate raw data.
+#     This file does NOT build Silver dimensional models.
+#     This file does NOT train predictive models.
+#     This file does NOT score members.
+#
+# Dependency Flow:
+#     Gold Layer
+#         ↓
+#     Provider Analytics + Predictive Analytics + Care Management
+#         ↓
+#     Layer 2H - Value-Based Care
+#         ↓
+#     data/analytics_platform/value_based_care/
+#
+# Architecture:
+#     This file contains Value-Based Care business logic only.
+#
+#     Shared Analytics Platform concerns are handled by:
+#         - src.analytics_platform.common.runtime
+#         - src.analytics_platform.common.io
+#         - src.analytics_platform.common.audit
+#         - src.analytics_platform.common.validation
+#         - src.analytics_platform.common.metadata
+#
 # Inputs:
 #     config/analytics_platform/value_based_care.yaml
 #
@@ -27,17 +54,41 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import sys
 import traceback
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import yaml
+
+from src.analytics_platform.common.audit import (
+    add_failed_audit,
+    add_success_audit,
+)
+from src.analytics_platform.common.io import (
+    get_output_format,
+    load_input_datasets,
+    write_output_assets,
+)
+from src.analytics_platform.common.metadata import (
+    add_dataset_record,
+    add_rule_record,
+    write_audit_outputs,
+    write_metadata_outputs,
+)
+from src.analytics_platform.common.rules import apply_operator
+from src.analytics_platform.common.runtime import (
+    AnalyticsBuildResult,
+    AnalyticsDomainRuntime,
+    STATUS_FAILED,
+    STATUS_SUCCESS,
+    create_domain_runtime,
+    normalize_config_file,
+    utc_now,
+)
+from src.analytics_platform.common.validation import require_columns
+from src.common.exception_manager import PipelineError, ValidationError
+from src.common.pipeline_context import create_pipeline_context
 
 
 ###############################################################################
@@ -48,216 +99,44 @@ DEFAULT_CONFIG_PATH = "config/analytics_platform/value_based_care.yaml"
 
 DEFAULT_LAYER_NAME = "Layer 2H - Value-Based Care"
 DEFAULT_DOMAIN_NAME = "Value-Based Care"
-DEFAULT_OUTPUT_FORMAT = "parquet"
+DOMAIN_SECTION = "value_based_care"
 
-SUPPORTED_FILE_FORMATS = {"parquet", "csv", "json"}
-
-STATUS_SUCCESS = "SUCCESS"
-STATUS_FAILED = "FAILED"
-STATUS_WARNING = "WARNING"
-STATUS_SKIPPED = "SKIPPED"
+LOGGER_NAME = "medfabric.analytics_platform.value_based_care"
 
 
 ###############################################################################
-# Runtime Data Classes
+# Configuration and Runtime
 ###############################################################################
-
-@dataclass
-class ValueBasedCareRuntime:
-    """
-    Runtime context for one Value-Based Care execution.
-    """
-
-    run_id: str
-    project_root: Path
-    config_path: Path
-    start_time_utc: datetime
-    config: Dict[str, Any]
-    logger: logging.Logger
-    layer_name: str
-    domain_name: str
-    audit_records: List[Dict[str, Any]] = field(default_factory=list)
-    validation_records: List[Dict[str, Any]] = field(default_factory=list)
-    dataset_records: List[Dict[str, Any]] = field(default_factory=list)
-    rule_records: List[Dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
-class BuildResult:
-    """
-    Standard build result returned by Value-Based Care.
-    """
-
-    name: str
-    status: str
-    message: str
-    row_count: int = 0
-    column_count: int = 0
-
-
-###############################################################################
-# General Utilities
-###############################################################################
-
-def utc_now() -> datetime:
-    """
-    Return timezone-aware UTC timestamp.
-    """
-
-    return datetime.now(timezone.utc)
-
-
-def generate_run_id() -> str:
-    """
-    Generate timestamp-based run identifier.
-    """
-
-    return utc_now().strftime("%Y%m%d_%H%M%S")
-
-
-def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
-    """
-    Resolve relative path against project root.
-    """
-
-    path = Path(raw_path)
-
-    if path.is_absolute():
-        return path
-
-    return project_root / path
-
-
-def ensure_directory(path: Path) -> None:
-    """
-    Create directory if missing.
-    """
-
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def safe_string(value: Any) -> str:
-    """
-    Safely convert value to string.
-    """
-
-    if value is None:
-        return ""
-
-    return str(value)
-
-
-def safe_divide(numerator: float, denominator: float) -> float:
-    """
-    Safely divide numeric values.
-    """
-
-    if denominator is None or denominator == 0:
-        return 0.0
-
-    return float(numerator) / float(denominator)
-
-
-###############################################################################
-# Logging
-###############################################################################
-
-def configure_logging(
-    project_root: Path,
-    config: Dict[str, Any],
-    run_id: str,
-) -> logging.Logger:
-    """
-    Configure Value-Based Care logging.
-    """
-
-    logging_config = config.get("logging", {})
-
-    log_level_name = logging_config.get("level", "INFO")
-    log_level = getattr(logging, str(log_level_name).upper(), logging.INFO)
-
-    log_dir = normalize_path(
-        project_root,
-        logging_config.get("module_log_dir", "logs/modules"),
-    )
-    ensure_directory(log_dir)
-
-    log_file_path = log_dir / logging_config.get(
-        "log_file_name",
-        "value_based_care.log",
-    )
-
-    logger = logging.getLogger("medfabric.analytics_platform.value_based_care")
-    logger.setLevel(log_level)
-    logger.handlers.clear()
-    logger.propagate = False
-
-    formatter = logging.Formatter(
-        fmt="[%(asctime)s] [RUN_ID=%(run_id)s] [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    class RunIdFilter(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            record.run_id = run_id
-            return True
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(log_level)
-    stream_handler.setFormatter(formatter)
-    stream_handler.addFilter(RunIdFilter())
-
-    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(RunIdFilter())
-
-    logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
-
-    logger.info("=" * 80)
-    logger.info("MedFabric Value-Based Care started")
-    logger.info("=" * 80)
-    logger.info("Run ID: %s", run_id)
-    logger.info("Log file: %s", log_file_path)
-
-    return logger
-
-
-###############################################################################
-# Configuration
-###############################################################################
-
-def load_yaml_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load YAML configuration.
-    """
-
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as file:
-        config = yaml.safe_load(file)
-
-    if config is None:
-        raise ValueError(f"Configuration file is empty: {config_path}")
-
-    if not isinstance(config, dict):
-        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
-
-    return config
-
 
 def validate_config(config: Dict[str, Any]) -> None:
     """
+    Purpose
+    -------
     Validate required Value-Based Care configuration sections.
-    """
 
-    errors: List[str] = []
+    Parameters
+    ----------
+    config:
+        Loaded Value-Based Care YAML configuration.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    PipelineError
+        Raised when required sections are missing.
+
+    Notes
+    -----
+    Generic YAML loading is handled by ConfigurationManager through
+    PipelineContext. This function validates only the Value-Based Care domain
+    contract.
+    """
 
     required_sections = [
         "value_based_care",
-        "logging",
         "paths",
         "join_keys",
         "value_based_care_framework",
@@ -272,478 +151,111 @@ def validate_config(config: Dict[str, Any]) -> None:
         "audit",
     ]
 
-    for section in required_sections:
-        if section not in config:
-            errors.append(f"Missing required configuration section: {section}")
+    missing_sections = [
+        section for section in required_sections if section not in config
+    ]
 
-    paths = config.get("paths", {})
-    if not isinstance(paths, dict):
-        errors.append("Configuration section 'paths' must be a dictionary.")
-    else:
-        for subsection in ["inputs", "outputs", "metadata_outputs", "audit_outputs"]:
-            if subsection not in paths:
-                errors.append(f"Missing required configuration section: paths.{subsection}")
+    paths_config = config.get("paths", {})
 
-    output_format = (
-        config.get("value_based_care", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
+    for subsection in ["inputs", "outputs", "metadata_outputs", "audit_outputs"]:
+        if subsection not in paths_config:
+            missing_sections.append(f"paths.{subsection}")
+
+    if missing_sections:
+        raise PipelineError(
+            "Value-Based Care configuration validation failed. "
+            f"Missing sections: {missing_sections}"
+        )
+
+
+def initialize_runtime(config_path: str) -> AnalyticsDomainRuntime:
+    """
+    Purpose
+    -------
+    Initialize Value-Based Care runtime using MedFabric PipelineContext.
+
+    Parameters
+    ----------
+    config_path:
+        Value-Based Care configuration path.
+
+    Returns
+    -------
+    AnalyticsDomainRuntime
+        Initialized Value-Based Care runtime.
+
+    Raises
+    ------
+    PipelineError
+        Raised when configuration loading or validation fails.
+
+    Notes
+    -----
+    This follows the same shared framework pattern as the working Predictive
+    Analytics and Provider Analytics layers.
+    """
+
+    config_file = normalize_config_file(config_path)
+
+    context = create_pipeline_context(
+        pipeline_name="Layer 2H - Value-Based Care"
     )
 
-    if output_format not in SUPPORTED_FILE_FORMATS:
-        errors.append(
-            f"Unsupported output_format '{output_format}'. "
-            f"Supported formats: {sorted(SUPPORTED_FILE_FORMATS)}"
-        )
-
-    if errors:
-        raise ValueError(
-            "Value-Based Care configuration validation failed:\n"
-            + "\n".join(f"- {error}" for error in errors)
-        )
-
-
-def initialize_runtime(
-    config_path_raw: str = DEFAULT_CONFIG_PATH,
-) -> ValueBasedCareRuntime:
-    """
-    Initialize Value-Based Care runtime.
-    """
-
-    project_root = Path.cwd()
-    config_path = normalize_path(project_root, config_path_raw)
-    run_id = generate_run_id()
-
-    config = load_yaml_config(config_path)
+    config = context.configuration.load_yaml(config_file)
     validate_config(config)
 
-    layer_config = config.get("value_based_care", {})
-
-    layer_name = layer_config.get("layer_name", DEFAULT_LAYER_NAME)
-    domain_name = layer_config.get("domain_name", DEFAULT_DOMAIN_NAME)
-
-    logger = configure_logging(project_root, config, run_id)
-
-    runtime = ValueBasedCareRuntime(
-        run_id=run_id,
-        project_root=project_root,
-        config_path=config_path,
-        start_time_utc=utc_now(),
+    runtime = create_domain_runtime(
+        context=context,
         config=config,
-        logger=logger,
-        layer_name=layer_name,
-        domain_name=domain_name,
+        config_file=config_file,
+        domain_section=DOMAIN_SECTION,
+        default_layer_name=DEFAULT_LAYER_NAME,
+        default_domain_name=DEFAULT_DOMAIN_NAME,
     )
 
-    add_audit_record(
+    add_success_audit(
         runtime=runtime,
         step_name="initialize_runtime",
-        status=STATUS_SUCCESS,
         message="Value-Based Care runtime initialized successfully.",
+        source_layer="Layer 2 - Analytics Platform",
+        source_dataset=config_file,
     )
 
     return runtime
 
 
 ###############################################################################
-# Audit, Validation, Metadata Records
+# Calculation Helpers
 ###############################################################################
 
-def add_audit_record(
-    runtime: ValueBasedCareRuntime,
-    step_name: str,
-    status: str,
-    message: str,
-    row_count: Optional[int] = None,
-    output_path: Optional[str] = None,
-) -> None:
+def safe_divide(numerator: float, denominator: float) -> float:
     """
-    Add audit record.
-    """
+    Purpose
+    -------
+    Safely divide two numeric values.
 
-    runtime.audit_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "step_name": step_name,
-            "status": status,
-            "message": message,
-            "row_count": row_count,
-            "output_path": output_path,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
+    Parameters
+    ----------
+    numerator:
+        Numerator value.
 
+    denominator:
+        Denominator value.
 
-def add_validation_record(
-    runtime: ValueBasedCareRuntime,
-    dataset_name: str,
-    rule_name: str,
-    status: str,
-    message: str,
-    failed_count: Optional[int] = None,
-) -> None:
-    """
-    Add validation record.
+    Returns
+    -------
+    float
+        Division result. Returns zero when denominator is missing or zero.
+
+    Raises
+    ------
+    None
     """
 
-    runtime.validation_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "rule_name": rule_name,
-            "status": status,
-            "message": message,
-            "failed_count": failed_count,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
+    if denominator is None or denominator == 0:
+        return 0.0
 
-
-def add_dataset_record(
-    runtime: ValueBasedCareRuntime,
-    dataset_name: str,
-    dataset_type: str,
-    status: str,
-    path: Optional[str],
-    row_count: int,
-    column_count: int,
-    message: str,
-) -> None:
-    """
-    Add dataset inventory record.
-    """
-
-    runtime.dataset_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "dataset_type": dataset_type,
-            "status": status,
-            "path": path,
-            "row_count": row_count,
-            "column_count": column_count,
-            "message": message,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_rule_record(
-    runtime: ValueBasedCareRuntime,
-    rule_group: str,
-    rule_name: str,
-    rule_type: str,
-    description: str,
-    source_dataset: str,
-    rule_config: Dict[str, Any],
-) -> None:
-    """
-    Add rule catalog record.
-    """
-
-    runtime.rule_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "rule_group": rule_group,
-            "rule_name": rule_name,
-            "rule_type": rule_type,
-            "description": description,
-            "source_dataset": source_dataset,
-            "rule_config_json": safe_string(rule_config),
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-###############################################################################
-# Dataset IO
-###############################################################################
-
-def get_output_format(runtime: ValueBasedCareRuntime) -> str:
-    """
-    Return configured output format.
-    """
-
-    return (
-        runtime.config.get("value_based_care", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
-    )
-
-
-def read_dataset(path: Path, file_format: Optional[str]) -> pd.DataFrame:
-    """
-    Read dataset from disk.
-    """
-
-    if not path.exists():
-        raise FileNotFoundError(f"Input dataset not found: {path}")
-
-    resolved_format = file_format or path.suffix.replace(".", "").lower()
-
-    if resolved_format == "parquet":
-        return pd.read_parquet(path)
-
-    if resolved_format == "csv":
-        return pd.read_csv(path)
-
-    if resolved_format == "json":
-        return pd.read_json(path)
-
-    raise ValueError(f"Unsupported input file format: {resolved_format}")
-
-
-def output_path_with_format(path: Path, output_format: str) -> Path:
-    """
-    Ensure output path has configured suffix.
-    """
-
-    suffix = f".{output_format}"
-
-    if path.suffix:
-        return path.with_suffix(suffix)
-
-    return Path(str(path) + suffix)
-
-
-def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None:
-    """
-    Write dataframe to disk.
-    """
-
-    ensure_directory(path.parent)
-
-    if file_format == "parquet":
-        dataframe.to_parquet(path, index=False)
-        return
-
-    if file_format == "csv":
-        dataframe.to_csv(path, index=False)
-        return
-
-    if file_format == "json":
-        dataframe.to_json(path, orient="records", indent=2)
-        return
-
-    raise ValueError(f"Unsupported output file format: {file_format}")
-
-
-def load_input_datasets(
-    runtime: ValueBasedCareRuntime,
-) -> Dict[str, pd.DataFrame]:
-    """
-    Load configured Value-Based Care input datasets.
-    """
-
-    logger = runtime.logger
-    inputs_config = runtime.config.get("paths", {}).get("inputs", {})
-
-    datasets: Dict[str, pd.DataFrame] = {}
-
-    logger.info("START: Load Value-Based Care input datasets")
-
-    for dataset_name, dataset_config in inputs_config.items():
-        raw_path = dataset_config.get("path")
-        file_format = dataset_config.get("format")
-        required = bool(dataset_config.get("required", True))
-
-        if not raw_path:
-            message = f"No path configured for input dataset: {dataset_name}"
-
-            if required:
-                raise ValueError(message)
-
-            logger.warning("Skipping optional dataset with no path: %s", dataset_name)
-            continue
-
-        dataset_path = normalize_path(runtime.project_root, raw_path)
-
-        try:
-            dataframe = read_dataset(dataset_path, file_format)
-            datasets[dataset_name] = dataframe
-
-            logger.info(
-                "Loaded input dataset: %s | Rows: %s | Columns: %s | Path: %s",
-                dataset_name,
-                len(dataframe),
-                len(dataframe.columns),
-                dataset_path,
-            )
-
-            add_dataset_record(
-                runtime=runtime,
-                dataset_name=dataset_name,
-                dataset_type="input",
-                status=STATUS_SUCCESS,
-                path=str(dataset_path),
-                row_count=len(dataframe),
-                column_count=len(dataframe.columns),
-                message="Value-Based Care input dataset loaded successfully.",
-            )
-
-        except Exception as exc:
-            message = f"Failed to load input dataset '{dataset_name}': {exc}"
-
-            if required:
-                add_audit_record(
-                    runtime=runtime,
-                    step_name=f"load_input_dataset:{dataset_name}",
-                    status=STATUS_FAILED,
-                    message=message,
-                    output_path=str(dataset_path),
-                )
-                raise
-
-            logger.warning("Optional input skipped: %s | Reason: %s", dataset_name, exc)
-
-            add_audit_record(
-                runtime=runtime,
-                step_name=f"load_input_dataset:{dataset_name}",
-                status=STATUS_SKIPPED,
-                message=message,
-                output_path=str(dataset_path),
-            )
-
-    logger.info("COMPLETE: Load Value-Based Care input datasets | Count: %s", len(datasets))
-
-    return datasets
-
-
-###############################################################################
-# Validation Helpers
-###############################################################################
-
-def validate_not_empty(
-    runtime: ValueBasedCareRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-) -> bool:
-    """
-    Validate dataframe is not empty.
-    """
-
-    if dataframe.empty:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="not_empty",
-            status=STATUS_FAILED,
-            message="Dataset is empty.",
-            failed_count=1,
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="not_empty",
-        status=STATUS_SUCCESS,
-        message="Dataset is not empty.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_required_columns(
-    runtime: ValueBasedCareRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    required_columns: Iterable[str],
-) -> bool:
-    """
-    Validate required columns exist.
-    """
-
-    required = list(required_columns)
-    missing = [column for column in required if column not in dataframe.columns]
-
-    if missing:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="required_columns",
-            status=STATUS_FAILED,
-            message=f"Missing required columns: {missing}",
-            failed_count=len(missing),
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="required_columns",
-        status=STATUS_SUCCESS,
-        message="All required columns are present.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_inputs(
-    runtime: ValueBasedCareRuntime,
-    datasets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Validate loaded inputs.
-    """
-
-    for dataset_name, dataframe in datasets.items():
-        validate_not_empty(runtime, dataframe, dataset_name)
-
-    add_audit_record(
-        runtime=runtime,
-        step_name="validate_inputs",
-        status=STATUS_SUCCESS,
-        message="Value-Based Care input validation completed.",
-    )
-
-
-###############################################################################
-# Rule Helpers
-###############################################################################
-
-def apply_operator(series: pd.Series, operator: str, value: Any) -> pd.Series:
-    """
-    Apply configured comparison operator.
-    """
-
-    if operator == "equals":
-        return series == value
-
-    if operator == "not_equals":
-        return series != value
-
-    if operator == "greater_than":
-        return series > value
-
-    if operator == "greater_than_or_equal":
-        return series >= value
-
-    if operator == "less_than":
-        return series < value
-
-    if operator == "less_than_or_equal":
-        return series <= value
-
-    if operator == "in":
-        return series.isin(value)
-
-    if operator == "not_in":
-        return ~series.isin(value)
-
-    if operator == "is_null":
-        return series.isna()
-
-    if operator == "is_not_null":
-        return series.notna()
-
-    raise ValueError(f"Unsupported operator: {operator}")
+    return float(numerator) / float(denominator)
 
 
 ###############################################################################
@@ -751,17 +263,38 @@ def apply_operator(series: pd.Series, operator: str, value: Any) -> pd.Series:
 ###############################################################################
 
 def build_value_based_contract_summary(
-    runtime: ValueBasedCareRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build value-based contract summary.
 
-    Output grain:
-        One row per synthetic contract.
+    Parameters
+    ----------
+    runtime:
+        Value-Based Care runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Value-based contract summary.
+
+    Raises
+    ------
+    ValidationError
+        Raised when required source datasets or columns are missing.
+
+    Notes
+    -----
+    Output grain is one row per configured synthetic value-based contract.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("value_based_contract_summary", {})
 
     if not bool(config.get("enabled", True)):
@@ -771,16 +304,16 @@ def build_value_based_contract_summary(
     source_datasets = config.get("source_datasets", {})
     pmpm_dataset_name = source_datasets.get("pmpm_dataset", "pmpm_summary")
     cost_dataset_name = source_datasets.get("cost_dataset", "cost_summary")
-    provider_dataset_name = source_datasets.get("provider_dataset", "provider_performance_summary")
+    provider_dataset_name = source_datasets.get(
+        "provider_dataset",
+        "provider_performance_summary",
+    )
 
-    if pmpm_dataset_name not in datasets:
-        raise ValueError(f"Missing PMPM dataset: {pmpm_dataset_name}")
-
-    if cost_dataset_name not in datasets:
-        raise ValueError(f"Missing cost dataset: {cost_dataset_name}")
-
-    if provider_dataset_name not in datasets:
-        raise ValueError(f"Missing provider dataset: {provider_dataset_name}")
+    for dataset_name in [pmpm_dataset_name, cost_dataset_name, provider_dataset_name]:
+        if dataset_name not in datasets:
+            raise ValidationError(
+                f"Value-Based Contract source dataset missing: {dataset_name}"
+            )
 
     pmpm_df = datasets[pmpm_dataset_name]
     cost_df = datasets[cost_dataset_name]
@@ -797,12 +330,17 @@ def build_value_based_contract_summary(
         financial_columns.get("pmpm_allowed_amount"),
     ]
 
-    validate_required_columns(
+    require_columns(
         runtime=runtime,
         dataframe=pmpm_df,
         dataset_name=pmpm_dataset_name,
         required_columns=required_pmpm_columns,
+        source_layer="Gold Layer",
+        source_dataset=pmpm_dataset_name,
     )
+
+    if pmpm_df.empty:
+        raise ValidationError(f"PMPM source dataset is empty: {pmpm_dataset_name}")
 
     pmpm_row = pmpm_df.iloc[0]
 
@@ -812,17 +350,34 @@ def build_value_based_contract_summary(
     pmpm_paid_amount = float(pmpm_row[financial_columns.get("pmpm_paid_amount")])
     pmpm_allowed_amount = float(pmpm_row[financial_columns.get("pmpm_allowed_amount")])
 
-    benchmark_pmpm_paid_amount = float(benchmark.get("benchmark_pmpm_paid_amount", 0.0))
-    benchmark_pmpm_allowed_amount = float(benchmark.get("benchmark_pmpm_allowed_amount", 0.0))
+    benchmark_pmpm_paid_amount = float(
+        benchmark.get("benchmark_pmpm_paid_amount", 0.0)
+    )
+    benchmark_pmpm_allowed_amount = float(
+        benchmark.get("benchmark_pmpm_allowed_amount", 0.0)
+    )
     minimum_savings_rate = float(benchmark.get("minimum_savings_rate", 0.0))
     provider_share_rate = float(benchmark.get("provider_share_rate", 0.0))
 
     benchmark_total_paid_amount = benchmark_pmpm_paid_amount * member_month_count
     gross_savings_amount = benchmark_total_paid_amount - total_paid_amount
-    gross_savings_rate = safe_divide(gross_savings_amount, benchmark_total_paid_amount)
+    gross_savings_rate = safe_divide(
+        gross_savings_amount,
+        benchmark_total_paid_amount,
+    )
 
     minimum_savings_met = gross_savings_rate >= minimum_savings_rate
-    shared_savings_amount = gross_savings_amount * provider_share_rate if minimum_savings_met else 0.0
+    shared_savings_amount = (
+        gross_savings_amount * provider_share_rate
+        if minimum_savings_met
+        else 0.0
+    )
+
+    provider_count = (
+        int(provider_df["provider_id"].nunique())
+        if "provider_id" in provider_df.columns
+        else int(len(provider_df))
+    )
 
     output_df = pd.DataFrame(
         [
@@ -831,7 +386,7 @@ def build_value_based_contract_summary(
                 "contract_type": config.get("contract_type"),
                 "payment_model": config.get("payment_model"),
                 "measurement_period": config.get("measurement_period"),
-                "provider_count": int(provider_df["provider_id"].nunique()) if "provider_id" in provider_df.columns else len(provider_df),
+                "provider_count": provider_count,
                 "cost_category_count": int(len(cost_df)),
                 "member_month_count": member_month_count,
                 "total_paid_amount": total_paid_amount,
@@ -847,9 +402,11 @@ def build_value_based_contract_summary(
                 "minimum_savings_met": minimum_savings_met,
                 "provider_share_rate": provider_share_rate,
                 "shared_savings_amount": shared_savings_amount,
-                "analytics_layer_run_id": runtime.run_id,
+                "analytics_layer_run_id": runtime.context.run_id,
                 "analytics_domain": runtime.domain_name,
                 "analytics_asset_name": "value_based_contract_summary",
+                "source_layer": "Layer 2H - Value-Based Care",
+                "source_dataset": pmpm_dataset_name,
                 "built_at_utc": utc_now().isoformat(),
             }
         ]
@@ -860,8 +417,12 @@ def build_value_based_contract_summary(
         rule_group="value_based_contract_summary",
         rule_name="synthetic_shared_savings_contract",
         rule_type="contract_financial_summary",
-        description="Builds synthetic value-based contract summary using PMPM benchmark comparison.",
+        description=(
+            "Builds synthetic value-based contract summary using PMPM "
+            "benchmark comparison."
+        ),
         source_dataset=pmpm_dataset_name,
+        source_layer="Gold Layer",
         rule_config=config,
     )
 
@@ -874,6 +435,8 @@ def build_value_based_contract_summary(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Value-based contract summary built successfully.",
+        source_layer="Layer 2H - Value-Based Care",
+        source_dataset=pmpm_dataset_name,
     )
 
     logger.info("COMPLETE: Build value-based contract summary | Rows: %s", len(output_df))
@@ -886,17 +449,38 @@ def build_value_based_contract_summary(
 ###############################################################################
 
 def build_provider_incentive_summary(
-    runtime: ValueBasedCareRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build provider incentive summary.
 
-    Output grain:
-        One row per provider per incentive rule earned.
+    Parameters
+    ----------
+    runtime:
+        Value-Based Care runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Provider incentive summary.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured source dataset or rule columns are missing.
+
+    Notes
+    -----
+    Output grain is one row per provider per earned incentive rule.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("provider_incentive_summary", {})
 
     if not bool(config.get("enabled", True)):
@@ -907,22 +491,27 @@ def build_provider_incentive_summary(
     provider_key = config.get("provider_key", "provider_id")
 
     if source_dataset not in datasets:
-        raise ValueError(f"Provider incentive source dataset missing: {source_dataset}")
+        raise ValidationError(
+            f"Provider incentive source dataset missing: {source_dataset}"
+        )
 
     source_df = datasets[source_dataset]
     output_frames: List[pd.DataFrame] = []
 
-    validate_required_columns(
+    require_columns(
         runtime=runtime,
         dataframe=source_df,
         dataset_name=source_dataset,
         required_columns=[provider_key],
+        source_layer="Layer 2F - Provider Analytics",
+        source_dataset=source_dataset,
     )
 
     logger.info("START: Build provider incentive summary")
 
     for rule_key, rule_config in config.get("incentive_rules", {}).items():
         if not bool(rule_config.get("enabled", True)):
+            logger.info("SKIP provider incentive rule disabled: %s", rule_key)
             continue
 
         rule_column = rule_config.get("rule_column")
@@ -930,11 +519,13 @@ def build_provider_incentive_summary(
         value = rule_config.get("value")
         incentive_amount = float(rule_config.get("incentive_amount", 0.0))
 
-        validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset,
             required_columns=[provider_key, rule_column],
+            source_layer="Layer 2F - Provider Analytics",
+            source_dataset=source_dataset,
         )
 
         mask = apply_operator(source_df[rule_column], operator, value)
@@ -944,9 +535,11 @@ def build_provider_incentive_summary(
         incentive_df["incentive_name"] = rule_config.get("incentive_name", rule_key)
         incentive_df["incentive_amount"] = incentive_amount
         incentive_df["incentive_description"] = rule_config.get("description", "")
-        incentive_df["analytics_layer_run_id"] = runtime.run_id
+        incentive_df["analytics_layer_run_id"] = runtime.context.run_id
         incentive_df["analytics_domain"] = runtime.domain_name
         incentive_df["analytics_asset_name"] = "provider_incentive_summary"
+        incentive_df["source_layer"] = "Layer 2F - Provider Analytics"
+        incentive_df["source_dataset"] = source_dataset
         incentive_df["built_at_utc"] = utc_now().isoformat()
 
         add_rule_record(
@@ -956,6 +549,7 @@ def build_provider_incentive_summary(
             rule_type="provider_incentive_assignment",
             description=rule_config.get("description", ""),
             source_dataset=source_dataset,
+            source_layer="Layer 2F - Provider Analytics",
             rule_config=rule_config,
         )
 
@@ -970,7 +564,21 @@ def build_provider_incentive_summary(
     if output_frames:
         output_df = pd.concat(output_frames, ignore_index=True)
     else:
-        output_df = pd.DataFrame()
+        output_df = pd.DataFrame(
+            columns=[
+                provider_key,
+                "incentive_rule_key",
+                "incentive_name",
+                "incentive_amount",
+                "incentive_description",
+                "analytics_layer_run_id",
+                "analytics_domain",
+                "analytics_asset_name",
+                "source_layer",
+                "source_dataset",
+                "built_at_utc",
+            ]
+        )
 
     add_dataset_record(
         runtime=runtime,
@@ -981,6 +589,8 @@ def build_provider_incentive_summary(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Provider incentive summary built successfully.",
+        source_layer="Layer 2F - Provider Analytics",
+        source_dataset=source_dataset,
     )
 
     logger.info("COMPLETE: Build provider incentive summary | Rows: %s", len(output_df))
@@ -993,14 +603,39 @@ def build_provider_incentive_summary(
 ###############################################################################
 
 def build_shared_savings_summary(
-    runtime: ValueBasedCareRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build shared savings summary.
+
+    Parameters
+    ----------
+    runtime:
+        Value-Based Care runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Shared savings summary.
+
+    Raises
+    ------
+    ValidationError
+        Raised when required financial columns are missing.
+
+    Notes
+    -----
+    This summary compares actual PMPM cost against configured benchmark PMPM
+    cost and calculates provider shared savings when minimum savings is met.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("shared_savings_summary", {})
 
     if not bool(config.get("enabled", True)):
@@ -1010,10 +645,11 @@ def build_shared_savings_summary(
     source_dataset = config.get("source_dataset", "pmpm_summary")
 
     if source_dataset not in datasets:
-        raise ValueError(f"Shared savings source dataset missing: {source_dataset}")
+        raise ValidationError(f"Shared savings source dataset missing: {source_dataset}")
 
     pmpm_df = datasets[source_dataset]
-    validate_required_columns(
+
+    require_columns(
         runtime=runtime,
         dataframe=pmpm_df,
         dataset_name=source_dataset,
@@ -1022,12 +658,19 @@ def build_shared_savings_summary(
             "total_paid_amount",
             "pmpm_paid_amount",
         ],
+        source_layer="Gold Layer",
+        source_dataset=source_dataset,
     )
+
+    if pmpm_df.empty:
+        raise ValidationError(f"Shared savings source dataset is empty: {source_dataset}")
 
     row = pmpm_df.iloc[0]
     benchmark = config.get("benchmark", {})
 
-    benchmark_pmpm_paid_amount = float(benchmark.get("benchmark_pmpm_paid_amount", 0.0))
+    benchmark_pmpm_paid_amount = float(
+        benchmark.get("benchmark_pmpm_paid_amount", 0.0)
+    )
     minimum_savings_rate = float(benchmark.get("minimum_savings_rate", 0.0))
     provider_share_rate = float(benchmark.get("provider_share_rate", 0.0))
 
@@ -1037,13 +680,21 @@ def build_shared_savings_summary(
 
     benchmark_total_paid_amount = benchmark_pmpm_paid_amount * member_month_count
     gross_savings_amount = benchmark_total_paid_amount - actual_total_paid_amount
-    gross_savings_rate = safe_divide(gross_savings_amount, benchmark_total_paid_amount)
+    gross_savings_rate = safe_divide(
+        gross_savings_amount,
+        benchmark_total_paid_amount,
+    )
     minimum_savings_met = gross_savings_rate >= minimum_savings_rate
+
     provider_shared_savings_amount = (
-        gross_savings_amount * provider_share_rate if minimum_savings_met else 0.0
+        gross_savings_amount * provider_share_rate
+        if minimum_savings_met
+        else 0.0
     )
     payer_retained_savings_amount = (
-        gross_savings_amount - provider_shared_savings_amount if minimum_savings_met else 0.0
+        gross_savings_amount - provider_shared_savings_amount
+        if minimum_savings_met
+        else 0.0
     )
 
     output_df = pd.DataFrame(
@@ -1062,9 +713,11 @@ def build_shared_savings_summary(
                 "provider_share_rate": provider_share_rate,
                 "provider_shared_savings_amount": provider_shared_savings_amount,
                 "payer_retained_savings_amount": payer_retained_savings_amount,
-                "analytics_layer_run_id": runtime.run_id,
+                "analytics_layer_run_id": runtime.context.run_id,
                 "analytics_domain": runtime.domain_name,
                 "analytics_asset_name": "shared_savings_summary",
+                "source_layer": "Gold Layer",
+                "source_dataset": source_dataset,
                 "built_at_utc": utc_now().isoformat(),
             }
         ]
@@ -1077,6 +730,7 @@ def build_shared_savings_summary(
         rule_type="shared_savings_calculation",
         description="Calculates shared savings using PMPM benchmark comparison.",
         source_dataset=source_dataset,
+        source_layer="Gold Layer",
         rule_config=config,
     )
 
@@ -1089,6 +743,8 @@ def build_shared_savings_summary(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Shared savings summary built successfully.",
+        source_layer="Gold Layer",
+        source_dataset=source_dataset,
     )
 
     logger.info("COMPLETE: Build shared savings summary | Rows: %s", len(output_df))
@@ -1101,14 +757,38 @@ def build_shared_savings_summary(
 ###############################################################################
 
 def build_risk_adjustment_summary(
-    runtime: ValueBasedCareRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build risk adjustment summary from member prediction summary.
+
+    Parameters
+    ----------
+    runtime:
+        Value-Based Care runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Risk adjustment summary.
+
+    Raises
+    ------
+    ValidationError
+        Raised when required risk score columns are missing.
+
+    Notes
+    -----
+    Output grain is one row per configured risk band.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("risk_adjustment_summary", {})
 
     if not bool(config.get("enabled", True)):
@@ -1118,17 +798,21 @@ def build_risk_adjustment_summary(
     source_dataset = config.get("source_dataset", "member_prediction_summary")
 
     if source_dataset not in datasets:
-        raise ValueError(f"Risk adjustment source dataset missing: {source_dataset}")
+        raise ValidationError(
+            f"Risk adjustment source dataset missing: {source_dataset}"
+        )
 
     source_df = datasets[source_dataset]
     risk_columns = config.get("risk_columns", {})
     score_column = risk_columns.get("max_prediction_score", "max_prediction_score")
 
-    validate_required_columns(
+    require_columns(
         runtime=runtime,
         dataframe=source_df,
         dataset_name=source_dataset,
         required_columns=[score_column],
+        source_layer="Layer 2D - Predictive Analytics",
+        source_dataset=source_dataset,
     )
 
     output_rows: List[Dict[str, Any]] = []
@@ -1141,9 +825,12 @@ def build_risk_adjustment_summary(
         risk_weight = float(band_config.get("risk_weight", 1.0))
         label = band_config.get("label", band_key)
 
-        mask = (source_df[score_column] >= min_score) & (source_df[score_column] <= max_score)
-        member_count = int(mask.sum())
+        mask = (
+            (source_df[score_column] >= min_score)
+            & (source_df[score_column] <= max_score)
+        )
 
+        member_count = int(mask.sum())
         weighted_member_count = member_count * risk_weight
 
         output_rows.append(
@@ -1155,9 +842,11 @@ def build_risk_adjustment_summary(
                 "risk_weight": risk_weight,
                 "member_count": member_count,
                 "weighted_member_count": weighted_member_count,
-                "analytics_layer_run_id": runtime.run_id,
+                "analytics_layer_run_id": runtime.context.run_id,
                 "analytics_domain": runtime.domain_name,
                 "analytics_asset_name": "risk_adjustment_summary",
+                "source_layer": "Layer 2D - Predictive Analytics",
+                "source_dataset": source_dataset,
                 "built_at_utc": utc_now().isoformat(),
             }
         )
@@ -1169,6 +858,7 @@ def build_risk_adjustment_summary(
             rule_type="risk_band_assignment",
             description=f"Risk adjustment band: {label}",
             source_dataset=source_dataset,
+            source_layer="Layer 2D - Predictive Analytics",
             rule_config=band_config,
         )
 
@@ -1183,6 +873,8 @@ def build_risk_adjustment_summary(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Risk adjustment summary built successfully.",
+        source_layer="Layer 2D - Predictive Analytics",
+        source_dataset=source_dataset,
     )
 
     logger.info("COMPLETE: Build risk adjustment summary | Rows: %s", len(output_df))
@@ -1195,14 +887,39 @@ def build_risk_adjustment_summary(
 ###############################################################################
 
 def build_bundle_opportunity_summary(
-    runtime: ValueBasedCareRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build bundle opportunity summary from cost summary.
+
+    Parameters
+    ----------
+    runtime:
+        Value-Based Care runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Bundle opportunity summary.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured bundle opportunity columns are missing.
+
+    Notes
+    -----
+    Output grain depends on the configured source cost summary and opportunity
+    rules.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("bundle_opportunity_summary", {})
 
     if not bool(config.get("enabled", True)):
@@ -1212,16 +929,20 @@ def build_bundle_opportunity_summary(
     source_dataset = config.get("source_dataset", "cost_summary")
 
     if source_dataset not in datasets:
-        raise ValueError(f"Bundle opportunity source dataset missing: {source_dataset}")
+        raise ValidationError(
+            f"Bundle opportunity source dataset missing: {source_dataset}"
+        )
 
     source_df = datasets[source_dataset]
     group_by = config.get("group_by", [])
 
-    validate_required_columns(
+    require_columns(
         runtime=runtime,
         dataframe=source_df,
         dataset_name=source_dataset,
         required_columns=group_by,
+        source_layer="Gold Layer",
+        source_dataset=source_dataset,
     )
 
     output_frames: List[pd.DataFrame] = []
@@ -1230,29 +951,39 @@ def build_bundle_opportunity_summary(
 
     for rule_key, rule_config in config.get("opportunity_rules", {}).items():
         if not bool(rule_config.get("enabled", True)):
+            logger.info("SKIP bundle opportunity rule disabled: %s", rule_key)
             continue
 
         rule_column = rule_config.get("rule_column")
         operator = rule_config.get("operator")
         value = rule_config.get("value")
 
-        validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset,
             required_columns=group_by + [rule_column],
+            source_layer="Gold Layer",
+            source_dataset=source_dataset,
         )
 
         mask = apply_operator(source_df[rule_column], operator, value)
 
         opportunity_df = source_df.loc[mask].copy()
         opportunity_df["opportunity_rule_key"] = rule_key
-        opportunity_df["opportunity_name"] = rule_config.get("opportunity_name", rule_key)
-        opportunity_df["opportunity_priority_rank"] = rule_config.get("opportunity_priority_rank")
+        opportunity_df["opportunity_name"] = rule_config.get(
+            "opportunity_name",
+            rule_key,
+        )
+        opportunity_df["opportunity_priority_rank"] = rule_config.get(
+            "opportunity_priority_rank"
+        )
         opportunity_df["opportunity_description"] = rule_config.get("description", "")
-        opportunity_df["analytics_layer_run_id"] = runtime.run_id
+        opportunity_df["analytics_layer_run_id"] = runtime.context.run_id
         opportunity_df["analytics_domain"] = runtime.domain_name
         opportunity_df["analytics_asset_name"] = "bundle_opportunity_summary"
+        opportunity_df["source_layer"] = "Gold Layer"
+        opportunity_df["source_dataset"] = source_dataset
         opportunity_df["built_at_utc"] = utc_now().isoformat()
 
         add_rule_record(
@@ -1262,6 +993,7 @@ def build_bundle_opportunity_summary(
             rule_type="bundle_opportunity_selection",
             description=rule_config.get("description", ""),
             source_dataset=source_dataset,
+            source_layer="Gold Layer",
             rule_config=rule_config,
         )
 
@@ -1287,6 +1019,8 @@ def build_bundle_opportunity_summary(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Bundle opportunity summary built successfully.",
+        source_layer="Gold Layer",
+        source_dataset=source_dataset,
     )
 
     logger.info("COMPLETE: Build bundle opportunity summary | Rows: %s", len(output_df))
@@ -1299,14 +1033,37 @@ def build_bundle_opportunity_summary(
 ###############################################################################
 
 def build_vbc_executive_scorecard(
-    runtime: ValueBasedCareRuntime,
+    runtime: AnalyticsDomainRuntime,
     output_assets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build executive scorecard from Value-Based Care output assets.
+
+    Parameters
+    ----------
+    runtime:
+        Value-Based Care runtime.
+
+    output_assets:
+        Value-Based Care output assets already built during this run.
+
+    Returns
+    -------
+    pandas.DataFrame
+        VBC executive scorecard.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    This creates a compact executive-ready summary of Value-Based Care outputs.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("vbc_executive_scorecard", {})
 
     if not bool(config.get("enabled", True)):
@@ -1314,7 +1071,6 @@ def build_vbc_executive_scorecard(
         return pd.DataFrame()
 
     source_assets = config.get("source_assets", [])
-
     rows: List[Dict[str, Any]] = []
 
     for asset_name in source_assets:
@@ -1325,16 +1081,20 @@ def build_vbc_executive_scorecard(
                 "scorecard_section": asset_name,
                 "row_count": int(len(asset_df)),
                 "column_count": int(len(asset_df.columns)),
-                "analytics_layer_run_id": runtime.run_id,
+                "analytics_layer_run_id": runtime.context.run_id,
                 "analytics_domain": runtime.domain_name,
                 "analytics_asset_name": "vbc_executive_scorecard",
+                "source_layer": "Layer 2H - Value-Based Care",
+                "source_dataset": asset_name,
                 "built_at_utc": utc_now().isoformat(),
             }
         )
 
     contract_df = output_assets.get("value_based_contract_summary", pd.DataFrame())
+
     if not contract_df.empty:
         contract_row = contract_df.iloc[0]
+
         rows.append(
             {
                 "scorecard_section": "contract_financials",
@@ -1345,14 +1105,17 @@ def build_vbc_executive_scorecard(
                 "gross_savings_amount": contract_row.get("gross_savings_amount"),
                 "gross_savings_rate": contract_row.get("gross_savings_rate"),
                 "shared_savings_amount": contract_row.get("shared_savings_amount"),
-                "analytics_layer_run_id": runtime.run_id,
+                "analytics_layer_run_id": runtime.context.run_id,
                 "analytics_domain": runtime.domain_name,
                 "analytics_asset_name": "vbc_executive_scorecard",
+                "source_layer": "Layer 2H - Value-Based Care",
+                "source_dataset": "value_based_contract_summary",
                 "built_at_utc": utc_now().isoformat(),
             }
         )
 
     incentive_df = output_assets.get("provider_incentive_summary", pd.DataFrame())
+
     if not incentive_df.empty and "incentive_amount" in incentive_df.columns:
         rows.append(
             {
@@ -1360,9 +1123,11 @@ def build_vbc_executive_scorecard(
                 "row_count": int(len(incentive_df)),
                 "column_count": int(len(incentive_df.columns)),
                 "total_incentive_amount": float(incentive_df["incentive_amount"].sum()),
-                "analytics_layer_run_id": runtime.run_id,
+                "analytics_layer_run_id": runtime.context.run_id,
                 "analytics_domain": runtime.domain_name,
                 "analytics_asset_name": "vbc_executive_scorecard",
+                "source_layer": "Layer 2H - Value-Based Care",
+                "source_dataset": "provider_incentive_summary",
                 "built_at_utc": utc_now().isoformat(),
             }
         )
@@ -1374,8 +1139,11 @@ def build_vbc_executive_scorecard(
         rule_group="vbc_executive_scorecard",
         rule_name="executive_scorecard_assembly",
         rule_type="scorecard_summary",
-        description="Builds executive scorecard from Value-Based Care output assets.",
+        description=(
+            "Builds executive scorecard from Value-Based Care output assets."
+        ),
         source_dataset="value_based_care_outputs",
+        source_layer="Layer 2H - Value-Based Care",
         rule_config=config,
     )
 
@@ -1388,6 +1156,8 @@ def build_vbc_executive_scorecard(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="VBC executive scorecard built successfully.",
+        source_layer="Layer 2H - Value-Based Care",
+        source_dataset="value_based_care_outputs",
     )
 
     logger.info("COMPLETE: Build VBC executive scorecard | Rows: %s", len(output_df))
@@ -1396,225 +1166,105 @@ def build_vbc_executive_scorecard(
 
 
 ###############################################################################
-# Metadata Outputs
-###############################################################################
-
-def build_dataset_inventory(runtime: ValueBasedCareRuntime) -> pd.DataFrame:
-    """
-    Build dataset inventory.
-    """
-
-    return pd.DataFrame(runtime.dataset_records)
-
-
-def build_column_dictionary(
-    runtime: ValueBasedCareRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build output column dictionary.
-    """
-
-    rows: List[Dict[str, Any]] = []
-
-    for dataset_name, dataframe in output_assets.items():
-        for column in dataframe.columns:
-            rows.append(
-                {
-                    "run_id": runtime.run_id,
-                    "layer_name": runtime.layer_name,
-                    "domain_name": runtime.domain_name,
-                    "dataset_name": dataset_name,
-                    "column_name": column,
-                    "data_type": str(dataframe[column].dtype),
-                    "non_null_count": int(dataframe[column].notna().sum()),
-                    "null_count": int(dataframe[column].isna().sum()),
-                    "row_count": int(len(dataframe)),
-                    "event_timestamp_utc": utc_now().isoformat(),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-
-def build_rule_catalog(runtime: ValueBasedCareRuntime) -> pd.DataFrame:
-    """
-    Build rule catalog.
-    """
-
-    return pd.DataFrame(runtime.rule_records)
-
-
-def build_execution_summary(
-    runtime: ValueBasedCareRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build execution summary.
-    """
-
-    end_time = utc_now()
-    duration_seconds = (end_time - runtime.start_time_utc).total_seconds()
-
-    failed_validation_count = sum(
-        1 for record in runtime.validation_records
-        if record.get("status") == STATUS_FAILED
-    )
-
-    summary = {
-        "run_id": runtime.run_id,
-        "layer_name": runtime.layer_name,
-        "domain_name": runtime.domain_name,
-        "config_path": str(runtime.config_path),
-        "start_time_utc": runtime.start_time_utc.isoformat(),
-        "end_time_utc": end_time.isoformat(),
-        "duration_seconds": duration_seconds,
-        "output_asset_count": len(output_assets),
-        "audit_record_count": len(runtime.audit_records),
-        "validation_record_count": len(runtime.validation_records),
-        "failed_validation_count": failed_validation_count,
-        "dataset_record_count": len(runtime.dataset_records),
-        "rule_record_count": len(runtime.rule_records),
-        "status": STATUS_SUCCESS if failed_validation_count == 0 else STATUS_WARNING,
-    }
-
-    return pd.DataFrame([summary])
-
-
-###############################################################################
-# Output Writing
-###############################################################################
-
-def get_output_path(
-    runtime: ValueBasedCareRuntime,
-    output_group: str,
-    output_name: str,
-) -> Path:
-    """
-    Resolve configured output path.
-    """
-
-    output_config = runtime.config.get("paths", {}).get(output_group, {})
-    output_entry = output_config.get(output_name)
-
-    if isinstance(output_entry, dict):
-        raw_path = output_entry.get("path")
-    else:
-        raw_path = output_entry
-
-    if not raw_path:
-        raw_path = f"data/analytics_platform/{output_group}/{output_name}"
-
-    return normalize_path(runtime.project_root, raw_path)
-
-
-def write_value_based_care_outputs(
-    runtime: ValueBasedCareRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write Value-Based Care outputs.
-    """
-
-    output_format = get_output_format(runtime)
-
-    for output_name, dataframe in output_assets.items():
-        output_path = get_output_path(runtime, "outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote Value-Based Care output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-        add_audit_record(
-            runtime=runtime,
-            step_name=f"write_output:{output_name}",
-            status=STATUS_SUCCESS,
-            message="Value-Based Care output written successfully.",
-            row_count=len(dataframe),
-            output_path=str(output_path),
-        )
-
-
-def write_metadata_and_audit_outputs(
-    runtime: ValueBasedCareRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write metadata and audit outputs.
-    """
-
-    output_format = get_output_format(runtime)
-
-    metadata_assets = {
-        "value_based_care_dataset_inventory": build_dataset_inventory(runtime),
-        "value_based_care_column_dictionary": build_column_dictionary(runtime, output_assets),
-        "value_based_care_rule_catalog": build_rule_catalog(runtime),
-    }
-
-    audit_assets = {
-        "value_based_care_audit_records": pd.DataFrame(runtime.audit_records),
-        "value_based_care_validation_results": pd.DataFrame(runtime.validation_records),
-        "value_based_care_execution_summary": build_execution_summary(runtime, output_assets),
-    }
-
-    for output_name, dataframe in metadata_assets.items():
-        output_path = get_output_path(runtime, "metadata_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote metadata output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-    for output_name, dataframe in audit_assets.items():
-        output_path = get_output_path(runtime, "audit_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote audit output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-
-###############################################################################
 # Main Orchestration
 ###############################################################################
 
 def build_value_based_care_layer(
     config_path: str = DEFAULT_CONFIG_PATH,
-) -> BuildResult:
+) -> AnalyticsBuildResult:
     """
-    Build complete Value-Based Care layer.
+    Purpose
+    -------
+    Build the complete Value-Based Care layer.
+
+    Parameters
+    ----------
+    config_path:
+        Value-Based Care configuration path.
+
+    Returns
+    -------
+    AnalyticsBuildResult
+        Standard build result containing status, message, row count, and column
+        count.
+
+    Raises
+    ------
+    None
+        Exceptions are captured and returned as a failed AnalyticsBuildResult.
+
+    Notes
+    -----
+    This layer consumes configured upstream Gold, Provider Analytics, Predictive
+    Analytics, and Care Management outputs and produces Value-Based Care
+    summaries and scorecards.
     """
 
-    runtime: Optional[ValueBasedCareRuntime] = None
+    runtime: Optional[AnalyticsDomainRuntime] = None
 
     try:
         runtime = initialize_runtime(config_path)
-        logger = runtime.logger
+        logger = runtime.get_logger(LOGGER_NAME)
 
-        logger.info("Configuration path: %s", runtime.config_path)
+        logger.info("=" * 80)
+        logger.info("MedFabric Value-Based Care started")
+        logger.info("=" * 80)
+        logger.info("Configuration file: %s", runtime.config_file)
 
-        datasets = load_input_datasets(runtime)
-        validate_inputs(runtime, datasets)
+        output_format = get_output_format(
+            runtime=runtime,
+            domain_section=DOMAIN_SECTION,
+        )
 
-        value_based_contract_summary = build_value_based_contract_summary(runtime, datasets)
-        provider_incentive_summary = build_provider_incentive_summary(runtime, datasets)
-        shared_savings_summary = build_shared_savings_summary(runtime, datasets)
-        risk_adjustment_summary = build_risk_adjustment_summary(runtime, datasets)
-        bundle_opportunity_summary = build_bundle_opportunity_summary(runtime, datasets)
+        provider_key = runtime.config.get("join_keys", {}).get(
+            "provider_key",
+            "provider_id",
+        )
+        member_key = runtime.config.get("join_keys", {}).get(
+            "member_key",
+            "member_id",
+        )
+
+        datasets = load_input_datasets(
+            runtime=runtime,
+            input_source_layer_map={
+                "pmpm_summary": "Gold Layer",
+                "cost_summary": "Gold Layer",
+                "provider_performance_summary": "Layer 2F - Provider Analytics",
+                "member_prediction_summary": "Layer 2D - Predictive Analytics",
+                "care_management_summary": "Care Management",
+            },
+            key_column_map={
+                "provider_performance_summary": provider_key,
+                "member_prediction_summary": member_key,
+                "care_management_summary": member_key,
+            },
+        )
+
+        value_based_contract_summary = build_value_based_contract_summary(
+            runtime=runtime,
+            datasets=datasets,
+        )
+
+        provider_incentive_summary = build_provider_incentive_summary(
+            runtime=runtime,
+            datasets=datasets,
+        )
+
+        shared_savings_summary = build_shared_savings_summary(
+            runtime=runtime,
+            datasets=datasets,
+        )
+
+        risk_adjustment_summary = build_risk_adjustment_summary(
+            runtime=runtime,
+            datasets=datasets,
+        )
+
+        bundle_opportunity_summary = build_bundle_opportunity_summary(
+            runtime=runtime,
+            datasets=datasets,
+        )
 
         output_assets: Dict[str, pd.DataFrame] = {
             "value_based_contract_summary": value_based_contract_summary,
@@ -1624,57 +1274,108 @@ def build_value_based_care_layer(
             "bundle_opportunity_summary": bundle_opportunity_summary,
         }
 
-        vbc_executive_scorecard = build_vbc_executive_scorecard(runtime, output_assets)
-        output_assets["vbc_executive_scorecard"] = vbc_executive_scorecard
-
-        write_value_based_care_outputs(runtime, output_assets)
-
-        add_audit_record(
+        vbc_executive_scorecard = build_vbc_executive_scorecard(
             runtime=runtime,
-            step_name="build_value_based_care_layer",
-            status=STATUS_SUCCESS,
-            message="Value-Based Care completed successfully.",
+            output_assets=output_assets,
         )
 
-        write_metadata_and_audit_outputs(runtime, output_assets)
+        output_assets["vbc_executive_scorecard"] = vbc_executive_scorecard
+
+        write_output_assets(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+        )
+
+        add_success_audit(
+            runtime=runtime,
+            step_name="build_value_based_care_layer",
+            message="Value-Based Care completed successfully.",
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            source_layer="Layer 2H - Value-Based Care",
+            source_dataset="value_based_care_outputs",
+        )
+
+        write_metadata_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            dataset_inventory_name="value_based_care_dataset_inventory",
+            column_dictionary_name="value_based_care_column_dictionary",
+            rule_catalog_name="value_based_care_rule_catalog",
+        )
+
+        write_audit_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            audit_records_name="value_based_care_audit_records",
+            validation_results_name="value_based_care_validation_results",
+            execution_summary_name="value_based_care_execution_summary",
+        )
 
         logger.info("=" * 80)
         logger.info("MedFabric Value-Based Care completed successfully")
         logger.info("=" * 80)
 
-        return BuildResult(
-            name="value_based_care",
+        return AnalyticsBuildResult(
+            name=DOMAIN_SECTION,
             status=STATUS_SUCCESS,
             message="Value-Based Care completed successfully.",
-            row_count=sum(len(df) for df in output_assets.values()),
-            column_count=sum(len(df.columns) for df in output_assets.values()),
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            column_count=sum(
+                len(dataframe.columns) for dataframe in output_assets.values()
+            ),
         )
 
     except Exception as exc:
         if runtime is not None:
-            runtime.logger.error("=" * 80)
-            runtime.logger.error("Value-Based Care failed")
-            runtime.logger.error("Error: %s", exc)
-            runtime.logger.error("Traceback:\n%s", traceback.format_exc())
-            runtime.logger.error("=" * 80)
+            logger = runtime.get_logger(LOGGER_NAME)
 
-            add_audit_record(
+            logger.error("=" * 80)
+            logger.error("Value-Based Care failed")
+            logger.error("Error: %s", exc)
+            logger.error("Traceback:\n%s", traceback.format_exc())
+            logger.error("=" * 80)
+
+            add_failed_audit(
                 runtime=runtime,
                 step_name="build_value_based_care_layer",
-                status=STATUS_FAILED,
                 message=str(exc),
+                source_layer="Layer 2H - Value-Based Care",
+                source_dataset="value_based_care",
             )
 
             try:
-                write_metadata_and_audit_outputs(runtime, {})
-            except Exception as audit_exc:
-                runtime.logger.error("Failed to write audit outputs: %s", audit_exc)
+                output_format = get_output_format(
+                    runtime=runtime,
+                    domain_section=DOMAIN_SECTION,
+                )
 
-        return BuildResult(
-            name="value_based_care",
+                write_audit_outputs(
+                    runtime=runtime,
+                    output_assets={},
+                    output_format=output_format,
+                    audit_records_name="value_based_care_audit_records",
+                    validation_results_name="value_based_care_validation_results",
+                    execution_summary_name="value_based_care_execution_summary",
+                )
+
+            except Exception as audit_exc:
+                logger.error(
+                    "Failed to write Value-Based Care audit outputs: %s",
+                    audit_exc,
+                )
+
+        return AnalyticsBuildResult(
+            name=DOMAIN_SECTION,
             status=STATUS_FAILED,
             message=str(exc),
         )
+
+    finally:
+        if runtime is not None:
+            runtime.context.logging.close()
 
 
 ###############################################################################
@@ -1683,10 +1384,22 @@ def build_value_based_care_layer(
 
 def main() -> None:
     """
-    Command-line entry point.
+    Purpose
+    -------
+    Command-line entry point for Value-Based Care.
 
-    Run:
-        python -m src.analytics_platform.value_based_care.build_value_based_care_layer
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    SystemExit
+        Raised with exit code 1 when execution fails.
     """
 
     config_path = os.environ.get(

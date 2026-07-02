@@ -11,44 +11,9 @@
 # Purpose:
 #     Master orchestrator for the MedFabric Analytics Platform.
 #
-#     This file controls execution of Layer 2 analytics domains using:
-#
-#         config/analytics_platform/analytics_platform.yaml
-#
-#     It does not contain domain-specific business rules.
-#
-#     Domain business rules belong in domain-specific YAML files such as:
-#
-#         config/analytics_platform/population_health.yaml
-#
-# Responsibilities:
-#     - Load Analytics Platform orchestration configuration.
-#     - Validate enabled domain configuration.
-#     - Build domain registry metadata.
-#     - Build execution plan metadata.
-#     - Execute enabled analytics domains in configured sequence.
-#     - Capture audit records.
-#     - Capture validation records.
-#     - Write execution summary.
-#     - Write Layer 2 metadata and audit outputs.
-#
-# Current Enabled Domain:
-#     - Population Health
-#
-# Future Domains:
-#     - Clinical Analytics
-#     - Quality Analytics
-#     - Predictive Analytics
-#     - Provider Analytics
-#     - Care Management
-#     - Value-Based Care
-#
-# Inputs:
-#     config/analytics_platform/analytics_platform.yaml
-#
-# Outputs:
-#     data/analytics_platform/metadata/
-#     data/analytics_platform/audit/
+# Architectural Standardization:
+#     This orchestrator uses Layer 0 Foundation managers from src/common instead
+#     of duplicating configuration, logging, path, storage, and validation logic.
 #
 # Run:
 #     python -m src.analytics_platform.build_analytics_platform
@@ -58,29 +23,28 @@
 from __future__ import annotations
 
 import importlib
-import logging
 import os
 import sys
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import yaml
+
+from src.common.exception_manager import PipelineError
+from src.common.pipeline_context import PipelineContext, create_pipeline_context
 
 
 ###############################################################################
 # Constants
 ###############################################################################
 
-DEFAULT_CONFIG_PATH = "config/analytics_platform/analytics_platform.yaml"
+DEFAULT_CONFIG_PATH = "analytics_platform/analytics_platform.yaml"
 
 DEFAULT_LAYER_NAME = "Layer 2 - Analytics Platform"
-
 DEFAULT_PLATFORM_NAME = "MedFabric Analytics Platform"
-
 DEFAULT_OUTPUT_FORMAT = "parquet"
 
 SUPPORTED_FILE_FORMATS = {"parquet", "csv", "json"}
@@ -92,32 +56,38 @@ STATUS_SKIPPED = "SKIPPED"
 
 
 ###############################################################################
-# Runtime Data Classes
+# Data Classes
 ###############################################################################
-
-@dataclass
-class AnalyticsPlatformRuntime:
-    """
-    Runtime context for one Analytics Platform execution.
-    """
-
-    run_id: str
-    project_root: Path
-    config_path: Path
-    start_time_utc: datetime
-    config: Dict[str, Any]
-    logger: logging.Logger
-    layer_name: str
-    platform_name: str
-    audit_records: List[Dict[str, Any]] = field(default_factory=list)
-    validation_records: List[Dict[str, Any]] = field(default_factory=list)
-    domain_execution_records: List[Dict[str, Any]] = field(default_factory=list)
-
 
 @dataclass
 class DomainExecutionResult:
     """
-    Standardized result for one analytics domain execution.
+    Purpose
+    -------
+    Stores standardized execution results for one Analytics Platform domain.
+
+    Parameters
+    ----------
+    domain_key:
+        Internal domain key from analytics_platform.yaml.
+
+    domain_name:
+        Human-readable domain name.
+
+    status:
+        Execution status.
+
+    message:
+        Execution message returned by the domain builder.
+
+    start_time_utc:
+        Domain start timestamp in UTC ISO format.
+
+    end_time_utc:
+        Domain end timestamp in UTC ISO format.
+
+    duration_seconds:
+        Domain execution duration in seconds.
     """
 
     domain_key: str
@@ -132,7 +102,20 @@ class DomainExecutionResult:
 @dataclass
 class BuildResult:
     """
-    Standard result returned by the Layer 2 orchestrator.
+    Purpose
+    -------
+    Stores standardized result returned by the Layer 2 orchestrator.
+
+    Parameters
+    ----------
+    name:
+        Build component name.
+
+    status:
+        Final execution status.
+
+    message:
+        Final execution message.
     """
 
     name: str
@@ -140,147 +123,140 @@ class BuildResult:
     message: str
 
 
+@dataclass
+class AnalyticsPlatformRuntime:
+    """
+    Purpose
+    -------
+    Holds Analytics Platform runtime state.
+
+    Parameters
+    ----------
+    context:
+        MedFabric PipelineContext created from src/common.
+
+    config:
+        Loaded Analytics Platform orchestration configuration.
+
+    config_file:
+        Config file name passed to ConfigurationManager.
+
+    layer_name:
+        Logical layer name.
+
+    platform_name:
+        Platform name.
+
+    start_time_utc:
+        Runtime start timestamp.
+
+    audit_records:
+        In-memory audit records.
+
+    validation_records:
+        In-memory validation records.
+
+    domain_execution_records:
+        In-memory domain execution records.
+
+    Notes
+    -----
+    This runtime intentionally stores only Analytics Platform orchestration
+    records. Foundation services come from PipelineContext.
+    """
+
+    context: PipelineContext
+    config: Dict[str, Any]
+    config_file: str
+    layer_name: str
+    platform_name: str
+    start_time_utc: datetime
+    audit_records: List[Dict[str, Any]]
+    validation_records: List[Dict[str, Any]]
+    domain_execution_records: List[Dict[str, Any]]
+
+
 ###############################################################################
-# General Utilities
+# Time Helpers
 ###############################################################################
 
 def utc_now() -> datetime:
     """
-    Return timezone-aware UTC timestamp.
+    Purpose
+    -------
+    Return current timezone-aware UTC timestamp.
+
+    Returns
+    -------
+    datetime
+        Current UTC timestamp.
     """
 
     return datetime.now(timezone.utc)
 
 
-def generate_run_id() -> str:
-    """
-    Generate timestamp-based run identifier.
-    """
-
-    return utc_now().strftime("%Y%m%d_%H%M%S")
-
-
-def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
-    """
-    Resolve relative or absolute path.
-    """
-
-    path = Path(raw_path)
-
-    if path.is_absolute():
-        return path
-
-    return project_root / path
-
-
-def ensure_directory(path: Path) -> None:
-    """
-    Create directory if it does not exist.
-    """
-
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def safe_string(value: Any) -> str:
-    """
-    Safely convert value to string.
-    """
-
-    if value is None:
-        return ""
-
-    return str(value)
-
-
 ###############################################################################
-# Logging
+# Configuration Helpers
 ###############################################################################
 
-def configure_logging(
-    project_root: Path,
-    config: Dict[str, Any],
-    run_id: str,
-) -> logging.Logger:
+def normalize_config_file(config_path: str) -> str:
     """
-    Configure Analytics Platform logging.
-    """
+    Purpose
+    -------
+    Convert a repository-relative config path into a config-root-relative path
+    expected by ConfigurationManager.
 
-    logging_config = config.get("logging", {})
+    Parameters
+    ----------
+    config_path:
+        Config path. Examples:
+        - config/analytics_platform/analytics_platform.yaml
+        - analytics_platform/analytics_platform.yaml
 
-    log_level_name = logging_config.get("level", "INFO")
-    log_level = getattr(logging, str(log_level_name).upper(), logging.INFO)
+    Returns
+    -------
+    str
+        Config-root-relative path.
 
-    log_dir_raw = logging_config.get("module_log_dir", "logs/modules")
-    log_dir = normalize_path(project_root, log_dir_raw)
-    ensure_directory(log_dir)
-
-    log_file_name = logging_config.get("log_file_name", "analytics_platform.log")
-    log_file_path = log_dir / log_file_name
-
-    logger = logging.getLogger("medfabric.analytics_platform")
-    logger.setLevel(log_level)
-    logger.handlers.clear()
-    logger.propagate = False
-
-    formatter = logging.Formatter(
-        fmt="[%(asctime)s] [RUN_ID=%(run_id)s] [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    class RunIdFilter(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            record.run_id = run_id
-            return True
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(log_level)
-    stream_handler.setFormatter(formatter)
-    stream_handler.addFilter(RunIdFilter())
-
-    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(RunIdFilter())
-
-    logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
-
-    logger.info("=" * 80)
-    logger.info("MedFabric Analytics Platform execution started")
-    logger.info("=" * 80)
-    logger.info("Run ID: %s", run_id)
-    logger.info("Log file: %s", log_file_path)
-
-    return logger
-
-
-###############################################################################
-# Configuration
-###############################################################################
-
-def load_yaml_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load YAML configuration file.
+    Notes
+    -----
+    ConfigurationManager is initialized with config_root="config", so passing
+    "analytics_platform/analytics_platform.yaml" is preferred.
     """
 
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    normalized = str(config_path).strip()
 
-    with config_path.open("r", encoding="utf-8") as file:
-        config = yaml.safe_load(file)
+    if normalized.startswith("config/"):
+        normalized = normalized[len("config/"):]
 
-    if config is None:
-        raise ValueError(f"Configuration file is empty: {config_path}")
-
-    if not isinstance(config, dict):
-        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
-
-    return config
+    return normalized
 
 
-def validate_config(config: Dict[str, Any]) -> None:
+def validate_analytics_platform_config(config: Dict[str, Any]) -> None:
     """
+    Purpose
+    -------
     Validate Analytics Platform master configuration.
+
+    Parameters
+    ----------
+    config:
+        Loaded analytics_platform.yaml configuration.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    PipelineError
+        Raised when required sections, domain fields, or output format are
+        invalid.
+
+    Notes
+    -----
+    This validation is orchestrator-specific. Generic YAML loading is handled
+    by ConfigurationManager.
     """
 
     errors: List[str] = []
@@ -300,8 +276,10 @@ def validate_config(config: Dict[str, Any]) -> None:
         if section not in config:
             errors.append(f"Missing required configuration section: {section}")
 
-    platform_config = config.get("analytics_platform", {})
-    output_format = platform_config.get("output_format", DEFAULT_OUTPUT_FORMAT)
+    output_format = (
+        config.get("analytics_platform", {})
+        .get("output_format", DEFAULT_OUTPUT_FORMAT)
+    )
 
     if output_format not in SUPPORTED_FILE_FORMATS:
         errors.append(
@@ -310,23 +288,18 @@ def validate_config(config: Dict[str, Any]) -> None:
         )
 
     execution_config = config.get("execution", {})
+    sequence = execution_config.get("sequence")
 
-    if "sequence" not in execution_config:
+    if sequence is None:
         errors.append("Missing required configuration section: execution.sequence")
-
-    if not isinstance(execution_config.get("sequence", []), list):
+    elif not isinstance(sequence, list):
         errors.append("execution.sequence must be a list.")
 
     domains_config = config.get("domains", {})
 
     if not isinstance(domains_config, dict) or not domains_config:
         errors.append("domains must be a non-empty dictionary.")
-
-    for domain_key, domain_config in domains_config.items():
-        if not isinstance(domain_config, dict):
-            errors.append(f"Domain configuration must be dictionary: {domain_key}")
-            continue
-
+    else:
         required_domain_fields = [
             "enabled",
             "required",
@@ -337,11 +310,16 @@ def validate_config(config: Dict[str, Any]) -> None:
             "expected_output_dir",
         ]
 
-        for field_name in required_domain_fields:
-            if field_name not in domain_config:
-                errors.append(
-                    f"Missing domain field '{field_name}' for domain '{domain_key}'"
-                )
+        for domain_key, domain_config in domains_config.items():
+            if not isinstance(domain_config, dict):
+                errors.append(f"Domain configuration must be dictionary: {domain_key}")
+                continue
+
+            for field_name in required_domain_fields:
+                if field_name not in domain_config:
+                    errors.append(
+                        f"Missing domain field '{field_name}' for domain '{domain_key}'"
+                    )
 
     paths_config = config.get("paths", {})
 
@@ -354,40 +332,55 @@ def validate_config(config: Dict[str, Any]) -> None:
             errors.append("Missing required configuration section: paths.audit_outputs")
 
     if errors:
-        raise ValueError(
+        raise PipelineError(
             "Analytics Platform configuration validation failed:\n"
             + "\n".join(f"- {error}" for error in errors)
         )
 
 
-def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> AnalyticsPlatformRuntime:
+def initialize_runtime(config_path: str) -> AnalyticsPlatformRuntime:
     """
-    Initialize Analytics Platform runtime.
+    Purpose
+    -------
+    Initialize Analytics Platform runtime using src/common PipelineContext.
+
+    Parameters
+    ----------
+    config_path:
+        Analytics Platform config path.
+
+    Returns
+    -------
+    AnalyticsPlatformRuntime
+        Initialized runtime.
+
+    Raises
+    ------
+    PipelineError
+        Raised when context creation or configuration validation fails.
     """
 
-    project_root = Path.cwd()
-    config_path = normalize_path(project_root, config_path_raw)
-    run_id = generate_run_id()
+    config_file = normalize_config_file(config_path)
 
-    config = load_yaml_config(config_path)
-    validate_config(config)
+    context = create_pipeline_context(
+        pipeline_name="Layer 2 - Analytics Platform",
+    )
+
+    config = context.configuration.load_yaml(config_file)
+    validate_analytics_platform_config(config)
 
     platform_config = config.get("analytics_platform", {})
 
-    layer_name = platform_config.get("layer_name", DEFAULT_LAYER_NAME)
-    platform_name = platform_config.get("platform_name", DEFAULT_PLATFORM_NAME)
-
-    logger = configure_logging(project_root, config, run_id)
-
     runtime = AnalyticsPlatformRuntime(
-        run_id=run_id,
-        project_root=project_root,
-        config_path=config_path,
-        start_time_utc=utc_now(),
+        context=context,
         config=config,
-        logger=logger,
-        layer_name=layer_name,
-        platform_name=platform_name,
+        config_file=config_file,
+        layer_name=platform_config.get("layer_name", DEFAULT_LAYER_NAME),
+        platform_name=platform_config.get("platform_name", DEFAULT_PLATFORM_NAME),
+        start_time_utc=utc_now(),
+        audit_records=[],
+        validation_records=[],
+        domain_execution_records=[],
     )
 
     add_audit_record(
@@ -401,7 +394,7 @@ def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> AnalyticsP
 
 
 ###############################################################################
-# Audit and Validation
+# Audit and Validation Records
 ###############################################################################
 
 def add_audit_record(
@@ -413,12 +406,38 @@ def add_audit_record(
     output_path: Optional[str] = None,
 ) -> None:
     """
-    Add an audit record.
+    Purpose
+    -------
+    Add an Analytics Platform audit record.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    step_name:
+        Step name.
+
+    status:
+        Step status.
+
+    message:
+        Human-readable audit message.
+
+    domain_key:
+        Optional domain key.
+
+    output_path:
+        Optional output path.
+
+    Returns
+    -------
+    None
     """
 
     runtime.audit_records.append(
         {
-            "run_id": runtime.run_id,
+            "run_id": runtime.context.run_id,
             "layer_name": runtime.layer_name,
             "platform_name": runtime.platform_name,
             "domain_key": domain_key,
@@ -440,12 +459,38 @@ def add_validation_record(
     severity: str = "ERROR",
 ) -> None:
     """
-    Add a validation record.
+    Purpose
+    -------
+    Add an Analytics Platform validation record.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    rule_name:
+        Validation rule name.
+
+    status:
+        Validation status.
+
+    message:
+        Validation message.
+
+    domain_key:
+        Optional domain key.
+
+    severity:
+        Severity level.
+
+    Returns
+    -------
+    None
     """
 
     runtime.validation_records.append(
         {
-            "run_id": runtime.run_id,
+            "run_id": runtime.context.run_id,
             "layer_name": runtime.layer_name,
             "platform_name": runtime.platform_name,
             "domain_key": domain_key,
@@ -459,12 +504,24 @@ def add_validation_record(
 
 
 ###############################################################################
-# Dataset IO
+# Output Helpers
 ###############################################################################
 
 def get_output_format(runtime: AnalyticsPlatformRuntime) -> str:
     """
+    Purpose
+    -------
     Return configured output format.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    Returns
+    -------
+    str
+        Output format.
     """
 
     return (
@@ -475,7 +532,22 @@ def get_output_format(runtime: AnalyticsPlatformRuntime) -> str:
 
 def output_path_with_format(path: Path, output_format: str) -> Path:
     """
-    Ensure output path has the configured suffix.
+    Purpose
+    -------
+    Add or replace output file suffix.
+
+    Parameters
+    ----------
+    path:
+        Base output path.
+
+    output_format:
+        Output format suffix.
+
+    Returns
+    -------
+    Path
+        Output path with file suffix.
     """
 
     suffix = f".{output_format}"
@@ -486,35 +558,36 @@ def output_path_with_format(path: Path, output_format: str) -> Path:
     return Path(str(path) + suffix)
 
 
-def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None:
-    """
-    Write dataframe to disk.
-    """
-
-    ensure_directory(path.parent)
-
-    if file_format == "parquet":
-        dataframe.to_parquet(path, index=False)
-        return
-
-    if file_format == "csv":
-        dataframe.to_csv(path, index=False)
-        return
-
-    if file_format == "json":
-        dataframe.to_json(path, orient="records", indent=2)
-        return
-
-    raise ValueError(f"Unsupported output file format: {file_format}")
-
-
 def get_configured_output_path(
     runtime: AnalyticsPlatformRuntime,
     output_group: str,
     output_name: str,
 ) -> Path:
     """
-    Resolve configured metadata or audit output path.
+    Purpose
+    -------
+    Resolve configured metadata or audit output path using PathManager.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    output_group:
+        Config output group, such as metadata_outputs or audit_outputs.
+
+    output_name:
+        Output asset name.
+
+    Returns
+    -------
+    Path
+        Resolved absolute output path.
+
+    Raises
+    ------
+    PipelineError
+        Raised when path resolution fails.
     """
 
     group_config = runtime.config.get("paths", {}).get(output_group, {})
@@ -528,7 +601,60 @@ def get_configured_output_path(
     if not raw_path:
         raw_path = f"data/analytics_platform/{output_group}/{output_name}"
 
-    return normalize_path(runtime.project_root, raw_path)
+    return runtime.context.paths.resolve_path(raw_path)
+
+
+def write_dataframe(
+    runtime: AnalyticsPlatformRuntime,
+    dataframe: pd.DataFrame,
+    output_path: Path,
+    output_format: str,
+) -> None:
+    """
+    Purpose
+    -------
+    Write dataframe using StorageManager.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    dataframe:
+        Dataframe to write.
+
+    output_path:
+        Output file path.
+
+    output_format:
+        Output format.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    PipelineError
+        Raised for unsupported output formats.
+    """
+
+    if output_format == "parquet":
+        runtime.context.storage.write_parquet(dataframe, output_path, index=False)
+        return
+
+    if output_format == "csv":
+        runtime.context.storage.write_csv(dataframe, output_path, index=False)
+        return
+
+    if output_format == "json":
+        runtime.context.storage.write_json(
+            dataframe.to_dict(orient="records"),
+            output_path,
+        )
+        return
+
+    raise PipelineError(f"Unsupported output file format: {output_format}")
 
 
 ###############################################################################
@@ -537,19 +663,32 @@ def get_configured_output_path(
 
 def build_domain_registry(runtime: AnalyticsPlatformRuntime) -> pd.DataFrame:
     """
-    Build domain registry metadata.
+    Purpose
+    -------
+    Build domain registry metadata from analytics_platform.yaml.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Domain registry metadata.
     """
 
     rows: List[Dict[str, Any]] = []
-
     domains_config = runtime.config.get("domains", {})
 
     for domain_key, domain_config in domains_config.items():
         rows.append(
             {
-                "run_id": runtime.run_id,
+                "run_id": runtime.context.run_id,
                 "layer_name": runtime.layer_name,
                 "platform_name": runtime.platform_name,
+                "source_layer": "Layer 2 - Analytics Platform",
+                "source_dataset": "analytics_platform.yaml",
                 "domain_key": domain_key,
                 "domain_name": domain_config.get("domain_name"),
                 "enabled": bool(domain_config.get("enabled", False)),
@@ -567,7 +706,19 @@ def build_domain_registry(runtime: AnalyticsPlatformRuntime) -> pd.DataFrame:
 
 def build_execution_plan(runtime: AnalyticsPlatformRuntime) -> pd.DataFrame:
     """
-    Build configured execution plan.
+    Purpose
+    -------
+    Build configured execution plan metadata.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Execution plan metadata.
     """
 
     rows: List[Dict[str, Any]] = []
@@ -580,9 +731,11 @@ def build_execution_plan(runtime: AnalyticsPlatformRuntime) -> pd.DataFrame:
 
         rows.append(
             {
-                "run_id": runtime.run_id,
+                "run_id": runtime.context.run_id,
                 "layer_name": runtime.layer_name,
                 "platform_name": runtime.platform_name,
+                "source_layer": "Layer 2 - Analytics Platform",
+                "source_dataset": "analytics_platform.yaml",
                 "sequence_number": sequence_number,
                 "domain_key": domain_key,
                 "domain_name": domain_config.get("domain_name"),
@@ -609,11 +762,29 @@ def validate_domain_config_file(
     domain_config: Dict[str, Any],
 ) -> bool:
     """
-    Validate that enabled domain config file exists.
+    Purpose
+    -------
+    Validate that enabled domain configuration file exists.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    domain_key:
+        Domain key.
+
+    domain_config:
+        Domain configuration.
+
+    Returns
+    -------
+    bool
+        True when config file exists, otherwise False.
     """
 
     config_path_raw = domain_config.get("config_path")
-    config_path = normalize_path(runtime.project_root, config_path_raw)
+    config_path = runtime.context.paths.resolve_path(config_path_raw)
 
     if config_path.exists():
         add_validation_record(
@@ -641,7 +812,25 @@ def validate_domain_module(
     domain_config: Dict[str, Any],
 ) -> bool:
     """
-    Validate that enabled domain module and function are importable.
+    Purpose
+    -------
+    Validate that enabled domain module and build function are importable.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    domain_key:
+        Domain key.
+
+    domain_config:
+        Domain configuration.
+
+    Returns
+    -------
+    bool
+        True when module and function are importable, otherwise False.
     """
 
     module_path = domain_config.get("module_path")
@@ -690,10 +879,26 @@ def validate_domain_module(
 
 def validate_enabled_domains(runtime: AnalyticsPlatformRuntime) -> None:
     """
-    Validate enabled analytics domains before execution.
+    Purpose
+    -------
+    Validate enabled domains before execution.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    PipelineError
+        Raised when enabled domain validation fails.
     """
 
-    logger = runtime.logger
+    logger = runtime.context.get_logger("medfabric.analytics_platform")
     sequence = runtime.config.get("execution", {}).get("sequence", [])
     domains_config = runtime.config.get("domains", {})
 
@@ -734,8 +939,6 @@ def validate_enabled_domains(runtime: AnalyticsPlatformRuntime) -> None:
         if not config_ok or not module_ok:
             validation_failed = True
 
-    logger.info("COMPLETE: Validate enabled analytics domains")
-
     add_audit_record(
         runtime=runtime,
         step_name="validate_enabled_domains",
@@ -743,8 +946,10 @@ def validate_enabled_domains(runtime: AnalyticsPlatformRuntime) -> None:
         message="Enabled domain validation completed.",
     )
 
+    logger.info("COMPLETE: Validate enabled analytics domains")
+
     if validation_failed:
-        raise ValueError("Analytics Platform enabled domain validation failed.")
+        raise PipelineError("Analytics Platform enabled domain validation failed.")
 
 
 ###############################################################################
@@ -757,10 +962,28 @@ def execute_domain(
     domain_config: Dict[str, Any],
 ) -> DomainExecutionResult:
     """
+    Purpose
+    -------
     Execute one enabled analytics domain.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    domain_key:
+        Domain key.
+
+    domain_config:
+        Domain configuration.
+
+    Returns
+    -------
+    DomainExecutionResult
+        Domain execution result.
     """
 
-    logger = runtime.logger
+    logger = runtime.context.get_logger("medfabric.analytics_platform")
 
     domain_name = domain_config.get("domain_name", domain_key)
     module_path = domain_config.get("module_path")
@@ -848,10 +1071,28 @@ def execute_domain(
 
 def execute_enabled_domains(runtime: AnalyticsPlatformRuntime) -> List[DomainExecutionResult]:
     """
-    Execute all enabled domains in configured sequence.
+    Purpose
+    -------
+    Execute all enabled Analytics Platform domains in configured sequence.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    Returns
+    -------
+    list[DomainExecutionResult]
+        Results for executed domains.
+
+    Raises
+    ------
+    RuntimeError
+        Raised when a domain fails and fail-fast behavior is enabled.
     """
 
-    logger = runtime.logger
+    logger = runtime.context.get_logger("medfabric.analytics_platform")
+
     sequence = runtime.config.get("execution", {}).get("sequence", [])
     domains_config = runtime.config.get("domains", {})
 
@@ -900,7 +1141,19 @@ def execute_enabled_domains(runtime: AnalyticsPlatformRuntime) -> List[DomainExe
 
 def build_execution_summary(runtime: AnalyticsPlatformRuntime) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build one-row Analytics Platform execution summary.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Execution summary dataframe.
     """
 
     end_time = utc_now()
@@ -918,10 +1171,12 @@ def build_execution_summary(runtime: AnalyticsPlatformRuntime) -> pd.DataFrame:
     )
 
     summary = {
-        "run_id": runtime.run_id,
+        "run_id": runtime.context.run_id,
         "layer_name": runtime.layer_name,
         "platform_name": runtime.platform_name,
-        "config_path": str(runtime.config_path),
+        "source_layer": "Layer 2 - Analytics Platform",
+        "source_dataset": "analytics_platform.yaml",
+        "config_path": runtime.config_file,
         "start_time_utc": runtime.start_time_utc.isoformat(),
         "end_time_utc": end_time.isoformat(),
         "duration_seconds": duration_seconds,
@@ -937,14 +1192,26 @@ def build_execution_summary(runtime: AnalyticsPlatformRuntime) -> pd.DataFrame:
 
 
 ###############################################################################
-# Output Writing
+# Metadata and Audit Output Writing
 ###############################################################################
 
 def write_metadata_outputs(runtime: AnalyticsPlatformRuntime) -> None:
     """
-    Write Analytics Platform metadata outputs.
+    Purpose
+    -------
+    Write Analytics Platform metadata outputs using StorageManager.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    Returns
+    -------
+    None
     """
 
+    logger = runtime.context.get_logger("medfabric.analytics_platform")
     output_format = get_output_format(runtime)
 
     metadata_assets = {
@@ -960,9 +1227,9 @@ def write_metadata_outputs(runtime: AnalyticsPlatformRuntime) -> None:
         )
         output_path = output_path_with_format(output_path, output_format)
 
-        write_dataset(dataframe, output_path, output_format)
+        write_dataframe(runtime, dataframe, output_path, output_format)
 
-        runtime.logger.info(
+        logger.info(
             "Wrote metadata output: %s | Rows: %s | Path: %s",
             output_name,
             len(dataframe),
@@ -980,9 +1247,21 @@ def write_metadata_outputs(runtime: AnalyticsPlatformRuntime) -> None:
 
 def write_audit_outputs(runtime: AnalyticsPlatformRuntime) -> None:
     """
-    Write Analytics Platform audit outputs.
+    Purpose
+    -------
+    Write Analytics Platform audit outputs using StorageManager.
+
+    Parameters
+    ----------
+    runtime:
+        Analytics Platform runtime.
+
+    Returns
+    -------
+    None
     """
 
+    logger = runtime.context.get_logger("medfabric.analytics_platform")
     output_format = get_output_format(runtime)
 
     audit_assets = {
@@ -999,9 +1278,9 @@ def write_audit_outputs(runtime: AnalyticsPlatformRuntime) -> None:
         )
         output_path = output_path_with_format(output_path, output_format)
 
-        write_dataset(dataframe, output_path, output_format)
+        write_dataframe(runtime, dataframe, output_path, output_format)
 
-        runtime.logger.info(
+        logger.info(
             "Wrote audit output: %s | Rows: %s | Path: %s",
             output_name,
             len(dataframe),
@@ -1015,7 +1294,29 @@ def write_audit_outputs(runtime: AnalyticsPlatformRuntime) -> None:
 
 def build_analytics_platform(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
     """
+    Purpose
+    -------
     Build the full enabled Analytics Platform sequence.
+
+    Parameters
+    ----------
+    config_path:
+        Analytics Platform config path.
+
+    Returns
+    -------
+    BuildResult
+        Final build result.
+
+    Raises
+    ------
+    None
+        Exceptions are captured and converted into a failed BuildResult.
+
+    Notes
+    -----
+    This orchestrator uses src/common PipelineContext. Domain builders are still
+    executed through their configured module paths and function names.
     """
 
     runtime: Optional[AnalyticsPlatformRuntime] = None
@@ -1023,12 +1324,11 @@ def build_analytics_platform(config_path: str = DEFAULT_CONFIG_PATH) -> BuildRes
     try:
         runtime = initialize_runtime(config_path)
 
-        runtime.logger.info("Configuration path: %s", runtime.config_path)
+        logger = runtime.context.get_logger("medfabric.analytics_platform")
+        logger.info("Configuration file: %s", runtime.config_file)
 
         write_metadata_outputs(runtime)
-
         validate_enabled_domains(runtime)
-
         execute_enabled_domains(runtime)
 
         add_audit_record(
@@ -1040,9 +1340,9 @@ def build_analytics_platform(config_path: str = DEFAULT_CONFIG_PATH) -> BuildRes
 
         write_audit_outputs(runtime)
 
-        runtime.logger.info("=" * 80)
-        runtime.logger.info("MedFabric Analytics Platform completed successfully")
-        runtime.logger.info("=" * 80)
+        logger.info("=" * 80)
+        logger.info("MedFabric Analytics Platform completed successfully")
+        logger.info("=" * 80)
 
         return BuildResult(
             name="analytics_platform",
@@ -1052,11 +1352,13 @@ def build_analytics_platform(config_path: str = DEFAULT_CONFIG_PATH) -> BuildRes
 
     except Exception as exc:
         if runtime is not None:
-            runtime.logger.error("=" * 80)
-            runtime.logger.error("MedFabric Analytics Platform failed")
-            runtime.logger.error("Error: %s", exc)
-            runtime.logger.error("Traceback:\n%s", traceback.format_exc())
-            runtime.logger.error("=" * 80)
+            logger = runtime.context.get_logger("medfabric.analytics_platform")
+
+            logger.error("=" * 80)
+            logger.error("MedFabric Analytics Platform failed")
+            logger.error("Error: %s", exc)
+            logger.error("Traceback:\n%s", traceback.format_exc())
+            logger.error("=" * 80)
 
             add_audit_record(
                 runtime=runtime,
@@ -1068,13 +1370,17 @@ def build_analytics_platform(config_path: str = DEFAULT_CONFIG_PATH) -> BuildRes
             try:
                 write_audit_outputs(runtime)
             except Exception as audit_exc:
-                runtime.logger.error("Failed to write audit outputs: %s", audit_exc)
+                logger.error("Failed to write audit outputs: %s", audit_exc)
 
         return BuildResult(
             name="analytics_platform",
             status=STATUS_FAILED,
             message=str(exc),
         )
+
+    finally:
+        if runtime is not None:
+            runtime.context.logging.close()
 
 
 ###############################################################################
@@ -1083,10 +1389,22 @@ def build_analytics_platform(config_path: str = DEFAULT_CONFIG_PATH) -> BuildRes
 
 def main() -> None:
     """
+    Purpose
+    -------
     Command-line entry point.
 
-    Run:
-        python -m src.analytics_platform.build_analytics_platform
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    SystemExit
+        Raised with exit code 1 when Analytics Platform execution fails.
     """
 
     config_path = os.environ.get(

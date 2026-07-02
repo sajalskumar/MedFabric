@@ -1,0 +1,86 @@
+MedFabric/
+├── config/
+│   ├── data_generation/
+│   ├── ingestion/
+│   ├── silver/
+│   ├── gold/
+│   ├── feature_store/
+│   ├── modeling/
+│   ├── semantic_layer/
+│   ├── analytics_platform/
+│   ├── insights/
+│   └── pipeline/
+│
+├── src/
+│   ├── common/
+│   ├── data_generation/
+│   ├── ingestion/
+│   ├── silver/
+│   ├── gold/
+│   ├── feature_store/
+│   ├── modeling/
+│   ├── semantic_layer/
+│   ├── analytics_platform/
+│   │   ├── common/
+│   │   ├── population_health/
+│   │   ├── clinical_analytics/
+│   │   ├── quality_analytics/
+│   │   ├── predictive_analytics/
+│   │   ├── provider_analytics/
+│   │   ├── care_management/
+│   │   └── value_based_care/
+│   ├── insights/
+│   │   ├── common/
+│   │   ├── executive/
+│   │   ├── financial/
+│   │   ├── clinical/
+│   │   ├── population/
+│   │   ├── provider/
+│   │   ├── quality/
+│   │   ├── care_management/
+│   │   └── value_based_care/
+│   └── pipeline/
+│       ├── common/
+│       └── build_medfabric_platform.py
+│
+├── data/
+│   ├── raw/
+│   ├── bronze/
+│   ├── silver/
+│   ├── gold/
+│   ├── features/
+│   ├── scoring/
+│   ├── semantic_layer/
+│   ├── analytics_platform/
+│   ├── insights/
+│   └── pipeline/
+│
+├── models/
+│
+├── logs/
+│   ├── pipeline/
+│   ├── modules/
+│   ├── audit/
+│   └── errors/
+│
+├── docs/
+│   ├── Data_Platform_Architecture.md
+│   ├── Feature_Store_Architecture.md
+│   ├── Modeling_Architecture.md
+│   ├── Semantic_Layer_Architecture.md
+│   ├── Analytics_Platform_Architecture.md
+│   ├── Insights_Architecture.md
+│   └── Pipeline_Architecture.md
+│
+├── notebooks/
+│
+├── scripts/
+│
+├── reference/
+│
+├── tests/
+│
+├── requirements.txt
+├── pyproject.toml
+├── README.md
+└── .gitignore

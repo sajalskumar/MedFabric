@@ -18,24 +18,19 @@
 #     medication adherence proxies, and measure-style summaries using the
 #     currently available MedFabric aggregate feature assets.
 #
-#     The current Feature Store contains member-level aggregate signals, not
-#     detailed HEDIS/CMS event-level evidence. Therefore, this implementation
-#     builds signal-based quality analytics that can later be upgraded when
-#     detailed clinical, claims, pharmacy, and quality-event data are available.
+# Architecture:
+#     This file contains Quality Analytics business logic only.
+#
+#     Shared Analytics Platform concerns are handled by:
+#         - src.analytics_platform.common.runtime
+#         - src.analytics_platform.common.io
+#         - src.analytics_platform.common.audit
+#         - src.analytics_platform.common.validation
+#         - src.analytics_platform.common.metadata
+#         - src.analytics_platform.common.rules
 #
 # Inputs:
-#     Feature Store:
-#         data/feature_store/claims_features.parquet
-#         data/feature_store/pharmacy_features.parquet
-#         data/feature_store/laboratory_features.parquet
-#         data/feature_store/risk_features.parquet
-#
-#     Population Health:
-#         data/analytics_platform/population_health/member_segmentation.parquet
-#         data/analytics_platform/population_health/risk_stratification.parquet
-#
-#     Clinical Analytics:
-#         data/analytics_platform/clinical_analytics/condition_registry.parquet
+#     config/analytics_platform/quality_analytics.yaml
 #
 # Outputs:
 #     data/analytics_platform/quality_analytics/
@@ -49,17 +44,41 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import sys
 import traceback
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import yaml
+
+from src.analytics_platform.common.audit import (
+    add_failed_audit,
+    add_success_audit,
+)
+from src.analytics_platform.common.io import (
+    get_output_format,
+    load_input_datasets,
+    write_output_assets,
+)
+from src.analytics_platform.common.metadata import (
+    add_dataset_record,
+    add_rule_record,
+    write_audit_outputs,
+    write_metadata_outputs,
+)
+from src.analytics_platform.common.rules import apply_operator
+from src.analytics_platform.common.runtime import (
+    AnalyticsBuildResult,
+    AnalyticsDomainRuntime,
+    STATUS_FAILED,
+    STATUS_SUCCESS,
+    create_domain_runtime,
+    normalize_config_file,
+    utc_now,
+)
+from src.analytics_platform.common.validation import require_columns
+from src.common.exception_manager import PipelineError, ValidationError
+from src.common.pipeline_context import create_pipeline_context
 
 
 ###############################################################################
@@ -69,217 +88,44 @@ import yaml
 DEFAULT_CONFIG_PATH = "config/analytics_platform/quality_analytics.yaml"
 
 DEFAULT_LAYER_NAME = "Layer 2C - Quality Analytics"
-
 DEFAULT_DOMAIN_NAME = "Quality Analytics"
+DOMAIN_SECTION = "quality_analytics"
 
-DEFAULT_OUTPUT_FORMAT = "parquet"
-
-SUPPORTED_FILE_FORMATS = {"parquet", "csv", "json"}
-
-STATUS_SUCCESS = "SUCCESS"
-STATUS_FAILED = "FAILED"
-STATUS_WARNING = "WARNING"
-STATUS_SKIPPED = "SKIPPED"
+LOGGER_NAME = "medfabric.analytics_platform.quality_analytics"
 
 
 ###############################################################################
-# Runtime Data Classes
+# Configuration and Runtime
 ###############################################################################
-
-@dataclass
-class QualityAnalyticsRuntime:
-    """
-    Runtime context for one Quality Analytics execution.
-
-    This object holds run metadata, configuration, logger, audit records,
-    validation records, dataset inventory records, and rule catalog records.
-    """
-
-    run_id: str
-    project_root: Path
-    config_path: Path
-    start_time_utc: datetime
-    config: Dict[str, Any]
-    logger: logging.Logger
-    layer_name: str
-    domain_name: str
-    audit_records: List[Dict[str, Any]] = field(default_factory=list)
-    validation_records: List[Dict[str, Any]] = field(default_factory=list)
-    dataset_records: List[Dict[str, Any]] = field(default_factory=list)
-    rule_records: List[Dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
-class BuildResult:
-    """
-    Standard build result returned by the Quality Analytics builder.
-    """
-
-    name: str
-    status: str
-    message: str
-    row_count: int = 0
-    column_count: int = 0
-
-
-###############################################################################
-# General Utilities
-###############################################################################
-
-def utc_now() -> datetime:
-    """
-    Return current timezone-aware UTC timestamp.
-    """
-
-    return datetime.now(timezone.utc)
-
-
-def generate_run_id() -> str:
-    """
-    Generate timestamp-based run identifier.
-    """
-
-    return utc_now().strftime("%Y%m%d_%H%M%S")
-
-
-def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
-    """
-    Resolve configured path relative to project root.
-
-    Args:
-        project_root:
-            Current repository root.
-
-        raw_path:
-            Configured path. Can be relative or absolute.
-
-    Returns:
-        Resolved absolute path.
-    """
-
-    path = Path(raw_path)
-
-    if path.is_absolute():
-        return path
-
-    return project_root / path
-
-
-def ensure_directory(path: Path) -> None:
-    """
-    Create directory if it does not already exist.
-    """
-
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def safe_string(value: Any) -> str:
-    """
-    Convert value to safe string for metadata output.
-    """
-
-    if value is None:
-        return ""
-
-    return str(value)
-
-
-###############################################################################
-# Logging
-###############################################################################
-
-def configure_logging(
-    project_root: Path,
-    config: Dict[str, Any],
-    run_id: str,
-) -> logging.Logger:
-    """
-    Configure Quality Analytics logging.
-    """
-
-    logging_config = config.get("logging", {})
-
-    log_level_name = logging_config.get("level", "INFO")
-    log_level = getattr(logging, str(log_level_name).upper(), logging.INFO)
-
-    log_dir_raw = logging_config.get("module_log_dir", "logs/modules")
-    log_dir = normalize_path(project_root, log_dir_raw)
-    ensure_directory(log_dir)
-
-    log_file_name = logging_config.get("log_file_name", "quality_analytics.log")
-    log_file_path = log_dir / log_file_name
-
-    logger = logging.getLogger("medfabric.analytics_platform.quality_analytics")
-    logger.setLevel(log_level)
-    logger.handlers.clear()
-    logger.propagate = False
-
-    formatter = logging.Formatter(
-        fmt="[%(asctime)s] [RUN_ID=%(run_id)s] [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    class RunIdFilter(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            record.run_id = run_id
-            return True
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(log_level)
-    stream_handler.setFormatter(formatter)
-    stream_handler.addFilter(RunIdFilter())
-
-    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(RunIdFilter())
-
-    logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
-
-    logger.info("=" * 80)
-    logger.info("MedFabric Quality Analytics started")
-    logger.info("=" * 80)
-    logger.info("Run ID: %s", run_id)
-    logger.info("Log file: %s", log_file_path)
-
-    return logger
-
-
-###############################################################################
-# Configuration
-###############################################################################
-
-def load_yaml_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load YAML configuration file.
-    """
-
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as file:
-        config = yaml.safe_load(file)
-
-    if config is None:
-        raise ValueError(f"Configuration file is empty: {config_path}")
-
-    if not isinstance(config, dict):
-        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
-
-    return config
-
 
 def validate_config(config: Dict[str, Any]) -> None:
     """
+    Purpose
+    -------
     Validate required Quality Analytics configuration sections.
-    """
 
-    errors: List[str] = []
+    Parameters
+    ----------
+    config:
+        Loaded Quality Analytics YAML configuration.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    PipelineError
+        Raised when required sections are missing.
+
+    Notes
+    -----
+    Generic YAML loading is handled by ConfigurationManager. This function only
+    validates the Quality Analytics domain contract.
+    """
 
     required_sections = [
         "quality_analytics",
-        "logging",
         "paths",
         "join_keys",
         "quality_framework",
@@ -294,538 +140,109 @@ def validate_config(config: Dict[str, Any]) -> None:
         "audit",
     ]
 
-    for section in required_sections:
-        if section not in config:
-            errors.append(f"Missing required configuration section: {section}")
+    missing_sections = [
+        section for section in required_sections if section not in config
+    ]
 
-    paths = config.get("paths", {})
+    paths_config = config.get("paths", {})
 
-    if not isinstance(paths, dict):
-        errors.append("Configuration section 'paths' must be a dictionary.")
-    else:
-        if "inputs" not in paths:
-            errors.append("Missing required configuration section: paths.inputs")
-        if "outputs" not in paths:
-            errors.append("Missing required configuration section: paths.outputs")
-        if "metadata_outputs" not in paths:
-            errors.append("Missing required configuration section: paths.metadata_outputs")
-        if "audit_outputs" not in paths:
-            errors.append("Missing required configuration section: paths.audit_outputs")
+    for subsection in ["inputs", "outputs", "metadata_outputs", "audit_outputs"]:
+        if subsection not in paths_config:
+            missing_sections.append(f"paths.{subsection}")
 
-    output_format = (
-        config.get("quality_analytics", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
+    if missing_sections:
+        raise PipelineError(
+            "Quality Analytics configuration validation failed. "
+            f"Missing sections: {missing_sections}"
+        )
+
+
+def initialize_runtime(config_path: str) -> AnalyticsDomainRuntime:
+    """
+    Purpose
+    -------
+    Initialize Quality Analytics runtime using MedFabric PipelineContext.
+
+    Parameters
+    ----------
+    config_path:
+        Quality Analytics configuration path.
+
+    Returns
+    -------
+    AnalyticsDomainRuntime
+        Initialized domain runtime.
+
+    Raises
+    ------
+    PipelineError
+        Raised when configuration loading or validation fails.
+    """
+
+    config_file = normalize_config_file(config_path)
+
+    context = create_pipeline_context(
+        pipeline_name="Layer 2C - Quality Analytics"
     )
 
-    if output_format not in SUPPORTED_FILE_FORMATS:
-        errors.append(
-            f"Unsupported output_format '{output_format}'. "
-            f"Supported formats: {sorted(SUPPORTED_FILE_FORMATS)}"
-        )
-
-    if errors:
-        raise ValueError(
-            "Quality Analytics configuration validation failed:\n"
-            + "\n".join(f"- {error}" for error in errors)
-        )
-
-
-def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> QualityAnalyticsRuntime:
-    """
-    Initialize Quality Analytics runtime.
-    """
-
-    project_root = Path.cwd()
-    config_path = normalize_path(project_root, config_path_raw)
-    run_id = generate_run_id()
-
-    config = load_yaml_config(config_path)
+    config = context.configuration.load_yaml(config_file)
     validate_config(config)
 
-    quality_config = config.get("quality_analytics", {})
-
-    layer_name = quality_config.get("layer_name", DEFAULT_LAYER_NAME)
-    domain_name = quality_config.get("domain_name", DEFAULT_DOMAIN_NAME)
-
-    logger = configure_logging(project_root, config, run_id)
-
-    runtime = QualityAnalyticsRuntime(
-        run_id=run_id,
-        project_root=project_root,
-        config_path=config_path,
-        start_time_utc=utc_now(),
+    runtime = create_domain_runtime(
+        context=context,
         config=config,
-        logger=logger,
-        layer_name=layer_name,
-        domain_name=domain_name,
+        config_file=config_file,
+        domain_section=DOMAIN_SECTION,
+        default_layer_name=DEFAULT_LAYER_NAME,
+        default_domain_name=DEFAULT_DOMAIN_NAME,
     )
 
-    add_audit_record(
+    add_success_audit(
         runtime=runtime,
         step_name="initialize_runtime",
-        status=STATUS_SUCCESS,
         message="Quality Analytics runtime initialized successfully.",
+        source_layer="Layer 2 - Analytics Platform",
+        source_dataset=config_file,
     )
 
     return runtime
 
 
 ###############################################################################
-# Audit, Validation, and Metadata Records
+# Business Helper Functions
 ###############################################################################
-
-def add_audit_record(
-    runtime: QualityAnalyticsRuntime,
-    step_name: str,
-    status: str,
-    message: str,
-    row_count: Optional[int] = None,
-    output_path: Optional[str] = None,
-) -> None:
-    """
-    Add execution audit record.
-    """
-
-    runtime.audit_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "step_name": step_name,
-            "status": status,
-            "message": message,
-            "row_count": row_count,
-            "output_path": output_path,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_validation_record(
-    runtime: QualityAnalyticsRuntime,
-    dataset_name: str,
-    rule_name: str,
-    status: str,
-    message: str,
-    failed_count: Optional[int] = None,
-) -> None:
-    """
-    Add validation record.
-    """
-
-    runtime.validation_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "rule_name": rule_name,
-            "status": status,
-            "message": message,
-            "failed_count": failed_count,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_dataset_record(
-    runtime: QualityAnalyticsRuntime,
-    dataset_name: str,
-    dataset_type: str,
-    status: str,
-    path: Optional[str],
-    row_count: int,
-    column_count: int,
-    message: str,
-) -> None:
-    """
-    Add dataset inventory record.
-    """
-
-    runtime.dataset_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "dataset_type": dataset_type,
-            "status": status,
-            "path": path,
-            "row_count": row_count,
-            "column_count": column_count,
-            "message": message,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_rule_record(
-    runtime: QualityAnalyticsRuntime,
-    rule_group: str,
-    rule_name: str,
-    rule_type: str,
-    description: str,
-    source_dataset: str,
-    rule_config: Dict[str, Any],
-) -> None:
-    """
-    Add rule catalog record.
-    """
-
-    runtime.rule_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "rule_group": rule_group,
-            "rule_name": rule_name,
-            "rule_type": rule_type,
-            "description": description,
-            "source_dataset": source_dataset,
-            "rule_config_json": safe_string(rule_config),
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-###############################################################################
-# Dataset IO
-###############################################################################
-
-def get_output_format(runtime: QualityAnalyticsRuntime) -> str:
-    """
-    Return configured output format.
-    """
-
-    return (
-        runtime.config.get("quality_analytics", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
-    )
-
-
-def read_dataset(path: Path, file_format: Optional[str]) -> pd.DataFrame:
-    """
-    Read configured dataset from disk.
-    """
-
-    if not path.exists():
-        raise FileNotFoundError(f"Input dataset not found: {path}")
-
-    resolved_format = file_format or path.suffix.replace(".", "").lower()
-
-    if resolved_format == "parquet":
-        return pd.read_parquet(path)
-
-    if resolved_format == "csv":
-        return pd.read_csv(path)
-
-    if resolved_format == "json":
-        return pd.read_json(path)
-
-    raise ValueError(f"Unsupported input file format: {resolved_format}")
-
-
-def output_path_with_format(path: Path, output_format: str) -> Path:
-    """
-    Ensure output path uses configured file suffix.
-    """
-
-    suffix = f".{output_format}"
-
-    if path.suffix:
-        return path.with_suffix(suffix)
-
-    return Path(str(path) + suffix)
-
-
-def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None:
-    """
-    Write dataframe to disk using configured output format.
-    """
-
-    ensure_directory(path.parent)
-
-    if file_format == "parquet":
-        dataframe.to_parquet(path, index=False)
-        return
-
-    if file_format == "csv":
-        dataframe.to_csv(path, index=False)
-        return
-
-    if file_format == "json":
-        dataframe.to_json(path, orient="records", indent=2)
-        return
-
-    raise ValueError(f"Unsupported output file format: {file_format}")
-
-
-def load_input_datasets(runtime: QualityAnalyticsRuntime) -> Dict[str, pd.DataFrame]:
-    """
-    Load configured Quality Analytics input datasets.
-    """
-
-    logger = runtime.logger
-    inputs_config = runtime.config.get("paths", {}).get("inputs", {})
-
-    datasets: Dict[str, pd.DataFrame] = {}
-
-    logger.info("START: Load Quality Analytics input datasets")
-
-    for dataset_name, dataset_config in inputs_config.items():
-        raw_path = dataset_config.get("path")
-        file_format = dataset_config.get("format")
-        required = bool(dataset_config.get("required", True))
-
-        if not raw_path:
-            message = f"No path configured for input dataset: {dataset_name}"
-
-            if required:
-                raise ValueError(message)
-
-            logger.warning("Skipping optional dataset with no configured path: %s", dataset_name)
-            continue
-
-        dataset_path = normalize_path(runtime.project_root, raw_path)
-
-        try:
-            dataframe = read_dataset(dataset_path, file_format)
-            datasets[dataset_name] = dataframe
-
-            logger.info(
-                "Loaded input dataset: %s | Rows: %s | Columns: %s | Path: %s",
-                dataset_name,
-                len(dataframe),
-                len(dataframe.columns),
-                dataset_path,
-            )
-
-            add_dataset_record(
-                runtime=runtime,
-                dataset_name=dataset_name,
-                dataset_type="input",
-                status=STATUS_SUCCESS,
-                path=str(dataset_path),
-                row_count=len(dataframe),
-                column_count=len(dataframe.columns),
-                message="Input dataset loaded successfully.",
-            )
-
-        except Exception as exc:
-            message = f"Failed to load input dataset '{dataset_name}': {exc}"
-
-            if required:
-                add_audit_record(
-                    runtime=runtime,
-                    step_name=f"load_input_dataset:{dataset_name}",
-                    status=STATUS_FAILED,
-                    message=message,
-                    output_path=str(dataset_path),
-                )
-                raise
-
-            logger.warning("Optional input skipped: %s | Reason: %s", dataset_name, exc)
-
-            add_audit_record(
-                runtime=runtime,
-                step_name=f"load_input_dataset:{dataset_name}",
-                status=STATUS_SKIPPED,
-                message=message,
-                output_path=str(dataset_path),
-            )
-
-    logger.info("COMPLETE: Load Quality Analytics input datasets | Count: %s", len(datasets))
-
-    return datasets
-
-
-###############################################################################
-# Validation Helpers
-###############################################################################
-
-def validate_not_empty(
-    runtime: QualityAnalyticsRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-) -> bool:
-    """
-    Validate dataset is not empty.
-    """
-
-    if dataframe.empty:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="not_empty",
-            status=STATUS_FAILED,
-            message="Dataset is empty.",
-            failed_count=1,
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="not_empty",
-        status=STATUS_SUCCESS,
-        message="Dataset is not empty.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_required_columns(
-    runtime: QualityAnalyticsRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    required_columns: Iterable[str],
-) -> bool:
-    """
-    Validate required columns exist in a dataframe.
-    """
-
-    required = list(required_columns)
-    missing = [column for column in required if column not in dataframe.columns]
-
-    if missing:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="required_columns",
-            status=STATUS_FAILED,
-            message=f"Missing required columns: {missing}",
-            failed_count=len(missing),
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="required_columns",
-        status=STATUS_SUCCESS,
-        message="All required columns are present.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_member_key_not_null(
-    runtime: QualityAnalyticsRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    member_key: str,
-) -> bool:
-    """
-    Validate member key is present and not null.
-    """
-
-    if member_key not in dataframe.columns:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="member_key_exists",
-            status=STATUS_FAILED,
-            message=f"Missing member key column: {member_key}",
-            failed_count=1,
-        )
-        return False
-
-    null_count = int(dataframe[member_key].isna().sum())
-
-    if null_count > 0:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="member_key_not_null",
-            status=STATUS_FAILED,
-            message=f"Member key contains nulls: {member_key}",
-            failed_count=null_count,
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="member_key_not_null",
-        status=STATUS_SUCCESS,
-        message="Member key is not null.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_inputs(
-    runtime: QualityAnalyticsRuntime,
-    datasets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Run basic validation against loaded input datasets.
-    """
-
-    member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-
-    for dataset_name, dataframe in datasets.items():
-        validate_not_empty(runtime, dataframe, dataset_name)
-
-        if member_key in dataframe.columns:
-            validate_member_key_not_null(runtime, dataframe, dataset_name, member_key)
-
-    add_audit_record(
-        runtime=runtime,
-        step_name="validate_inputs",
-        status=STATUS_SUCCESS,
-        message="Quality Analytics input validation completed.",
-    )
-
-
-###############################################################################
-# Business Rule Helpers
-###############################################################################
-
-def apply_operator(series: pd.Series, operator: str, value: Any) -> pd.Series:
-    """
-    Apply configured comparison operator.
-    """
-
-    if operator == "equals":
-        return series == value
-
-    if operator == "not_equals":
-        return series != value
-
-    if operator == "greater_than":
-        return series > value
-
-    if operator == "greater_than_or_equal":
-        return series >= value
-
-    if operator == "less_than":
-        return series < value
-
-    if operator == "less_than_or_equal":
-        return series <= value
-
-    if operator == "in":
-        return series.isin(value)
-
-    if operator == "not_in":
-        return ~series.isin(value)
-
-    if operator == "is_null":
-        return series.isna()
-
-    if operator == "is_not_null":
-        return series.notna()
-
-    raise ValueError(f"Unsupported operator: {operator}")
-
 
 def build_base_member_universe(
-    runtime: QualityAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build base member universe for Quality Analytics.
+
+    Parameters
+    ----------
+    runtime:
+        Quality Analytics runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Member-level universe dataframe.
+
+    Raises
+    ------
+    ValidationError
+        Raised when the configured base dataset or member key is missing.
+
+    Notes
+    -----
+    This function supports future quality logic that may need the full eligible
+    member universe before applying numerator or gap rules.
     """
 
     framework_config = runtime.config.get("quality_framework", {})
@@ -833,16 +250,20 @@ def build_base_member_universe(
     member_key = framework_config.get("member_key", "member_id")
 
     if base_dataset_name not in datasets:
-        raise ValueError(f"Base member dataset missing: {base_dataset_name}")
+        raise ValidationError(f"Base member dataset missing: {base_dataset_name}")
 
     base_df = datasets[base_dataset_name]
 
-    if member_key not in base_df.columns:
-        raise ValueError(
-            f"Base member dataset '{base_dataset_name}' missing member key: {member_key}"
-        )
+    require_columns(
+        runtime=runtime,
+        dataframe=base_df,
+        dataset_name=base_dataset_name,
+        required_columns=[member_key],
+        source_layer="Layer 1F - Feature Store",
+        source_dataset=base_dataset_name,
+    )
 
-    universe = base_df[[member_key]].drop_duplicates().copy()
+    universe_df = base_df[[member_key]].drop_duplicates().copy()
 
     for enrichment_dataset_name in framework_config.get("enrichment_datasets", []):
         if enrichment_dataset_name not in datasets:
@@ -854,9 +275,9 @@ def build_base_member_universe(
             continue
 
         enrichment_deduped = enrichment_df.drop_duplicates(subset=[member_key]).copy()
-        universe = universe.merge(enrichment_deduped, on=member_key, how="left")
+        universe_df = universe_df.merge(enrichment_deduped, on=member_key, how="left")
 
-    return universe
+    return universe_df
 
 
 ###############################################################################
@@ -864,17 +285,38 @@ def build_base_member_universe(
 ###############################################################################
 
 def build_quality_measures(
-    runtime: QualityAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build configured signal-based quality measures.
 
-    Output grain:
-        One row per configured quality measure.
+    Parameters
+    ----------
+    runtime:
+        Quality Analytics runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Measure-level quality measure summary.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured measure inputs or columns are missing.
+
+    Notes
+    -----
+    Output grain is one row per configured quality measure.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("quality_measures", {})
 
     if not bool(config.get("enabled", True)):
@@ -882,7 +324,6 @@ def build_quality_measures(
         return pd.DataFrame()
 
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-
     rows: List[Dict[str, Any]] = []
 
     logger.info("START: Build quality measures")
@@ -907,31 +348,57 @@ def build_quality_measures(
             rule_name=measure_key,
             rule_type=measure_type,
             description=description,
-            source_dataset=source_dataset_name,
+            source_dataset=str(source_dataset_name),
+            source_layer="Layer 1F - Feature Store",
             rule_config=measure_config,
         )
 
         if source_dataset_name not in datasets:
-            raise ValueError(f"Quality measure source dataset missing: {source_dataset_name}")
+            raise ValidationError(
+                f"Quality measure source dataset missing: {source_dataset_name}"
+            )
 
         source_df = datasets[source_dataset_name]
 
-        required_columns = [member_key, numerator_rule.get("column")]
-        validate_required_columns(
+        denominator_column = denominator_rule.get("column")
+        numerator_column = numerator_rule.get("column")
+
+        required_columns = [member_key, numerator_column]
+        if denominator_column:
+            required_columns.append(denominator_column)
+
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset_name,
             required_columns=required_columns,
+            source_layer="Layer 1F - Feature Store",
+            source_dataset=source_dataset_name,
         )
 
-        denominator_count = int(source_df[member_key].nunique(dropna=True))
+        denominator_operator = denominator_rule.get("operator")
+        denominator_value = denominator_rule.get("value")
+        if denominator_column and denominator_operator:
+            denominator_mask = apply_operator(
+                source_df[denominator_column],
+                denominator_operator,
+                denominator_value,
+            )
+            denominator_df = source_df.loc[denominator_mask].copy()
+        else:
+            denominator_df = source_df.copy()
 
-        numerator_column = numerator_rule.get("column")
-        operator = numerator_rule.get("operator")
-        value = numerator_rule.get("value")
+        denominator_count = int(denominator_df[member_key].nunique(dropna=True))
 
-        numerator_mask = apply_operator(source_df[numerator_column], operator, value)
-        numerator_count = int(source_df.loc[numerator_mask, member_key].nunique(dropna=True))
+        numerator_mask = apply_operator(
+            denominator_df[numerator_column],
+            numerator_rule.get("operator"),
+            numerator_rule.get("value"),
+        )
+
+        numerator_count = int(
+            denominator_df.loc[numerator_mask, member_key].nunique(dropna=True)
+        )
 
         rate = numerator_count / denominator_count if denominator_count else 0.0
 
@@ -946,9 +413,10 @@ def build_quality_measures(
                 "numerator_count": numerator_count,
                 "measure_rate": rate,
                 "description": description,
-                "analytics_layer_run_id": runtime.run_id,
+                "analytics_layer_run_id": runtime.context.run_id,
                 "analytics_domain": runtime.domain_name,
                 "analytics_asset_name": "quality_measures",
+                "source_layer": "Layer 1F - Feature Store",
                 "built_at_utc": utc_now().isoformat(),
             }
         )
@@ -972,6 +440,8 @@ def build_quality_measures(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Quality measures built successfully.",
+        source_layer="Layer 1F - Feature Store",
+        source_dataset="configured_quality_measures",
     )
 
     logger.info("COMPLETE: Build quality measures | Rows: %s", len(output_df))
@@ -984,17 +454,38 @@ def build_quality_measures(
 ###############################################################################
 
 def build_care_gaps(
-    runtime: QualityAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
-    Build configured care gaps.
+    Purpose
+    -------
+    Build configured care gap outputs.
 
-    Output grain:
-        One row per member per care gap.
+    Parameters
+    ----------
+    runtime:
+        Quality Analytics runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Member-level care gap output.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured care gap inputs or columns are missing.
+
+    Notes
+    -----
+    Output grain is one row per member per care gap.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("care_gaps", {})
 
     if not bool(config.get("enabled", True)):
@@ -1002,7 +493,7 @@ def build_care_gaps(
         return pd.DataFrame()
 
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-    gap_rows: List[pd.DataFrame] = []
+    gap_frames: List[pd.DataFrame] = []
 
     logger.info("START: Build care gaps")
 
@@ -1025,12 +516,13 @@ def build_care_gaps(
             rule_name=gap_key,
             rule_type="signal_based_care_gap",
             description=description,
-            source_dataset=source_dataset_name,
+            source_dataset=str(source_dataset_name),
+            source_layer="Layer 1F - Feature Store",
             rule_config=gap_config,
         )
 
         if source_dataset_name not in datasets:
-            raise ValueError(f"Care gap source dataset missing: {source_dataset_name}")
+            raise ValidationError(f"Care gap source dataset missing: {source_dataset_name}")
 
         source_df = datasets[source_dataset_name]
 
@@ -1038,39 +530,44 @@ def build_care_gaps(
         operator = gap_rule.get("operator")
         value = gap_rule.get("value")
 
-        validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset_name,
             required_columns=[member_key, signal_column],
+            source_layer="Layer 1F - Feature Store",
+            source_dataset=source_dataset_name,
         )
 
         mask = apply_operator(source_df[signal_column], operator, value)
 
-        matched = source_df.loc[mask, [member_key, signal_column]].copy()
-        matched = matched.rename(columns={signal_column: "care_gap_evidence_value"})
+        matched_df = source_df.loc[mask, [member_key, signal_column]].copy()
+        matched_df = matched_df.rename(
+            columns={signal_column: "care_gap_evidence_value"}
+        )
 
-        matched["care_gap_key"] = gap_key
-        matched["care_gap_name"] = care_gap_name
-        matched["care_gap_category"] = care_gap_category
-        matched["care_gap_severity"] = severity
-        matched["source_dataset"] = source_dataset_name
-        matched["care_gap_description"] = description
-        matched["analytics_layer_run_id"] = runtime.run_id
-        matched["analytics_domain"] = runtime.domain_name
-        matched["analytics_asset_name"] = "care_gaps"
-        matched["built_at_utc"] = utc_now().isoformat()
+        matched_df["care_gap_key"] = gap_key
+        matched_df["care_gap_name"] = care_gap_name
+        matched_df["care_gap_category"] = care_gap_category
+        matched_df["care_gap_severity"] = severity
+        matched_df["source_dataset"] = source_dataset_name
+        matched_df["care_gap_description"] = description
+        matched_df["analytics_layer_run_id"] = runtime.context.run_id
+        matched_df["analytics_domain"] = runtime.domain_name
+        matched_df["analytics_asset_name"] = "care_gaps"
+        matched_df["source_layer"] = "Layer 1F - Feature Store"
+        matched_df["built_at_utc"] = utc_now().isoformat()
 
-        gap_rows.append(matched)
+        gap_frames.append(matched_df)
 
         logger.info(
             "Built care gap: %s | Members: %s",
             care_gap_name,
-            len(matched),
+            len(matched_df),
         )
 
-    if gap_rows:
-        output_df = pd.concat(gap_rows, ignore_index=True)
+    if gap_frames:
+        output_df = pd.concat(gap_frames, ignore_index=True)
     else:
         output_df = pd.DataFrame(
             columns=[
@@ -1085,6 +582,7 @@ def build_care_gaps(
                 "analytics_layer_run_id",
                 "analytics_domain",
                 "analytics_asset_name",
+                "source_layer",
                 "built_at_utc",
             ]
         )
@@ -1098,6 +596,8 @@ def build_care_gaps(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Care gaps built successfully.",
+        source_layer="Layer 1F - Feature Store",
+        source_dataset="configured_care_gap_rules",
     )
 
     logger.info("COMPLETE: Build care gaps | Rows: %s", len(output_df))
@@ -1110,17 +610,38 @@ def build_care_gaps(
 ###############################################################################
 
 def build_preventive_care(
-    runtime: QualityAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build configured preventive care signal outputs.
 
-    Output grain:
-        One row per member per preventive care signal.
+    Parameters
+    ----------
+    runtime:
+        Quality Analytics runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Preventive care signal output.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured preventive care inputs or columns are missing.
+
+    Notes
+    -----
+    Output grain is one row per member per preventive care signal.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("preventive_care", {})
 
     if not bool(config.get("enabled", True)):
@@ -1128,7 +649,7 @@ def build_preventive_care(
         return pd.DataFrame()
 
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-    signal_rows: List[pd.DataFrame] = []
+    signal_frames: List[pd.DataFrame] = []
 
     logger.info("START: Build preventive care signals")
 
@@ -1150,12 +671,13 @@ def build_preventive_care(
             rule_name=signal_key,
             rule_type="signal_based_preventive_care",
             description=description,
-            source_dataset=source_dataset_name,
+            source_dataset=str(source_dataset_name),
+            source_layer="Layer 1F - Feature Store",
             rule_config=signal_config,
         )
 
         if source_dataset_name not in datasets:
-            raise ValueError(
+            raise ValidationError(
                 f"Preventive care source dataset missing: {source_dataset_name}"
             )
 
@@ -1165,38 +687,43 @@ def build_preventive_care(
         operator = signal_rule.get("operator")
         value = signal_rule.get("value")
 
-        validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset_name,
             required_columns=[member_key, signal_column],
+            source_layer="Layer 1F - Feature Store",
+            source_dataset=source_dataset_name,
         )
 
         mask = apply_operator(source_df[signal_column], operator, value)
 
-        matched = source_df.loc[mask, [member_key, signal_column]].copy()
-        matched = matched.rename(columns={signal_column: "preventive_evidence_value"})
+        matched_df = source_df.loc[mask, [member_key, signal_column]].copy()
+        matched_df = matched_df.rename(
+            columns={signal_column: "preventive_evidence_value"}
+        )
 
-        matched["preventive_care_key"] = signal_key
-        matched["preventive_care_name"] = preventive_care_name
-        matched["preventive_care_category"] = preventive_care_category
-        matched["source_dataset"] = source_dataset_name
-        matched["preventive_care_description"] = description
-        matched["analytics_layer_run_id"] = runtime.run_id
-        matched["analytics_domain"] = runtime.domain_name
-        matched["analytics_asset_name"] = "preventive_care"
-        matched["built_at_utc"] = utc_now().isoformat()
+        matched_df["preventive_care_key"] = signal_key
+        matched_df["preventive_care_name"] = preventive_care_name
+        matched_df["preventive_care_category"] = preventive_care_category
+        matched_df["source_dataset"] = source_dataset_name
+        matched_df["preventive_care_description"] = description
+        matched_df["analytics_layer_run_id"] = runtime.context.run_id
+        matched_df["analytics_domain"] = runtime.domain_name
+        matched_df["analytics_asset_name"] = "preventive_care"
+        matched_df["source_layer"] = "Layer 1F - Feature Store"
+        matched_df["built_at_utc"] = utc_now().isoformat()
 
-        signal_rows.append(matched)
+        signal_frames.append(matched_df)
 
         logger.info(
             "Built preventive care signal: %s | Members: %s",
             preventive_care_name,
-            len(matched),
+            len(matched_df),
         )
 
-    if signal_rows:
-        output_df = pd.concat(signal_rows, ignore_index=True)
+    if signal_frames:
+        output_df = pd.concat(signal_frames, ignore_index=True)
     else:
         output_df = pd.DataFrame(
             columns=[
@@ -1210,6 +737,7 @@ def build_preventive_care(
                 "analytics_layer_run_id",
                 "analytics_domain",
                 "analytics_asset_name",
+                "source_layer",
                 "built_at_utc",
             ]
         )
@@ -1223,6 +751,8 @@ def build_preventive_care(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Preventive care signals built successfully.",
+        source_layer="Layer 1F - Feature Store",
+        source_dataset="configured_preventive_care_rules",
     )
 
     logger.info("COMPLETE: Build preventive care | Rows: %s", len(output_df))
@@ -1235,17 +765,38 @@ def build_preventive_care(
 ###############################################################################
 
 def build_medication_adherence(
-    runtime: QualityAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build configured medication adherence signal outputs.
 
-    Output grain:
-        One row per member per adherence signal.
+    Parameters
+    ----------
+    runtime:
+        Quality Analytics runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Medication adherence signal output.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured adherence inputs or columns are missing.
+
+    Notes
+    -----
+    Output grain is one row per member per adherence signal.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("medication_adherence", {})
 
     if not bool(config.get("enabled", True)):
@@ -1253,7 +804,7 @@ def build_medication_adherence(
         return pd.DataFrame()
 
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-    adherence_rows: List[pd.DataFrame] = []
+    adherence_frames: List[pd.DataFrame] = []
 
     logger.info("START: Build medication adherence signals")
 
@@ -1279,12 +830,13 @@ def build_medication_adherence(
             rule_name=signal_key,
             rule_type="signal_based_medication_adherence",
             description=description,
-            source_dataset=source_dataset_name,
+            source_dataset=str(source_dataset_name),
+            source_layer="Layer 1F - Feature Store",
             rule_config=signal_config,
         )
 
         if source_dataset_name not in datasets:
-            raise ValueError(
+            raise ValidationError(
                 f"Medication adherence source dataset missing: {source_dataset_name}"
             )
 
@@ -1294,38 +846,43 @@ def build_medication_adherence(
         operator = signal_rule.get("operator")
         value = signal_rule.get("value")
 
-        validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset_name,
             required_columns=[member_key, signal_column, evidence_column],
+            source_layer="Layer 1F - Feature Store",
+            source_dataset=source_dataset_name,
         )
 
         mask = apply_operator(source_df[signal_column], operator, value)
 
-        matched = source_df.loc[mask, [member_key, evidence_column]].copy()
-        matched = matched.rename(columns={evidence_column: "adherence_evidence_value"})
+        matched_df = source_df.loc[mask, [member_key, evidence_column]].copy()
+        matched_df = matched_df.rename(
+            columns={evidence_column: "adherence_evidence_value"}
+        )
 
-        matched["adherence_key"] = signal_key
-        matched["adherence_name"] = adherence_name
-        matched["adherence_category"] = adherence_category
-        matched["source_dataset"] = source_dataset_name
-        matched["adherence_description"] = description
-        matched["analytics_layer_run_id"] = runtime.run_id
-        matched["analytics_domain"] = runtime.domain_name
-        matched["analytics_asset_name"] = "medication_adherence"
-        matched["built_at_utc"] = utc_now().isoformat()
+        matched_df["adherence_key"] = signal_key
+        matched_df["adherence_name"] = adherence_name
+        matched_df["adherence_category"] = adherence_category
+        matched_df["source_dataset"] = source_dataset_name
+        matched_df["adherence_description"] = description
+        matched_df["analytics_layer_run_id"] = runtime.context.run_id
+        matched_df["analytics_domain"] = runtime.domain_name
+        matched_df["analytics_asset_name"] = "medication_adherence"
+        matched_df["source_layer"] = "Layer 1F - Feature Store"
+        matched_df["built_at_utc"] = utc_now().isoformat()
 
-        adherence_rows.append(matched)
+        adherence_frames.append(matched_df)
 
         logger.info(
             "Built medication adherence signal: %s | Members: %s",
             adherence_name,
-            len(matched),
+            len(matched_df),
         )
 
-    if adherence_rows:
-        output_df = pd.concat(adherence_rows, ignore_index=True)
+    if adherence_frames:
+        output_df = pd.concat(adherence_frames, ignore_index=True)
     else:
         output_df = pd.DataFrame(
             columns=[
@@ -1339,6 +896,7 @@ def build_medication_adherence(
                 "analytics_layer_run_id",
                 "analytics_domain",
                 "analytics_asset_name",
+                "source_layer",
                 "built_at_utc",
             ]
         )
@@ -1352,6 +910,8 @@ def build_medication_adherence(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Medication adherence signals built successfully.",
+        source_layer="Layer 1F - Feature Store",
+        source_dataset="configured_medication_adherence_rules",
     )
 
     logger.info("COMPLETE: Build medication adherence | Rows: %s", len(output_df))
@@ -1364,13 +924,43 @@ def build_medication_adherence(
 ###############################################################################
 
 def build_measure_summary(
-    runtime: QualityAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     quality_measures: pd.DataFrame,
     summary_config: Dict[str, Any],
     output_name: str,
 ) -> pd.DataFrame:
     """
-    Build HEDIS or CMS placeholder summary from configured measure names.
+    Purpose
+    -------
+    Build HEDIS or CMS signal-based summary from quality measures.
+
+    Parameters
+    ----------
+    runtime:
+        Quality Analytics runtime.
+
+    quality_measures:
+        Quality measure dataframe.
+
+    summary_config:
+        Summary configuration.
+
+    output_name:
+        Output asset name.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Summary dataframe.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    These summaries are placeholders built from currently available aggregate
+    signals. They can later be upgraded to event-level HEDIS/CMS logic.
     """
 
     if quality_measures.empty:
@@ -1380,9 +970,12 @@ def build_measure_summary(
     summary_method = summary_config.get("summary_method", "signal_based_placeholder")
     note = summary_config.get("note", "")
 
-    summary_df = quality_measures[
-        quality_measures["measure_key"].isin(included_measure_keys)
-    ].copy()
+    if included_measure_keys:
+        summary_df = quality_measures[
+            quality_measures["measure_key"].isin(included_measure_keys)
+        ].copy()
+    else:
+        summary_df = quality_measures.copy()
 
     if summary_df.empty:
         summary_df = quality_measures.copy()
@@ -1391,226 +984,81 @@ def build_measure_summary(
     summary_df["summary_method"] = summary_method
     summary_df["summary_note"] = note
     summary_df["analytics_asset_name"] = output_name
-    summary_df["analytics_layer_run_id"] = runtime.run_id
+    summary_df["analytics_layer_run_id"] = runtime.context.run_id
     summary_df["analytics_domain"] = runtime.domain_name
+    summary_df["source_layer"] = "Layer 2C - Quality Analytics"
+    summary_df["source_dataset"] = "quality_measures"
     summary_df["built_at_utc"] = utc_now().isoformat()
 
     return summary_df
 
 
 ###############################################################################
-# Metadata Outputs
-###############################################################################
-
-def build_dataset_inventory(runtime: QualityAnalyticsRuntime) -> pd.DataFrame:
-    """
-    Build dataset inventory.
-    """
-
-    return pd.DataFrame(runtime.dataset_records)
-
-
-def build_column_dictionary(
-    runtime: QualityAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build output column dictionary.
-    """
-
-    rows: List[Dict[str, Any]] = []
-
-    for dataset_name, dataframe in output_assets.items():
-        for column in dataframe.columns:
-            rows.append(
-                {
-                    "run_id": runtime.run_id,
-                    "layer_name": runtime.layer_name,
-                    "domain_name": runtime.domain_name,
-                    "dataset_name": dataset_name,
-                    "column_name": column,
-                    "data_type": str(dataframe[column].dtype),
-                    "non_null_count": int(dataframe[column].notna().sum()),
-                    "null_count": int(dataframe[column].isna().sum()),
-                    "row_count": int(len(dataframe)),
-                    "event_timestamp_utc": utc_now().isoformat(),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-
-def build_rule_catalog(runtime: QualityAnalyticsRuntime) -> pd.DataFrame:
-    """
-    Build rule catalog.
-    """
-
-    return pd.DataFrame(runtime.rule_records)
-
-
-def build_execution_summary(
-    runtime: QualityAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build one-row execution summary.
-    """
-
-    end_time = utc_now()
-    duration_seconds = (end_time - runtime.start_time_utc).total_seconds()
-
-    failed_validation_count = sum(
-        1
-        for record in runtime.validation_records
-        if record.get("status") == STATUS_FAILED
-    )
-
-    summary = {
-        "run_id": runtime.run_id,
-        "layer_name": runtime.layer_name,
-        "domain_name": runtime.domain_name,
-        "config_path": str(runtime.config_path),
-        "start_time_utc": runtime.start_time_utc.isoformat(),
-        "end_time_utc": end_time.isoformat(),
-        "duration_seconds": duration_seconds,
-        "output_asset_count": len(output_assets),
-        "audit_record_count": len(runtime.audit_records),
-        "validation_record_count": len(runtime.validation_records),
-        "failed_validation_count": failed_validation_count,
-        "dataset_record_count": len(runtime.dataset_records),
-        "rule_record_count": len(runtime.rule_records),
-        "status": STATUS_SUCCESS if failed_validation_count == 0 else STATUS_WARNING,
-    }
-
-    return pd.DataFrame([summary])
-
-
-###############################################################################
-# Output Writing
-###############################################################################
-
-def get_output_path(
-    runtime: QualityAnalyticsRuntime,
-    output_group: str,
-    output_name: str,
-) -> Path:
-    """
-    Resolve configured output path.
-    """
-
-    output_config = runtime.config.get("paths", {}).get(output_group, {})
-    output_entry = output_config.get(output_name)
-
-    if isinstance(output_entry, dict):
-        raw_path = output_entry.get("path")
-    else:
-        raw_path = output_entry
-
-    if not raw_path:
-        raw_path = f"data/analytics_platform/{output_group}/{output_name}"
-
-    return normalize_path(runtime.project_root, raw_path)
-
-
-def write_quality_outputs(
-    runtime: QualityAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write Quality Analytics output datasets.
-    """
-
-    output_format = get_output_format(runtime)
-
-    for output_name, dataframe in output_assets.items():
-        output_path = get_output_path(runtime, "outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote Quality Analytics output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-        add_audit_record(
-            runtime=runtime,
-            step_name=f"write_output:{output_name}",
-            status=STATUS_SUCCESS,
-            message="Quality Analytics output written successfully.",
-            row_count=len(dataframe),
-            output_path=str(output_path),
-        )
-
-
-def write_metadata_and_audit_outputs(
-    runtime: QualityAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write metadata and audit outputs.
-    """
-
-    output_format = get_output_format(runtime)
-
-    metadata_assets = {
-        "quality_analytics_dataset_inventory": build_dataset_inventory(runtime),
-        "quality_analytics_column_dictionary": build_column_dictionary(runtime, output_assets),
-        "quality_analytics_rule_catalog": build_rule_catalog(runtime),
-    }
-
-    audit_assets = {
-        "quality_analytics_audit_records": pd.DataFrame(runtime.audit_records),
-        "quality_analytics_validation_results": pd.DataFrame(runtime.validation_records),
-        "quality_analytics_execution_summary": build_execution_summary(runtime, output_assets),
-    }
-
-    for output_name, dataframe in metadata_assets.items():
-        output_path = get_output_path(runtime, "metadata_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote metadata output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-    for output_name, dataframe in audit_assets.items():
-        output_path = get_output_path(runtime, "audit_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote audit output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-
-###############################################################################
 # Main Orchestration
 ###############################################################################
 
-def build_quality_analytics_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
+def build_quality_analytics_layer(
+    config_path: str = DEFAULT_CONFIG_PATH,
+) -> AnalyticsBuildResult:
     """
-    Build complete Quality Analytics layer.
+    Purpose
+    -------
+    Build the complete Quality Analytics layer.
+
+    Parameters
+    ----------
+    config_path:
+        Quality Analytics configuration path.
+
+    Returns
+    -------
+    AnalyticsBuildResult
+        Standard build result containing status, message, row count, and column
+        count.
+
+    Raises
+    ------
+    None
+        Exceptions are captured and returned as a failed AnalyticsBuildResult.
     """
 
-    runtime: Optional[QualityAnalyticsRuntime] = None
+    runtime: Optional[AnalyticsDomainRuntime] = None
 
     try:
         runtime = initialize_runtime(config_path)
-        logger = runtime.logger
+        logger = runtime.get_logger(LOGGER_NAME)
 
-        logger.info("Configuration path: %s", runtime.config_path)
+        logger.info("=" * 80)
+        logger.info("MedFabric Quality Analytics started")
+        logger.info("=" * 80)
+        logger.info("Configuration file: %s", runtime.config_file)
 
-        datasets = load_input_datasets(runtime)
-        validate_inputs(runtime, datasets)
+        output_format = get_output_format(
+            runtime=runtime,
+            domain_section=DOMAIN_SECTION,
+        )
+
+        datasets = load_input_datasets(
+            runtime=runtime,
+            input_source_layer_map={
+                "claims_features": "Layer 1F - Feature Store",
+                "pharmacy_features": "Layer 1F - Feature Store",
+                "laboratory_features": "Layer 1F - Feature Store",
+                "risk_features": "Layer 1F - Feature Store",
+                "member_segmentation": "Layer 2A - Population Health Analytics",
+                "risk_stratification": "Layer 2A - Population Health Analytics",
+                "condition_registry": "Layer 2B - Clinical Analytics",
+            },
+            key_column_map={
+                "claims_features": "member_id",
+                "pharmacy_features": "member_id",
+                "laboratory_features": "member_id",
+                "risk_features": "member_id",
+                "member_segmentation": "member_id",
+                "risk_stratification": "member_id",
+                "condition_registry": "member_id",
+            },
+        )
 
         quality_measures = build_quality_measures(runtime, datasets)
         care_gaps = build_care_gaps(runtime, datasets)
@@ -1640,54 +1088,95 @@ def build_quality_analytics_layer(config_path: str = DEFAULT_CONFIG_PATH) -> Bui
             "cms_summary": cms_summary,
         }
 
-        write_quality_outputs(runtime, output_assets)
-
-        add_audit_record(
+        write_output_assets(
             runtime=runtime,
-            step_name="build_quality_analytics_layer",
-            status=STATUS_SUCCESS,
-            message="Quality Analytics completed successfully.",
+            output_assets=output_assets,
+            output_format=output_format,
         )
 
-        write_metadata_and_audit_outputs(runtime, output_assets)
+        add_success_audit(
+            runtime=runtime,
+            step_name="build_quality_analytics_layer",
+            message="Quality Analytics completed successfully.",
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            source_layer="Layer 2C - Quality Analytics",
+            source_dataset="quality_analytics_outputs",
+        )
+
+        write_metadata_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            dataset_inventory_name="quality_analytics_dataset_inventory",
+            column_dictionary_name="quality_analytics_column_dictionary",
+            rule_catalog_name="quality_analytics_rule_catalog",
+        )
+
+        write_audit_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            audit_records_name="quality_analytics_audit_records",
+            validation_results_name="quality_analytics_validation_results",
+            execution_summary_name="quality_analytics_execution_summary",
+        )
 
         logger.info("=" * 80)
         logger.info("MedFabric Quality Analytics completed successfully")
         logger.info("=" * 80)
 
-        return BuildResult(
+        return AnalyticsBuildResult(
             name="quality_analytics",
             status=STATUS_SUCCESS,
             message="Quality Analytics completed successfully.",
-            row_count=sum(len(df) for df in output_assets.values()),
-            column_count=sum(len(df.columns) for df in output_assets.values()),
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            column_count=sum(len(dataframe.columns) for dataframe in output_assets.values()),
         )
 
     except Exception as exc:
         if runtime is not None:
-            runtime.logger.error("=" * 80)
-            runtime.logger.error("Quality Analytics failed")
-            runtime.logger.error("Error: %s", exc)
-            runtime.logger.error("Traceback:\n%s", traceback.format_exc())
-            runtime.logger.error("=" * 80)
+            logger = runtime.get_logger(LOGGER_NAME)
 
-            add_audit_record(
+            logger.error("=" * 80)
+            logger.error("Quality Analytics failed")
+            logger.error("Error: %s", exc)
+            logger.error("Traceback:\n%s", traceback.format_exc())
+            logger.error("=" * 80)
+
+            add_failed_audit(
                 runtime=runtime,
                 step_name="build_quality_analytics_layer",
-                status=STATUS_FAILED,
                 message=str(exc),
+                source_layer="Layer 2C - Quality Analytics",
+                source_dataset="quality_analytics",
             )
 
             try:
-                write_metadata_and_audit_outputs(runtime, {})
-            except Exception as audit_exc:
-                runtime.logger.error("Failed to write audit outputs: %s", audit_exc)
+                output_format = get_output_format(
+                    runtime=runtime,
+                    domain_section=DOMAIN_SECTION,
+                )
 
-        return BuildResult(
+                write_audit_outputs(
+                    runtime=runtime,
+                    output_assets={},
+                    output_format=output_format,
+                    audit_records_name="quality_analytics_audit_records",
+                    validation_results_name="quality_analytics_validation_results",
+                    execution_summary_name="quality_analytics_execution_summary",
+                )
+            except Exception as audit_exc:
+                logger.error("Failed to write audit outputs: %s", audit_exc)
+
+        return AnalyticsBuildResult(
             name="quality_analytics",
             status=STATUS_FAILED,
             message=str(exc),
         )
+
+    finally:
+        if runtime is not None:
+            runtime.context.logging.close()
 
 
 ###############################################################################
@@ -1696,10 +1185,22 @@ def build_quality_analytics_layer(config_path: str = DEFAULT_CONFIG_PATH) -> Bui
 
 def main() -> None:
     """
-    Command-line entry point.
+    Purpose
+    -------
+    Command-line entry point for Quality Analytics.
 
-    Run:
-        python -m src.analytics_platform.quality_analytics.build_quality_analytics_layer
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    SystemExit
+        Raised with exit code 1 when execution fails.
     """
 
     config_path = os.environ.get(

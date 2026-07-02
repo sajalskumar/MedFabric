@@ -39,7 +39,7 @@
 #         - Apply business rules
 #
 # Inputs:
-#     config/bronze/bronze.yaml
+#     config/ingestion/ingestion.yaml
 #     data/raw/*.parquet
 #
 # Outputs:
@@ -60,7 +60,7 @@
 #     1. Do not read YAML directly. Use context.configuration.
 #     2. Do not read/write files directly. Use context.storage.
 #     3. Do not create a new folder structure.
-#     4. Use config/bronze/bronze.yaml as the Bronze source of truth.
+#     4. Use config/ingestion/ingestion.yaml as the Bronze source of truth.
 #     5. Preserve Raw business columns exactly.
 #     6. Add only Bronze audit columns.
 #     7. Do not perform Silver transformations in Bronze.
@@ -86,7 +86,7 @@ from src.common.pipeline_context import create_pipeline_context
 
 MODULE_NAME = "medfabric.ingestion.bronze"
 STEP_NAME = "Build Bronze Layer"
-BRONZE_CONFIG_PATH = "bronze/bronze.yaml"
+INGESTION_CONFIG_PATH = "ingestion/ingestion.yaml"
 
 
 ###############################################################################
@@ -186,9 +186,9 @@ def load_bronze_config(context) -> Dict[str, Any]:
     Returns
     -------
     dict
-        Parsed config/bronze/bronze.yaml.
+        Parsed config/ingestion/ingestion.yaml.
     """
-    return context.configuration.load_yaml(BRONZE_CONFIG_PATH)
+    return context.configuration.load_yaml(INGESTION_CONFIG_PATH)
 
 
 ###############################################################################
@@ -218,7 +218,7 @@ def get_enabled_dataset_configs(bronze_config: Dict[str, Any]) -> Dict[str, Dict
     datasets_config = require_config_section(
         config=bronze_config,
         key="datasets",
-        config_name="bronze.yaml",
+        config_name="ingestion.yaml",
     )
 
     enabled_datasets: Dict[str, Dict[str, Any]] = {}
@@ -358,7 +358,7 @@ def add_bronze_audit_columns(
         Parsed Bronze configuration.
 
     dataset_config:
-        Single dataset configuration from bronze.yaml.
+        Single dataset configuration from ingestion.yaml.
 
     context:
         Active MedFabric PipelineContext.
@@ -376,13 +376,13 @@ def add_bronze_audit_columns(
     audit_config = require_config_section(
         config=bronze_config,
         key="audit",
-        config_name="bronze.yaml",
+        config_name="ingestion.yaml",
     )
 
     configuration_config = require_config_section(
         config=bronze_config,
         key="configuration",
-        config_name="bronze.yaml",
+        config_name="ingestion.yaml",
     )
 
     source_columns = list(dataframe.columns)
@@ -474,7 +474,7 @@ def validate_raw_input(
         Raw input DataFrame.
 
     dataset_key:
-        Dataset key from bronze.yaml.
+        Dataset key from ingestion.yaml.
 
     dataset_config:
         Dataset-specific configuration.
@@ -485,7 +485,7 @@ def validate_raw_input(
     validation_config = require_config_section(
         config=bronze_config,
         key="validation",
-        config_name="bronze.yaml",
+        config_name="ingestion.yaml",
     )
 
     allow_empty = bool(validation_config.get("allow_empty", False))
@@ -534,7 +534,7 @@ def validate_bronze_output(
         Bronze output DataFrame.
 
     dataset_key:
-        Dataset key from bronze.yaml.
+        Dataset key from ingestion.yaml.
 
     dataset_config:
         Dataset-specific configuration.
@@ -550,13 +550,13 @@ def validate_bronze_output(
     validation_config = require_config_section(
         config=bronze_config,
         key="validation",
-        config_name="bronze.yaml",
+        config_name="ingestion.yaml",
     )
 
     audit_config = require_config_section(
         config=bronze_config,
         key="audit",
-        config_name="bronze.yaml",
+        config_name="ingestion.yaml",
     )
 
     if bool(validation_config.get("validate_row_count_match", True)):
@@ -623,7 +623,7 @@ def build_metadata_prefix(dataset_key: str) -> str:
     Parameters
     ----------
     dataset_key:
-        Dataset key from bronze.yaml.
+        Dataset key from ingestion.yaml.
 
     Returns
     -------
@@ -653,7 +653,7 @@ def write_bronze_metadata(
         Bronze output DataFrame.
 
     dataset_key:
-        Dataset key from bronze.yaml.
+        Dataset key from ingestion.yaml.
 
     dataset_config:
         Dataset-specific configuration.
@@ -667,7 +667,7 @@ def write_bronze_metadata(
     metadata_config = require_config_section(
         config=bronze_config,
         key="metadata",
-        config_name="bronze.yaml",
+        config_name="ingestion.yaml",
     )
 
     dataset_name = require_config_value(
@@ -761,7 +761,7 @@ def build_single_bronze_dataset(
         Parsed Bronze configuration.
 
     dataset_key:
-        Dataset key from bronze.yaml.
+        Dataset key from ingestion.yaml.
 
     dataset_config:
         Dataset-specific configuration.
@@ -824,7 +824,7 @@ def build_single_bronze_dataset(
     audit_config = require_config_section(
         config=bronze_config,
         key="audit",
-        config_name="bronze.yaml",
+        config_name="ingestion.yaml",
     )
 
     if bool(audit_config.get("add_audit_columns", True)):
@@ -902,11 +902,11 @@ def build_bronze_layer(context) -> Dict[str, pd.DataFrame]:
     configuration_config = require_config_section(
         config=bronze_config,
         key="configuration",
-        config_name="bronze.yaml",
+        config_name="ingestion.yaml",
     )
 
     if not bool(configuration_config.get("enabled", True)):
-        logger.warning("Bronze Layer is disabled in config/bronze/bronze.yaml.")
+        logger.warning("Ingestion Layer is disabled in config/ingestion/ingestion.yaml.")
         return {}
 
     enabled_dataset_configs = get_enabled_dataset_configs(bronze_config)
@@ -921,7 +921,7 @@ def build_bronze_layer(context) -> Dict[str, pd.DataFrame]:
     execution_config = require_config_section(
         config=bronze_config,
         key="execution",
-        config_name="bronze.yaml",
+        config_name="ingestion.yaml",
     )
 
     fail_fast = bool(execution_config.get("fail_fast", True))

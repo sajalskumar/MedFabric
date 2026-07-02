@@ -1,0 +1,412 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/insights/common/runtime.py
+#
+# Layer:
+#     Layer 3 - Insights
+#
+# Purpose:
+#     Provides shared runtime objects and runtime helper functions for the
+#     MedFabric Insights layer.
+#
+# Business Context:
+#     The Insights layer converts Layer 2 Analytics Platform outputs into
+#     executive-ready reporting datasets, scorecards, and dashboard marts.
+#
+#     This runtime module gives every Insights domain a consistent execution
+#     context, including:
+#
+#         - pipeline context
+#         - configuration
+#         - run identifier
+#         - layer identity
+#         - domain identity
+#         - metadata containers
+#         - audit containers
+#         - validation containers
+#         - logger access
+#
+# Architectural Rule:
+#     This module contains shared Insights runtime infrastructure only.
+#
+#     It does NOT contain:
+#         - reporting business logic
+#         - dashboard logic
+#         - metric calculations
+#         - dataset-specific transformations
+#
+# Inputs:
+#     config/insights/insights.yaml
+#
+# Outputs:
+#     Runtime objects used by:
+#         src/insights/*/build_*.py
+#         src/insights/build_insights_platform.py
+#
+# Run:
+#     This file is imported by Insights builders.
+#
+###############################################################################
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List
+
+
+###############################################################################
+# Status Constants
+###############################################################################
+
+STATUS_SUCCESS = "SUCCESS"
+STATUS_FAILED = "FAILED"
+STATUS_WARNING = "WARNING"
+STATUS_SKIPPED = "SKIPPED"
+
+
+###############################################################################
+# Runtime Data Classes
+###############################################################################
+
+@dataclass
+class InsightsDomainRuntime:
+    """
+    Purpose
+    -------
+    Runtime object shared by all Insights domain builders.
+
+    Parameters
+    ----------
+    context:
+        MedFabric PipelineContext created by src.common.pipeline_context.
+
+    config:
+        Loaded Insights YAML configuration.
+
+    config_file:
+        Normalized configuration file path.
+
+    domain_section:
+        Configuration section used by the current Insights domain.
+
+    layer_name:
+        Human-readable layer name.
+
+    domain_name:
+        Human-readable domain name.
+
+    audit_records:
+        In-memory audit records collected during execution.
+
+    validation_records:
+        In-memory validation records collected during execution.
+
+    dataset_records:
+        In-memory dataset inventory records collected during execution.
+
+    rule_records:
+        In-memory rule catalog records collected during execution.
+
+    Returns
+    -------
+    InsightsDomainRuntime
+        Runtime context used by Insights builders.
+
+    Notes
+    -----
+    This mirrors the runtime design used by the Analytics Platform. Domain
+    builders should receive this runtime object instead of constructing their
+    own loggers, YAML loaders, audit handlers, or metadata containers.
+    """
+
+    context: Any
+    config: Dict[str, Any]
+    config_file: str
+    domain_section: str
+    layer_name: str
+    domain_name: str
+    audit_records: List[Dict[str, Any]] = field(default_factory=list)
+    validation_records: List[Dict[str, Any]] = field(default_factory=list)
+    dataset_records: List[Dict[str, Any]] = field(default_factory=list)
+    rule_records: List[Dict[str, Any]] = field(default_factory=list)
+
+    def get_logger(self, logger_name: str) -> Any:
+        """
+        Purpose
+        -------
+        Return a logger from the shared PipelineContext.
+
+        Parameters
+        ----------
+        logger_name:
+            Logger name requested by the calling module.
+
+        Returns
+        -------
+        logging.Logger
+            Logger instance from the MedFabric logging framework.
+
+        Raises
+        ------
+        AttributeError
+            Raised if the underlying PipelineContext does not expose the
+            expected logging interface.
+        """
+
+        return self.context.get_logger(logger_name)
+
+
+@dataclass
+class InsightsBuildResult:
+    """
+    Purpose
+    -------
+    Standard result object returned by Insights build modules.
+
+    Parameters
+    ----------
+    name:
+        Name of the Insights domain or platform build.
+
+    status:
+        Execution status. Expected values are SUCCESS, FAILED, WARNING, or
+        SKIPPED.
+
+    message:
+        Human-readable execution message.
+
+    row_count:
+        Total output row count generated by the build.
+
+    column_count:
+        Total output column count generated by the build.
+
+    Returns
+    -------
+    InsightsBuildResult
+        Standardized build result.
+
+    Notes
+    -----
+    This result object allows the Insights orchestrator to treat every reporting
+    domain consistently.
+    """
+
+    name: str
+    status: str
+    message: str
+    row_count: int = 0
+    column_count: int = 0
+
+
+###############################################################################
+# Time Helpers
+###############################################################################
+
+def utc_now() -> datetime:
+    """
+    Purpose
+    -------
+    Return a timezone-aware UTC timestamp.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    datetime
+        Current UTC timestamp.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    All MedFabric audit, metadata, and execution timestamps should use UTC.
+    """
+
+    return datetime.now(timezone.utc)
+
+
+###############################################################################
+# Configuration Helpers
+###############################################################################
+
+def normalize_config_file(config_path: str | Path) -> str:
+    """
+    Purpose
+    -------
+    Normalize a configuration path for the Insights layer.
+
+    Parameters
+    ----------
+    config_path:
+        Raw configuration path supplied by the caller or environment variable.
+
+    Returns
+    -------
+    str
+        Normalized configuration path as a string.
+
+    Raises
+    ------
+    ValueError
+        Raised when config_path is missing.
+
+    Notes
+    -----
+    Relative paths are preserved because PipelineContext configuration loading
+    resolves paths from the project root.
+    """
+
+    if config_path is None or str(config_path).strip() == "":
+        raise ValueError("Insights configuration path is required.")
+
+    return str(config_path)
+
+
+def get_domain_config_value(
+    config: Dict[str, Any],
+    domain_section: str,
+    key: str,
+    default_value: Any,
+) -> Any:
+    """
+    Purpose
+    -------
+    Read a value from the configured domain section with a default fallback.
+
+    Parameters
+    ----------
+    config:
+        Loaded Insights YAML configuration.
+
+    domain_section:
+        Domain configuration section.
+
+    key:
+        Configuration key to read.
+
+    default_value:
+        Value returned when the key is not configured.
+
+    Returns
+    -------
+    Any
+        Configured value or default value.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    This helper keeps domain runtime creation consistent and avoids repeated
+    dictionary access patterns across builders.
+    """
+
+    domain_config = config.get(domain_section, {})
+
+    if not isinstance(domain_config, dict):
+        return default_value
+
+    return domain_config.get(key, default_value)
+
+
+###############################################################################
+# Runtime Factory
+###############################################################################
+
+def create_domain_runtime(
+    context: Any,
+    config: Dict[str, Any],
+    config_file: str,
+    domain_section: str,
+    default_layer_name: str,
+    default_domain_name: str,
+) -> InsightsDomainRuntime:
+    """
+    Purpose
+    -------
+    Create an InsightsDomainRuntime for an Insights domain or platform build.
+
+    Parameters
+    ----------
+    context:
+        MedFabric PipelineContext.
+
+    config:
+        Loaded Insights YAML configuration.
+
+    config_file:
+        Normalized configuration file path.
+
+    domain_section:
+        YAML section representing the current Insights domain.
+
+    default_layer_name:
+        Default layer name used when not configured.
+
+    default_domain_name:
+        Default domain name used when not configured.
+
+    Returns
+    -------
+    InsightsDomainRuntime
+        Initialized runtime object.
+
+    Raises
+    ------
+    ValueError
+        Raised when required runtime inputs are missing.
+
+    Notes
+    -----
+    Domain-specific settings are read from the configured domain section when
+    available. If a domain does not define layer_name or domain_name, defaults
+    supplied by the caller are used.
+    """
+
+    if context is None:
+        raise ValueError("PipelineContext is required to create Insights runtime.")
+
+    if config is None or not isinstance(config, dict):
+        raise ValueError("Insights configuration must be a dictionary.")
+
+    if not domain_section:
+        raise ValueError("domain_section is required to create Insights runtime.")
+
+    layer_name = get_domain_config_value(
+        config=config,
+        domain_section=domain_section,
+        key="layer_name",
+        default_value=default_layer_name,
+    )
+
+    domain_name = get_domain_config_value(
+        config=config,
+        domain_section=domain_section,
+        key="domain_name",
+        default_value=default_domain_name,
+    )
+
+    return InsightsDomainRuntime(
+        context=context,
+        config=config,
+        config_file=config_file,
+        domain_section=domain_section,
+        layer_name=layer_name,
+        domain_name=domain_name,
+    )
+
+
+###############################################################################
+# End of File
+###############################################################################

@@ -268,26 +268,26 @@ risk_stratification:
   tiers:
 
     very_high_risk:
-      min_value: 0.85
-      max_value: 1.00
+      min_value: 15
+      max_value: 18
       label: "Very High Risk"
       priority_rank: 1
 
     high_risk:
-      min_value: 0.70
-      max_value: 0.849999
+      min_value: 11
+      max_value: 14
       label: "High Risk"
       priority_rank: 2
 
     moderate_risk:
-      min_value: 0.40
-      max_value: 0.699999
+      min_value: 8
+      max_value: 10
       label: "Moderate Risk"
       priority_rank: 3
 
     low_risk:
-      min_value: 0.00
-      max_value: 0.399999
+      min_value: 1
+      max_value: 7
       label: "Low Risk"
       priority_rank: 4
 

@@ -6,7 +6,7 @@
 #     src/analytics_platform/predictive_analytics/build_predictive_analytics_layer.py
 #
 # Layer:
-#     Layer 2E - Predictive Analytics
+#     Layer 2D - Predictive Analytics
 #
 # Purpose:
 #     Builds Predictive Analytics outputs from Model Training & Scoring outputs.
@@ -21,11 +21,21 @@
 # Dependency Flow:
 #     Feature Store
 #         ↓
-#     Layer 2D - Model Training & Scoring
+#     Modeling Layer - Model Training & Scoring
 #         ↓
 #     data/scoring/
 #         ↓
-#     Layer 2E - Predictive Analytics
+#     Layer 2D - Predictive Analytics
+#
+# Architecture:
+#     This file contains Predictive Analytics business logic only.
+#
+#     Shared Analytics Platform concerns are handled by:
+#         - src.analytics_platform.common.runtime
+#         - src.analytics_platform.common.io
+#         - src.analytics_platform.common.audit
+#         - src.analytics_platform.common.validation
+#         - src.analytics_platform.common.metadata
 #
 # Inputs:
 #     config/analytics_platform/predictive_analytics.yaml
@@ -44,17 +54,40 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import sys
 import traceback
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
-import yaml
+
+from src.analytics_platform.common.audit import (
+    add_failed_audit,
+    add_success_audit,
+)
+from src.analytics_platform.common.io import (
+    get_output_format,
+    load_input_datasets,
+    write_output_assets,
+)
+from src.analytics_platform.common.metadata import (
+    add_dataset_record,
+    add_rule_record,
+    write_audit_outputs,
+    write_metadata_outputs,
+)
+from src.analytics_platform.common.runtime import (
+    AnalyticsBuildResult,
+    AnalyticsDomainRuntime,
+    STATUS_FAILED,
+    STATUS_SUCCESS,
+    create_domain_runtime,
+    normalize_config_file,
+    utc_now,
+)
+from src.analytics_platform.common.validation import require_columns
+from src.common.exception_manager import PipelineError, ValidationError
+from src.common.pipeline_context import create_pipeline_context
 
 
 ###############################################################################
@@ -63,207 +96,46 @@ import yaml
 
 DEFAULT_CONFIG_PATH = "config/analytics_platform/predictive_analytics.yaml"
 
-DEFAULT_LAYER_NAME = "Layer 2E - Predictive Analytics"
+DEFAULT_LAYER_NAME = "Layer 2D - Predictive Analytics"
 DEFAULT_DOMAIN_NAME = "Predictive Analytics"
-DEFAULT_OUTPUT_FORMAT = "parquet"
+DOMAIN_SECTION = "predictive_analytics"
 
-SUPPORTED_FILE_FORMATS = {"parquet", "csv", "json"}
-
-STATUS_SUCCESS = "SUCCESS"
-STATUS_FAILED = "FAILED"
-STATUS_WARNING = "WARNING"
-STATUS_SKIPPED = "SKIPPED"
+LOGGER_NAME = "medfabric.analytics_platform.predictive_analytics"
 
 
 ###############################################################################
-# Runtime Data Classes
+# Configuration and Runtime
 ###############################################################################
 
-@dataclass
-class PredictiveAnalyticsRuntime:
+def validate_config(config: Dict) -> None:
     """
-    Runtime context for one Predictive Analytics execution.
-    """
-
-    run_id: str
-    project_root: Path
-    config_path: Path
-    start_time_utc: datetime
-    config: Dict[str, Any]
-    logger: logging.Logger
-    layer_name: str
-    domain_name: str
-    audit_records: List[Dict[str, Any]] = field(default_factory=list)
-    validation_records: List[Dict[str, Any]] = field(default_factory=list)
-    dataset_records: List[Dict[str, Any]] = field(default_factory=list)
-    rule_records: List[Dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
-class BuildResult:
-    """
-    Standard build result returned by Predictive Analytics.
-    """
-
-    name: str
-    status: str
-    message: str
-    row_count: int = 0
-    column_count: int = 0
-
-
-###############################################################################
-# General Utilities
-###############################################################################
-
-def utc_now() -> datetime:
-    """
-    Return current timezone-aware UTC timestamp.
-    """
-
-    return datetime.now(timezone.utc)
-
-
-def generate_run_id() -> str:
-    """
-    Generate timestamp-based run ID.
-    """
-
-    return utc_now().strftime("%Y%m%d_%H%M%S")
-
-
-def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
-    """
-    Resolve configured path relative to project root.
-    """
-
-    path = Path(raw_path)
-
-    if path.is_absolute():
-        return path
-
-    return project_root / path
-
-
-def ensure_directory(path: Path) -> None:
-    """
-    Create directory if missing.
-    """
-
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def safe_string(value: Any) -> str:
-    """
-    Convert value to string safely.
-    """
-
-    if value is None:
-        return ""
-
-    return str(value)
-
-
-###############################################################################
-# Logging
-###############################################################################
-
-def configure_logging(
-    project_root: Path,
-    config: Dict[str, Any],
-    run_id: str,
-) -> logging.Logger:
-    """
-    Configure Predictive Analytics logging.
-    """
-
-    logging_config = config.get("logging", {})
-
-    log_level_name = logging_config.get("level", "INFO")
-    log_level = getattr(logging, str(log_level_name).upper(), logging.INFO)
-
-    log_dir = normalize_path(
-        project_root,
-        logging_config.get("module_log_dir", "logs/modules"),
-    )
-    ensure_directory(log_dir)
-
-    log_file_path = log_dir / logging_config.get(
-        "log_file_name",
-        "predictive_analytics.log",
-    )
-
-    logger = logging.getLogger("medfabric.analytics_platform.predictive_analytics")
-    logger.setLevel(log_level)
-    logger.handlers.clear()
-    logger.propagate = False
-
-    formatter = logging.Formatter(
-        fmt="[%(asctime)s] [RUN_ID=%(run_id)s] [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    class RunIdFilter(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            record.run_id = run_id
-            return True
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(log_level)
-    stream_handler.setFormatter(formatter)
-    stream_handler.addFilter(RunIdFilter())
-
-    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(RunIdFilter())
-
-    logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
-
-    logger.info("=" * 80)
-    logger.info("MedFabric Predictive Analytics started")
-    logger.info("=" * 80)
-    logger.info("Run ID: %s", run_id)
-    logger.info("Log file: %s", log_file_path)
-
-    return logger
-
-
-###############################################################################
-# Configuration
-###############################################################################
-
-def load_yaml_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load YAML configuration.
-    """
-
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as file:
-        config = yaml.safe_load(file)
-
-    if config is None:
-        raise ValueError(f"Configuration file is empty: {config_path}")
-
-    if not isinstance(config, dict):
-        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
-
-    return config
-
-
-def validate_config(config: Dict[str, Any]) -> None:
-    """
+    Purpose
+    -------
     Validate required Predictive Analytics configuration sections.
-    """
 
-    errors: List[str] = []
+    Parameters
+    ----------
+    config:
+        Loaded Predictive Analytics YAML configuration.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    PipelineError
+        Raised when required sections are missing.
+
+    Notes
+    -----
+    Generic YAML loading is handled by ConfigurationManager through
+    PipelineContext. This function only validates the Predictive Analytics
+    domain contract.
+    """
 
     required_sections = [
         "predictive_analytics",
-        "logging",
         "paths",
         "join_keys",
         "model_score_registry",
@@ -277,477 +149,113 @@ def validate_config(config: Dict[str, Any]) -> None:
         "audit",
     ]
 
-    for section in required_sections:
-        if section not in config:
-            errors.append(f"Missing required configuration section: {section}")
+    missing_sections = [
+        section for section in required_sections if section not in config
+    ]
 
-    paths = config.get("paths", {})
-    if not isinstance(paths, dict):
-        errors.append("Configuration section 'paths' must be a dictionary.")
-    else:
-        for subsection in ["inputs", "outputs", "metadata_outputs", "audit_outputs"]:
-            if subsection not in paths:
-                errors.append(f"Missing required configuration section: paths.{subsection}")
+    paths_config = config.get("paths", {})
 
-    output_format = (
-        config.get("predictive_analytics", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
+    for subsection in ["inputs", "outputs", "metadata_outputs", "audit_outputs"]:
+        if subsection not in paths_config:
+            missing_sections.append(f"paths.{subsection}")
+
+    if missing_sections:
+        raise PipelineError(
+            "Predictive Analytics configuration validation failed. "
+            f"Missing sections: {missing_sections}"
+        )
+
+
+def initialize_runtime(config_path: str) -> AnalyticsDomainRuntime:
+    """
+    Purpose
+    -------
+    Initialize Predictive Analytics runtime using MedFabric PipelineContext.
+
+    Parameters
+    ----------
+    config_path:
+        Predictive Analytics configuration path.
+
+    Returns
+    -------
+    AnalyticsDomainRuntime
+        Initialized domain runtime.
+
+    Raises
+    ------
+    PipelineError
+        Raised when configuration loading or validation fails.
+    """
+
+    config_file = normalize_config_file(config_path)
+
+    context = create_pipeline_context(
+        pipeline_name="Layer 2D - Predictive Analytics"
     )
 
-    if output_format not in SUPPORTED_FILE_FORMATS:
-        errors.append(
-            f"Unsupported output_format '{output_format}'. "
-            f"Supported formats: {sorted(SUPPORTED_FILE_FORMATS)}"
-        )
-
-    if errors:
-        raise ValueError(
-            "Predictive Analytics configuration validation failed:\n"
-            + "\n".join(f"- {error}" for error in errors)
-        )
-
-
-def initialize_runtime(
-    config_path_raw: str = DEFAULT_CONFIG_PATH,
-) -> PredictiveAnalyticsRuntime:
-    """
-    Initialize Predictive Analytics runtime.
-    """
-
-    project_root = Path.cwd()
-    config_path = normalize_path(project_root, config_path_raw)
-    run_id = generate_run_id()
-
-    config = load_yaml_config(config_path)
+    config = context.configuration.load_yaml(config_file)
     validate_config(config)
 
-    predictive_config = config.get("predictive_analytics", {})
-
-    layer_name = predictive_config.get("layer_name", DEFAULT_LAYER_NAME)
-    domain_name = predictive_config.get("domain_name", DEFAULT_DOMAIN_NAME)
-
-    logger = configure_logging(project_root, config, run_id)
-
-    runtime = PredictiveAnalyticsRuntime(
-        run_id=run_id,
-        project_root=project_root,
-        config_path=config_path,
-        start_time_utc=utc_now(),
+    runtime = create_domain_runtime(
+        context=context,
         config=config,
-        logger=logger,
-        layer_name=layer_name,
-        domain_name=domain_name,
+        config_file=config_file,
+        domain_section=DOMAIN_SECTION,
+        default_layer_name=DEFAULT_LAYER_NAME,
+        default_domain_name=DEFAULT_DOMAIN_NAME,
     )
 
-    add_audit_record(
+    add_success_audit(
         runtime=runtime,
         step_name="initialize_runtime",
-        status=STATUS_SUCCESS,
         message="Predictive Analytics runtime initialized successfully.",
+        source_layer="Layer 2 - Analytics Platform",
+        source_dataset=config_file,
     )
 
     return runtime
 
 
 ###############################################################################
-# Audit, Validation, Metadata Records
+# Input Validation
 ###############################################################################
 
-def add_audit_record(
-    runtime: PredictiveAnalyticsRuntime,
-    step_name: str,
-    status: str,
-    message: str,
-    row_count: Optional[int] = None,
-    output_path: Optional[str] = None,
-) -> None:
-    """
-    Add audit record.
-    """
-
-    runtime.audit_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "step_name": step_name,
-            "status": status,
-            "message": message,
-            "row_count": row_count,
-            "output_path": output_path,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_validation_record(
-    runtime: PredictiveAnalyticsRuntime,
-    dataset_name: str,
-    rule_name: str,
-    status: str,
-    message: str,
-    failed_count: Optional[int] = None,
-) -> None:
-    """
-    Add validation record.
-    """
-
-    runtime.validation_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "rule_name": rule_name,
-            "status": status,
-            "message": message,
-            "failed_count": failed_count,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_dataset_record(
-    runtime: PredictiveAnalyticsRuntime,
-    dataset_name: str,
-    dataset_type: str,
-    status: str,
-    path: Optional[str],
-    row_count: int,
-    column_count: int,
-    message: str,
-) -> None:
-    """
-    Add dataset inventory record.
-    """
-
-    runtime.dataset_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "dataset_type": dataset_type,
-            "status": status,
-            "path": path,
-            "row_count": row_count,
-            "column_count": column_count,
-            "message": message,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_rule_record(
-    runtime: PredictiveAnalyticsRuntime,
-    rule_group: str,
-    rule_name: str,
-    rule_type: str,
-    description: str,
-    source_dataset: str,
-    rule_config: Dict[str, Any],
-) -> None:
-    """
-    Add rule catalog record.
-    """
-
-    runtime.rule_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "rule_group": rule_group,
-            "rule_name": rule_name,
-            "rule_type": rule_type,
-            "description": description,
-            "source_dataset": source_dataset,
-            "rule_config_json": safe_string(rule_config),
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-###############################################################################
-# Dataset IO
-###############################################################################
-
-def get_output_format(runtime: PredictiveAnalyticsRuntime) -> str:
-    """
-    Return configured output format.
-    """
-
-    return (
-        runtime.config.get("predictive_analytics", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
-    )
-
-
-def read_dataset(path: Path, file_format: Optional[str]) -> pd.DataFrame:
-    """
-    Read dataset from disk.
-    """
-
-    if not path.exists():
-        raise FileNotFoundError(f"Input dataset not found: {path}")
-
-    resolved_format = file_format or path.suffix.replace(".", "").lower()
-
-    if resolved_format == "parquet":
-        return pd.read_parquet(path)
-
-    if resolved_format == "csv":
-        return pd.read_csv(path)
-
-    if resolved_format == "json":
-        return pd.read_json(path)
-
-    raise ValueError(f"Unsupported input file format: {resolved_format}")
-
-
-def output_path_with_format(path: Path, output_format: str) -> Path:
-    """
-    Ensure output path has configured suffix.
-    """
-
-    suffix = f".{output_format}"
-
-    if path.suffix:
-        return path.with_suffix(suffix)
-
-    return Path(str(path) + suffix)
-
-
-def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None:
-    """
-    Write dataframe to disk.
-    """
-
-    ensure_directory(path.parent)
-
-    if file_format == "parquet":
-        dataframe.to_parquet(path, index=False)
-        return
-
-    if file_format == "csv":
-        dataframe.to_csv(path, index=False)
-        return
-
-    if file_format == "json":
-        dataframe.to_json(path, orient="records", indent=2)
-        return
-
-    raise ValueError(f"Unsupported output file format: {file_format}")
-
-
-def load_input_datasets(
-    runtime: PredictiveAnalyticsRuntime,
-) -> Dict[str, pd.DataFrame]:
-    """
-    Load configured scoring and modeling metadata inputs.
-    """
-
-    logger = runtime.logger
-    inputs_config = runtime.config.get("paths", {}).get("inputs", {})
-
-    datasets: Dict[str, pd.DataFrame] = {}
-
-    logger.info("START: Load Predictive Analytics input datasets")
-
-    for dataset_name, dataset_config in inputs_config.items():
-        raw_path = dataset_config.get("path")
-        file_format = dataset_config.get("format")
-        required = bool(dataset_config.get("required", True))
-
-        if not raw_path:
-            message = f"No path configured for input dataset: {dataset_name}"
-            if required:
-                raise ValueError(message)
-            logger.warning("Skipping optional dataset with no path: %s", dataset_name)
-            continue
-
-        dataset_path = normalize_path(runtime.project_root, raw_path)
-
-        try:
-            dataframe = read_dataset(dataset_path, file_format)
-            datasets[dataset_name] = dataframe
-
-            logger.info(
-                "Loaded input dataset: %s | Rows: %s | Columns: %s | Path: %s",
-                dataset_name,
-                len(dataframe),
-                len(dataframe.columns),
-                dataset_path,
-            )
-
-            add_dataset_record(
-                runtime=runtime,
-                dataset_name=dataset_name,
-                dataset_type="input",
-                status=STATUS_SUCCESS,
-                path=str(dataset_path),
-                row_count=len(dataframe),
-                column_count=len(dataframe.columns),
-                message="Predictive Analytics input dataset loaded successfully.",
-            )
-
-        except Exception as exc:
-            message = f"Failed to load input dataset '{dataset_name}': {exc}"
-
-            if required:
-                add_audit_record(
-                    runtime=runtime,
-                    step_name=f"load_input_dataset:{dataset_name}",
-                    status=STATUS_FAILED,
-                    message=message,
-                    output_path=str(dataset_path),
-                )
-                raise
-
-            logger.warning("Optional input skipped: %s | Reason: %s", dataset_name, exc)
-
-            add_audit_record(
-                runtime=runtime,
-                step_name=f"load_input_dataset:{dataset_name}",
-                status=STATUS_SKIPPED,
-                message=message,
-                output_path=str(dataset_path),
-            )
-
-    logger.info("COMPLETE: Load Predictive Analytics input datasets | Count: %s", len(datasets))
-
-    return datasets
-
-
-###############################################################################
-# Validation Helpers
-###############################################################################
-
-def validate_not_empty(
-    runtime: PredictiveAnalyticsRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-) -> bool:
-    """
-    Validate dataframe is not empty.
-    """
-
-    if dataframe.empty:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="not_empty",
-            status=STATUS_FAILED,
-            message="Dataset is empty.",
-            failed_count=1,
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="not_empty",
-        status=STATUS_SUCCESS,
-        message="Dataset is not empty.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_required_columns(
-    runtime: PredictiveAnalyticsRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    required_columns: Iterable[str],
-) -> bool:
-    """
-    Validate required columns exist.
-    """
-
-    required = list(required_columns)
-    missing = [column for column in required if column not in dataframe.columns]
-
-    if missing:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="required_columns",
-            status=STATUS_FAILED,
-            message=f"Missing required columns: {missing}",
-            failed_count=len(missing),
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="required_columns",
-        status=STATUS_SUCCESS,
-        message="All required columns are present.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_member_key_not_null(
-    runtime: PredictiveAnalyticsRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    member_key: str,
-) -> bool:
-    """
-    Validate member key is present and non-null.
-    """
-
-    if member_key not in dataframe.columns:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="member_key_exists",
-            status=STATUS_FAILED,
-            message=f"Missing member key column: {member_key}",
-            failed_count=1,
-        )
-        return False
-
-    null_count = int(dataframe[member_key].isna().sum())
-
-    if null_count > 0:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="member_key_not_null",
-            status=STATUS_FAILED,
-            message=f"Member key contains nulls: {member_key}",
-            failed_count=null_count,
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="member_key_not_null",
-        status=STATUS_SUCCESS,
-        message="Member key is not null.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_inputs(
-    runtime: PredictiveAnalyticsRuntime,
+def validate_model_score_inputs(
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> None:
     """
-    Validate loaded inputs and model score registry column contracts.
+    Purpose
+    -------
+    Validate configured model scoring input datasets.
+
+    Parameters
+    ----------
+    runtime:
+        Predictive Analytics runtime.
+
+    datasets:
+        Loaded scoring and model metadata datasets.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    ValidationError
+        Raised when required scoring datasets or scoring columns are missing.
+
+    Notes
+    -----
+    Predictive Analytics depends on scoring outputs already produced by the
+    Modeling Layer. This function enforces the boundary that scoring assets must
+    already exist and must contain the configured score, prediction, and tier
+    columns.
     """
 
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-
-    for dataset_name, dataframe in datasets.items():
-        validate_not_empty(runtime, dataframe, dataset_name)
-
-        if member_key in dataframe.columns:
-            validate_member_key_not_null(runtime, dataframe, dataset_name, member_key)
 
     for model_key, model_config in runtime.config.get("model_score_registry", {}).items():
         if not bool(model_config.get("enabled", True)):
@@ -756,15 +264,10 @@ def validate_inputs(
         source_dataset = model_config.get("source_dataset")
 
         if source_dataset not in datasets:
-            add_validation_record(
-                runtime=runtime,
-                dataset_name=source_dataset,
-                rule_name="model_score_dataset_exists",
-                status=STATUS_FAILED,
-                message=f"Model scoring dataset not loaded for model: {model_key}",
-                failed_count=1,
+            raise ValidationError(
+                f"Model scoring dataset not loaded for model '{model_key}': "
+                f"{source_dataset}"
             )
-            continue
 
         score_df = datasets[source_dataset]
 
@@ -779,18 +282,21 @@ def validate_inputs(
             "scored_at_utc",
         ]
 
-        validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=score_df,
             dataset_name=source_dataset,
             required_columns=required_columns,
+            source_layer="Modeling Layer - Scoring",
+            source_dataset=source_dataset,
         )
 
-    add_audit_record(
+    add_success_audit(
         runtime=runtime,
-        step_name="validate_inputs",
-        status=STATUS_SUCCESS,
-        message="Predictive Analytics input validation completed.",
+        step_name="validate_model_score_inputs",
+        message="Predictive Analytics scoring inputs validated successfully.",
+        source_layer="Modeling Layer - Scoring",
+        source_dataset="data/scoring",
     )
 
 
@@ -799,17 +305,38 @@ def validate_inputs(
 ###############################################################################
 
 def build_unified_prediction_registry(
-    runtime: PredictiveAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build unified long-format prediction registry.
 
-    Output grain:
-        One row per member per model.
+    Parameters
+    ----------
+    runtime:
+        Predictive Analytics runtime.
+
+    datasets:
+        Loaded scoring datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Unified prediction registry.
+
+    Raises
+    ------
+    ValidationError
+        Raised when an enabled scoring source is missing required columns.
+
+    Notes
+    -----
+    Output grain is one row per member per model.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("unified_prediction_registry", {})
 
     if not bool(config.get("enabled", True)):
@@ -817,7 +344,7 @@ def build_unified_prediction_registry(
         return pd.DataFrame()
 
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-    registry_rows: List[pd.DataFrame] = []
+    registry_frames: List[pd.DataFrame] = []
 
     logger.info("START: Build unified prediction registry")
 
@@ -837,33 +364,34 @@ def build_unified_prediction_registry(
             rule_group="model_score_registry",
             rule_name=model_key,
             rule_type="scoring_output_standardization",
-            description=f"Standardize scoring output for {model_name}",
+            description=f"Standardize scoring output for {model_name}.",
             source_dataset=source_dataset,
+            source_layer="Modeling Layer - Scoring",
             rule_config=model_config,
         )
 
         if source_dataset not in datasets:
-            raise ValueError(f"Scoring source dataset missing: {source_dataset}")
+            raise ValidationError(f"Scoring source dataset missing: {source_dataset}")
 
         source_df = datasets[source_dataset]
 
-        required_columns = [
-            member_key,
-            score_column,
-            prediction_column,
-            tier_column,
-            "modeling_layer_run_id",
-            "scored_at_utc",
-        ]
-
-        validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset,
-            required_columns=required_columns,
+            required_columns=[
+                member_key,
+                score_column,
+                prediction_column,
+                tier_column,
+                "modeling_layer_run_id",
+                "scored_at_utc",
+            ],
+            source_layer="Modeling Layer - Scoring",
+            source_dataset=source_dataset,
         )
 
-        standardized = source_df[
+        standardized_df = source_df[
             [
                 member_key,
                 score_column,
@@ -874,7 +402,7 @@ def build_unified_prediction_registry(
             ]
         ].copy()
 
-        standardized = standardized.rename(
+        standardized_df = standardized_df.rename(
             columns={
                 score_column: "prediction_score",
                 prediction_column: "prediction_flag",
@@ -882,23 +410,25 @@ def build_unified_prediction_registry(
             }
         )
 
-        standardized["model_key"] = model_key
-        standardized["model_name"] = model_name
-        standardized["analytics_layer_run_id"] = runtime.run_id
-        standardized["analytics_domain"] = runtime.domain_name
-        standardized["analytics_asset_name"] = "unified_prediction_registry"
-        standardized["built_at_utc"] = utc_now().isoformat()
+        standardized_df["model_key"] = model_key
+        standardized_df["model_name"] = model_name
+        standardized_df["analytics_layer_run_id"] = runtime.context.run_id
+        standardized_df["analytics_domain"] = runtime.domain_name
+        standardized_df["analytics_asset_name"] = "unified_prediction_registry"
+        standardized_df["source_layer"] = "Modeling Layer - Scoring"
+        standardized_df["source_dataset"] = source_dataset
+        standardized_df["built_at_utc"] = utc_now().isoformat()
 
-        registry_rows.append(standardized)
+        registry_frames.append(standardized_df)
 
         logger.info(
             "Standardized scoring output: %s | Rows: %s",
             model_key,
-            len(standardized),
+            len(standardized_df),
         )
 
-    if registry_rows:
-        output_df = pd.concat(registry_rows, ignore_index=True)
+    if registry_frames:
+        output_df = pd.concat(registry_frames, ignore_index=True)
     else:
         output_df = pd.DataFrame(
             columns=[
@@ -913,6 +443,8 @@ def build_unified_prediction_registry(
                 "analytics_layer_run_id",
                 "analytics_domain",
                 "analytics_asset_name",
+                "source_layer",
+                "source_dataset",
                 "built_at_utc",
             ]
         )
@@ -926,6 +458,8 @@ def build_unified_prediction_registry(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Unified prediction registry built successfully.",
+        source_layer="Modeling Layer - Scoring",
+        source_dataset="data/scoring",
     )
 
     logger.info("COMPLETE: Build unified prediction registry | Rows: %s", len(output_df))
@@ -938,17 +472,37 @@ def build_unified_prediction_registry(
 ###############################################################################
 
 def build_member_prediction_summary(
-    runtime: PredictiveAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     unified_registry: pd.DataFrame,
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build member-level prediction summary.
 
-    Output grain:
-        One row per member.
+    Parameters
+    ----------
+    runtime:
+        Predictive Analytics runtime.
+
+    unified_registry:
+        Unified long-format prediction registry.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Member-level prediction summary.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    Output grain is one row per member.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("member_prediction_summary", {})
 
     if not bool(config.get("enabled", True)):
@@ -971,7 +525,7 @@ def build_member_prediction_summary(
         model_count=("model_key", "nunique"),
     ).reset_index()
 
-    top_model = (
+    top_model_df = (
         unified_registry.sort_values(["prediction_score"], ascending=False)
         .drop_duplicates(subset=[member_key])
         [[member_key, "model_key", "model_name", "prediction_score", "prediction_tier"]]
@@ -985,11 +539,13 @@ def build_member_prediction_summary(
         )
     )
 
-    output_df = output_df.merge(top_model, on=member_key, how="left")
+    output_df = output_df.merge(top_model_df, on=member_key, how="left")
 
-    output_df["analytics_layer_run_id"] = runtime.run_id
+    output_df["analytics_layer_run_id"] = runtime.context.run_id
     output_df["analytics_domain"] = runtime.domain_name
     output_df["analytics_asset_name"] = "member_prediction_summary"
+    output_df["source_layer"] = "Layer 2D - Predictive Analytics"
+    output_df["source_dataset"] = "unified_prediction_registry"
     output_df["built_at_utc"] = utc_now().isoformat()
 
     add_rule_record(
@@ -999,6 +555,7 @@ def build_member_prediction_summary(
         rule_type="aggregation",
         description="Aggregates model scores to one row per member.",
         source_dataset="unified_prediction_registry",
+        source_layer="Layer 2D - Predictive Analytics",
         rule_config=config,
     )
 
@@ -1011,6 +568,8 @@ def build_member_prediction_summary(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Member prediction summary built successfully.",
+        source_layer="Layer 2D - Predictive Analytics",
+        source_dataset="unified_prediction_registry",
     )
 
     logger.info("COMPLETE: Build member prediction summary | Rows: %s", len(output_df))
@@ -1023,14 +582,37 @@ def build_member_prediction_summary(
 ###############################################################################
 
 def build_high_priority_member_registry(
-    runtime: PredictiveAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     member_summary: pd.DataFrame,
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build high-priority member registry using configured priority rules.
+
+    Parameters
+    ----------
+    runtime:
+        Predictive Analytics runtime.
+
+    member_summary:
+        Member-level prediction summary.
+
+    Returns
+    -------
+    pandas.DataFrame
+        High-priority member registry.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    Output grain is one row per priority-qualified member.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("high_priority_member_registry", {})
 
     if not bool(config.get("enabled", True)):
@@ -1064,6 +646,7 @@ def build_high_priority_member_registry(
             rule_type="priority_assignment",
             description=f"Assigns {label} priority.",
             source_dataset="member_prediction_summary",
+            source_layer="Layer 2D - Predictive Analytics",
             rule_config=rule_config,
         )
 
@@ -1084,9 +667,11 @@ def build_high_priority_member_registry(
 
     output_df = output_df[output_df["priority_label"] != "Unassigned"].copy()
 
-    output_df["analytics_layer_run_id"] = runtime.run_id
+    output_df["analytics_layer_run_id"] = runtime.context.run_id
     output_df["analytics_domain"] = runtime.domain_name
     output_df["analytics_asset_name"] = "high_priority_member_registry"
+    output_df["source_layer"] = "Layer 2D - Predictive Analytics"
+    output_df["source_dataset"] = "member_prediction_summary"
     output_df["built_at_utc"] = utc_now().isoformat()
 
     add_dataset_record(
@@ -1098,6 +683,8 @@ def build_high_priority_member_registry(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="High priority member registry built successfully.",
+        source_layer="Layer 2D - Predictive Analytics",
+        source_dataset="member_prediction_summary",
     )
 
     logger.info("COMPLETE: Build high priority member registry | Rows: %s", len(output_df))
@@ -1110,14 +697,37 @@ def build_high_priority_member_registry(
 ###############################################################################
 
 def build_model_risk_distribution(
-    runtime: PredictiveAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     unified_registry: pd.DataFrame,
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build model-level risk distribution.
+
+    Parameters
+    ----------
+    runtime:
+        Predictive Analytics runtime.
+
+    unified_registry:
+        Unified long-format prediction registry.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Model risk distribution.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    Output grain is one row per configured grouping, typically model and tier.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("model_risk_distribution", {})
 
     if not bool(config.get("enabled", True)):
@@ -1137,9 +747,11 @@ def build_model_risk_distribution(
         positive_prediction_count=("prediction_flag", "sum"),
     ).reset_index()
 
-    output_df["analytics_layer_run_id"] = runtime.run_id
+    output_df["analytics_layer_run_id"] = runtime.context.run_id
     output_df["analytics_domain"] = runtime.domain_name
     output_df["analytics_asset_name"] = "model_risk_distribution"
+    output_df["source_layer"] = "Layer 2D - Predictive Analytics"
+    output_df["source_dataset"] = "unified_prediction_registry"
     output_df["built_at_utc"] = utc_now().isoformat()
 
     add_rule_record(
@@ -1149,6 +761,7 @@ def build_model_risk_distribution(
         rule_type="aggregation",
         description="Aggregates prediction registry by model and tier.",
         source_dataset="unified_prediction_registry",
+        source_layer="Layer 2D - Predictive Analytics",
         rule_config=config,
     )
 
@@ -1161,6 +774,8 @@ def build_model_risk_distribution(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Model risk distribution built successfully.",
+        source_layer="Layer 2D - Predictive Analytics",
+        source_dataset="unified_prediction_registry",
     )
 
     logger.info("COMPLETE: Build model risk distribution | Rows: %s", len(output_df))
@@ -1173,15 +788,42 @@ def build_model_risk_distribution(
 ###############################################################################
 
 def build_prediction_model_summary(
-    runtime: PredictiveAnalyticsRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
     unified_registry: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Build prediction model summary by combining modeling registry and scoring stats.
+    Purpose
+    -------
+    Build prediction model summary from model registry and scoring statistics.
+
+    Parameters
+    ----------
+    runtime:
+        Predictive Analytics runtime.
+
+    datasets:
+        Loaded input datasets, including optional model registry.
+
+    unified_registry:
+        Unified prediction registry.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Prediction model summary.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    The model registry is optional. If it is unavailable, scoring statistics are
+    still produced from the unified prediction registry.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("prediction_model_summary", {})
 
     if not bool(config.get("enabled", True)):
@@ -1191,28 +833,30 @@ def build_prediction_model_summary(
     model_registry_name = config.get("source_dataset", "modeling_model_registry")
 
     if model_registry_name in datasets:
-        model_registry = datasets[model_registry_name].copy()
+        model_registry_df = datasets[model_registry_name].copy()
     else:
-        model_registry = pd.DataFrame()
+        model_registry_df = pd.DataFrame()
 
     if unified_registry.empty:
-        score_stats = pd.DataFrame()
+        score_stats_df = pd.DataFrame()
     else:
-        score_stats = unified_registry.groupby(["model_key", "model_name"]).agg(
+        score_stats_df = unified_registry.groupby(["model_key", "model_name"]).agg(
             scored_member_count=("member_id", "nunique"),
             average_prediction_score=("prediction_score", "mean"),
             max_prediction_score=("prediction_score", "max"),
             positive_prediction_count=("prediction_flag", "sum"),
         ).reset_index()
 
-    if not model_registry.empty and "model_key" in model_registry.columns:
-        output_df = model_registry.merge(score_stats, on="model_key", how="left")
+    if not model_registry_df.empty and "model_key" in model_registry_df.columns:
+        output_df = model_registry_df.merge(score_stats_df, on="model_key", how="left")
     else:
-        output_df = score_stats.copy()
+        output_df = score_stats_df.copy()
 
-    output_df["analytics_layer_run_id"] = runtime.run_id
+    output_df["analytics_layer_run_id"] = runtime.context.run_id
     output_df["analytics_domain"] = runtime.domain_name
     output_df["analytics_asset_name"] = "prediction_model_summary"
+    output_df["source_layer"] = "Modeling Layer + Layer 2D - Predictive Analytics"
+    output_df["source_dataset"] = model_registry_name
     output_df["built_at_utc"] = utc_now().isoformat()
 
     add_rule_record(
@@ -1222,6 +866,7 @@ def build_prediction_model_summary(
         rule_type="metadata_enrichment",
         description="Combines model registry metadata with scoring distribution.",
         source_dataset=model_registry_name,
+        source_layer="Modeling Layer",
         rule_config=config,
     )
 
@@ -1234,6 +879,8 @@ def build_prediction_model_summary(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Prediction model summary built successfully.",
+        source_layer="Modeling Layer + Layer 2D - Predictive Analytics",
+        source_dataset=model_registry_name,
     )
 
     logger.info("COMPLETE: Build prediction model summary | Rows: %s", len(output_df))
@@ -1242,238 +889,108 @@ def build_prediction_model_summary(
 
 
 ###############################################################################
-# Metadata Outputs
-###############################################################################
-
-def build_dataset_inventory(runtime: PredictiveAnalyticsRuntime) -> pd.DataFrame:
-    """
-    Build dataset inventory.
-    """
-
-    return pd.DataFrame(runtime.dataset_records)
-
-
-def build_column_dictionary(
-    runtime: PredictiveAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build output column dictionary.
-    """
-
-    rows: List[Dict[str, Any]] = []
-
-    for dataset_name, dataframe in output_assets.items():
-        for column in dataframe.columns:
-            rows.append(
-                {
-                    "run_id": runtime.run_id,
-                    "layer_name": runtime.layer_name,
-                    "domain_name": runtime.domain_name,
-                    "dataset_name": dataset_name,
-                    "column_name": column,
-                    "data_type": str(dataframe[column].dtype),
-                    "non_null_count": int(dataframe[column].notna().sum()),
-                    "null_count": int(dataframe[column].isna().sum()),
-                    "row_count": int(len(dataframe)),
-                    "event_timestamp_utc": utc_now().isoformat(),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-
-def build_rule_catalog(runtime: PredictiveAnalyticsRuntime) -> pd.DataFrame:
-    """
-    Build rule catalog.
-    """
-
-    return pd.DataFrame(runtime.rule_records)
-
-
-def build_execution_summary(
-    runtime: PredictiveAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build execution summary.
-    """
-
-    end_time = utc_now()
-    duration_seconds = (end_time - runtime.start_time_utc).total_seconds()
-
-    failed_validation_count = sum(
-        1 for record in runtime.validation_records
-        if record.get("status") == STATUS_FAILED
-    )
-
-    summary = {
-        "run_id": runtime.run_id,
-        "layer_name": runtime.layer_name,
-        "domain_name": runtime.domain_name,
-        "config_path": str(runtime.config_path),
-        "start_time_utc": runtime.start_time_utc.isoformat(),
-        "end_time_utc": end_time.isoformat(),
-        "duration_seconds": duration_seconds,
-        "output_asset_count": len(output_assets),
-        "audit_record_count": len(runtime.audit_records),
-        "validation_record_count": len(runtime.validation_records),
-        "failed_validation_count": failed_validation_count,
-        "dataset_record_count": len(runtime.dataset_records),
-        "rule_record_count": len(runtime.rule_records),
-        "status": STATUS_SUCCESS if failed_validation_count == 0 else STATUS_WARNING,
-    }
-
-    return pd.DataFrame([summary])
-
-
-###############################################################################
-# Output Writing
-###############################################################################
-
-def get_output_path(
-    runtime: PredictiveAnalyticsRuntime,
-    output_group: str,
-    output_name: str,
-) -> Path:
-    """
-    Resolve configured output path.
-    """
-
-    output_config = runtime.config.get("paths", {}).get(output_group, {})
-    output_entry = output_config.get(output_name)
-
-    if isinstance(output_entry, dict):
-        raw_path = output_entry.get("path")
-    else:
-        raw_path = output_entry
-
-    if not raw_path:
-        raw_path = f"data/analytics_platform/{output_group}/{output_name}"
-
-    return normalize_path(runtime.project_root, raw_path)
-
-
-def write_predictive_outputs(
-    runtime: PredictiveAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write Predictive Analytics outputs.
-    """
-
-    output_format = get_output_format(runtime)
-
-    for output_name, dataframe in output_assets.items():
-        output_path = get_output_path(runtime, "outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote Predictive Analytics output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-        add_audit_record(
-            runtime=runtime,
-            step_name=f"write_output:{output_name}",
-            status=STATUS_SUCCESS,
-            message="Predictive Analytics output written successfully.",
-            row_count=len(dataframe),
-            output_path=str(output_path),
-        )
-
-
-def write_metadata_and_audit_outputs(
-    runtime: PredictiveAnalyticsRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write metadata and audit outputs.
-    """
-
-    output_format = get_output_format(runtime)
-
-    metadata_assets = {
-        "predictive_analytics_dataset_inventory": build_dataset_inventory(runtime),
-        "predictive_analytics_column_dictionary": build_column_dictionary(runtime, output_assets),
-        "predictive_analytics_rule_catalog": build_rule_catalog(runtime),
-    }
-
-    audit_assets = {
-        "predictive_analytics_audit_records": pd.DataFrame(runtime.audit_records),
-        "predictive_analytics_validation_results": pd.DataFrame(runtime.validation_records),
-        "predictive_analytics_execution_summary": build_execution_summary(runtime, output_assets),
-    }
-
-    for output_name, dataframe in metadata_assets.items():
-        output_path = get_output_path(runtime, "metadata_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote metadata output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-    for output_name, dataframe in audit_assets.items():
-        output_path = get_output_path(runtime, "audit_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote audit output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-
-###############################################################################
 # Main Orchestration
 ###############################################################################
 
 def build_predictive_analytics_layer(
     config_path: str = DEFAULT_CONFIG_PATH,
-) -> BuildResult:
+) -> AnalyticsBuildResult:
     """
-    Build complete Predictive Analytics layer.
+    Purpose
+    -------
+    Build the complete Predictive Analytics layer.
+
+    Parameters
+    ----------
+    config_path:
+        Predictive Analytics configuration path.
+
+    Returns
+    -------
+    AnalyticsBuildResult
+        Standard build result containing status, message, row count, and column
+        count.
+
+    Raises
+    ------
+    None
+        Exceptions are captured and returned as a failed AnalyticsBuildResult.
+
+    Notes
+    -----
+    This layer consumes scored model outputs only. It does not train models,
+    score members, or create model artifacts.
     """
 
-    runtime: Optional[PredictiveAnalyticsRuntime] = None
+    runtime: Optional[AnalyticsDomainRuntime] = None
 
     try:
         runtime = initialize_runtime(config_path)
-        logger = runtime.logger
+        logger = runtime.get_logger(LOGGER_NAME)
 
-        logger.info("Configuration path: %s", runtime.config_path)
+        logger.info("=" * 80)
+        logger.info("MedFabric Predictive Analytics started")
+        logger.info("=" * 80)
+        logger.info("Configuration file: %s", runtime.config_file)
         logger.info("Architectural check: Predictive Analytics consumes scoring outputs only.")
 
-        datasets = load_input_datasets(runtime)
-        validate_inputs(runtime, datasets)
+        output_format = get_output_format(
+            runtime=runtime,
+            domain_section=DOMAIN_SECTION,
+        )
 
-        unified_prediction_registry = build_unified_prediction_registry(runtime, datasets)
+        datasets = load_input_datasets(
+            runtime=runtime,
+            input_source_layer_map={
+                "high_cost_scores": "Modeling Layer - Scoring",
+                "readmission_scores": "Modeling Layer - Scoring",
+                "er_utilization_scores": "Modeling Layer - Scoring",
+                "rising_risk_scores": "Modeling Layer - Scoring",
+                "chronic_progression_scores": "Modeling Layer - Scoring",
+                "avoidable_admission_scores": "Modeling Layer - Scoring",
+                "medication_non_adherence_scores": "Modeling Layer - Scoring",
+                "care_gap_closure_scores": "Modeling Layer - Scoring",
+                "modeling_model_registry": "Modeling Layer - Metadata",
+            },
+            key_column_map={
+                "high_cost_scores": "member_id",
+                "readmission_scores": "member_id",
+                "er_utilization_scores": "member_id",
+                "rising_risk_scores": "member_id",
+                "chronic_progression_scores": "member_id",
+                "avoidable_admission_scores": "member_id",
+                "medication_non_adherence_scores": "member_id",
+                "care_gap_closure_scores": "member_id",
+                "modeling_model_registry": "model_key",
+            },
+        )
+
+        validate_model_score_inputs(runtime, datasets)
+
+        unified_prediction_registry = build_unified_prediction_registry(
+            runtime=runtime,
+            datasets=datasets,
+        )
+
         member_prediction_summary = build_member_prediction_summary(
-            runtime,
-            unified_prediction_registry,
+            runtime=runtime,
+            unified_registry=unified_prediction_registry,
         )
+
         high_priority_member_registry = build_high_priority_member_registry(
-            runtime,
-            member_prediction_summary,
+            runtime=runtime,
+            member_summary=member_prediction_summary,
         )
+
         model_risk_distribution = build_model_risk_distribution(
-            runtime,
-            unified_prediction_registry,
+            runtime=runtime,
+            unified_registry=unified_prediction_registry,
         )
+
         prediction_model_summary = build_prediction_model_summary(
-            runtime,
-            datasets,
-            unified_prediction_registry,
+            runtime=runtime,
+            datasets=datasets,
+            unified_registry=unified_prediction_registry,
         )
 
         output_assets: Dict[str, pd.DataFrame] = {
@@ -1484,54 +1001,95 @@ def build_predictive_analytics_layer(
             "prediction_model_summary": prediction_model_summary,
         }
 
-        write_predictive_outputs(runtime, output_assets)
-
-        add_audit_record(
+        write_output_assets(
             runtime=runtime,
-            step_name="build_predictive_analytics_layer",
-            status=STATUS_SUCCESS,
-            message="Predictive Analytics completed successfully.",
+            output_assets=output_assets,
+            output_format=output_format,
         )
 
-        write_metadata_and_audit_outputs(runtime, output_assets)
+        add_success_audit(
+            runtime=runtime,
+            step_name="build_predictive_analytics_layer",
+            message="Predictive Analytics completed successfully.",
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            source_layer="Layer 2D - Predictive Analytics",
+            source_dataset="predictive_analytics_outputs",
+        )
+
+        write_metadata_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            dataset_inventory_name="predictive_analytics_dataset_inventory",
+            column_dictionary_name="predictive_analytics_column_dictionary",
+            rule_catalog_name="predictive_analytics_rule_catalog",
+        )
+
+        write_audit_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            audit_records_name="predictive_analytics_audit_records",
+            validation_results_name="predictive_analytics_validation_results",
+            execution_summary_name="predictive_analytics_execution_summary",
+        )
 
         logger.info("=" * 80)
         logger.info("MedFabric Predictive Analytics completed successfully")
         logger.info("=" * 80)
 
-        return BuildResult(
+        return AnalyticsBuildResult(
             name="predictive_analytics",
             status=STATUS_SUCCESS,
             message="Predictive Analytics completed successfully.",
-            row_count=sum(len(df) for df in output_assets.values()),
-            column_count=sum(len(df.columns) for df in output_assets.values()),
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            column_count=sum(len(dataframe.columns) for dataframe in output_assets.values()),
         )
 
     except Exception as exc:
         if runtime is not None:
-            runtime.logger.error("=" * 80)
-            runtime.logger.error("Predictive Analytics failed")
-            runtime.logger.error("Error: %s", exc)
-            runtime.logger.error("Traceback:\n%s", traceback.format_exc())
-            runtime.logger.error("=" * 80)
+            logger = runtime.get_logger(LOGGER_NAME)
 
-            add_audit_record(
+            logger.error("=" * 80)
+            logger.error("Predictive Analytics failed")
+            logger.error("Error: %s", exc)
+            logger.error("Traceback:\n%s", traceback.format_exc())
+            logger.error("=" * 80)
+
+            add_failed_audit(
                 runtime=runtime,
                 step_name="build_predictive_analytics_layer",
-                status=STATUS_FAILED,
                 message=str(exc),
+                source_layer="Layer 2D - Predictive Analytics",
+                source_dataset="predictive_analytics",
             )
 
             try:
-                write_metadata_and_audit_outputs(runtime, {})
-            except Exception as audit_exc:
-                runtime.logger.error("Failed to write audit outputs: %s", audit_exc)
+                output_format = get_output_format(
+                    runtime=runtime,
+                    domain_section=DOMAIN_SECTION,
+                )
 
-        return BuildResult(
+                write_audit_outputs(
+                    runtime=runtime,
+                    output_assets={},
+                    output_format=output_format,
+                    audit_records_name="predictive_analytics_audit_records",
+                    validation_results_name="predictive_analytics_validation_results",
+                    execution_summary_name="predictive_analytics_execution_summary",
+                )
+            except Exception as audit_exc:
+                logger.error("Failed to write audit outputs: %s", audit_exc)
+
+        return AnalyticsBuildResult(
             name="predictive_analytics",
             status=STATUS_FAILED,
             message=str(exc),
         )
+
+    finally:
+        if runtime is not None:
+            runtime.context.logging.close()
 
 
 ###############################################################################
@@ -1540,10 +1098,22 @@ def build_predictive_analytics_layer(
 
 def main() -> None:
     """
-    Command-line entry point.
+    Purpose
+    -------
+    Command-line entry point for Predictive Analytics.
 
-    Run:
-        python -m src.analytics_platform.predictive_analytics.build_predictive_analytics_layer
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    SystemExit
+        Raised with exit code 1 when execution fails.
     """
 
     config_path = os.environ.get(

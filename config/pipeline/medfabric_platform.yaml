@@ -1,0 +1,553 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     config/pipeline/medfabric_platform.yaml
+#
+# Layer:
+#     Enterprise Pipeline
+#
+# Purpose:
+#     Defines the master orchestration configuration for the complete MedFabric
+#     platform.
+#
+# Business Context:
+#     This file controls execution of the full MedFabric platform from synthetic
+#     raw data generation through executive insights.
+#
+#     The Enterprise Pipeline coordinates platform layers only.
+#
+#     No business rules should be implemented in this file.
+#
+# Architectural Principles:
+#     1. Configuration-driven execution
+#     2. Explicit dependency order
+#     3. Fail-fast behavior by default
+#     4. Centralized audit and metadata
+#     5. No hardcoded execution order in Python
+#
+###############################################################################
+
+
+###############################################################################
+# Project Information
+#
+# These values identify the platform, release, owner, and execution context.
+# They are written into logs, audit records, metadata outputs, and execution
+# summaries.
+###############################################################################
+
+project:
+
+  project_name: "MedFabric"
+
+  platform_name: "Enterprise Healthcare Data & AI Platform"
+
+  platform_version: "2.0"
+
+  release: "Release 2"
+
+  pipeline_name: "Enterprise Pipeline"
+
+  layer_name: "Master Platform Orchestrator"
+
+  description: >
+    Enterprise orchestration layer responsible for executing all MedFabric
+    platform layers from synthetic data generation through executive insights.
+
+  owner: "MedFabric"
+
+  organization: "Portfolio Project"
+
+  timezone: "UTC"
+
+
+###############################################################################
+# Pipeline Execution
+#
+# Controls master pipeline behavior.
+#
+# Important:
+#   - fail_fast true means the pipeline stops after the first failed layer.
+#   - execution_mode is sequential for traceability and easier debugging.
+#   - metadata, audit, validation, and execution summaries should remain enabled.
+###############################################################################
+
+pipeline:
+
+  enabled: true
+
+  continue_on_failure: false
+
+  fail_fast: true
+
+  stop_after_first_failure: true
+
+  validate_before_execution: true
+
+  validate_after_execution: true
+
+  write_execution_summary: true
+
+  write_metadata: true
+
+  write_audit: true
+
+  write_validation_results: true
+
+  collect_execution_statistics: true
+
+  collect_runtime_metrics: true
+
+  capture_dataset_inventory: true
+
+  capture_layer_status: true
+
+  capture_duration_statistics: true
+
+  capture_exception_traceback: true
+
+  execution_mode: "sequential"
+
+  retry_failed_layers: false
+
+  maximum_retry_attempts: 0
+
+  allow_partial_success: false
+
+  enable_checkpoints: false
+
+  checkpoint_frequency: "layer"
+
+  enable_notifications: false
+
+
+###############################################################################
+# Layer Execution Order
+#
+# This section is the single source of truth for platform execution order.
+#
+# Dependency Chain:
+#
+#   Raw Data Generation
+#        ↓
+#   Ingestion / Bronze
+#        ↓
+#   Silver
+#        ↓
+#   Gold
+#        ↓
+#   Feature Store
+#        ↓
+#   Modeling
+#        ↓
+#   Semantic Layer
+#        ↓
+#   Analytics Platform
+#        ↓
+#   Insights Platform
+#
+# Notes:
+#   - The Pipeline orchestrator should never hardcode this order.
+#   - Each module should remain independently executable.
+#   - Bronze remains the data storage tier; ingestion is the process that builds it.
+###############################################################################
+
+layers:
+
+  ###########################################################################
+  # Data Generation
+  #
+  # Builds synthetic raw healthcare datasets under:
+  #     data/raw/
+  #
+  # Produces foundational entities and raw source-like datasets used by the
+  # ingestion layer.
+  ###########################################################################
+
+  - name: data_generation
+    enabled: true
+    module: src.data_generation.build_raw_data
+    description: Synthetic healthcare raw data generation
+
+  ###########################################################################
+  # Ingestion
+  #
+  # Builds the Bronze data tier under:
+  #     data/bronze/
+  #
+  # This layer standardizes raw source files into ingestion-controlled Bronze
+  # datasets while preserving source-like structure and lineage metadata.
+  ###########################################################################
+
+  - name: ingestion
+    enabled: true
+    module: src.ingestion.build_ingestion_layer
+    description: Bronze ingestion layer
+
+  ###########################################################################
+  # Silver
+  #
+  # Builds conformed dimensional and fact datasets under:
+  #     data/silver/
+  #
+  # This layer creates standardized, cleansed, analytics-ready relational
+  # structures used by Gold.
+  ###########################################################################
+
+  - name: silver
+    enabled: true
+    module: src.silver.build_silver_layer
+    description: Silver conformed data layer
+
+  ###########################################################################
+  # Gold
+  #
+  # Builds business-ready analytics marts under:
+  #     data/gold/
+  #
+  # Required downstream by:
+  #     - Feature Store
+  #     - Semantic Layer
+  #     - Analytics Platform
+  ###########################################################################
+
+  - name: gold
+    enabled: true
+    module: src.gold.build_gold_layer
+    description: Gold analytics-ready data layer
+
+  ###########################################################################
+  # Feature Store
+  #
+  # Builds reusable member-level and domain-level feature groups under:
+  #     data/features/
+  #
+  # Requires Gold outputs such as:
+  #     data/gold/member_360.parquet
+  ###########################################################################
+
+  - name: feature_store
+    enabled: true
+    module: src.feature_store.build_feature_store
+    description: Enterprise feature engineering
+
+  ###########################################################################
+  # Modeling
+  #
+  # Builds predictive models, model metrics, feature importance outputs, and
+  # scored member datasets.
+  #
+  # Uses Feature Store outputs as primary model input.
+  ###########################################################################
+
+  - name: modeling
+    enabled: true
+    module: src.modeling.build_modeling_layer
+    description: Predictive modeling
+
+  ###########################################################################
+  # Semantic Layer
+  #
+  # Builds governed semantic definitions and business-friendly analytical
+  # views over Gold, Feature Store, and scoring outputs.
+  ###########################################################################
+
+  - name: semantic_layer
+    enabled: true
+    module: src.semantic_layer.build_semantic_layer
+    description: Enterprise semantic model
+
+  ###########################################################################
+  # Analytics Platform
+  #
+  # Builds Layer 2 analytical domains:
+  #     - Population Health
+  #     - Clinical Analytics
+  #     - Quality Analytics
+  #     - Predictive Analytics
+  #     - Provider Analytics
+  #     - Care Management
+  #     - Value-Based Care
+  ###########################################################################
+
+  - name: analytics_platform
+    enabled: true
+    module: src.analytics_platform.build_analytics_platform
+    description: Layer 2 analytics platform
+
+  ###########################################################################
+  # Insights Platform
+  #
+  # Builds Layer 3 reporting and executive insight outputs:
+  #     - Executive Insights
+  #     - Financial Reporting
+  #     - Clinical Reporting
+  #     - Population Reporting
+  #     - Provider Reporting
+  #     - Quality Reporting
+  #     - Care Management Reporting
+  #     - Value-Based Care Reporting
+  ###########################################################################
+
+  - name: insights_platform
+    enabled: true
+    module: src.insights.build_insights_platform
+    description: Layer 3 reporting platform
+
+
+###############################################################################
+# Dependency Validation
+#
+# Controls dependency checks before and during execution.
+#
+# These settings are intended to prevent downstream layers from running when
+# required upstream files, configuration files, metadata outputs, or audit
+# outputs are missing.
+###############################################################################
+
+dependencies:
+
+  enforce_layer_dependencies: true
+
+  verify_required_outputs: true
+
+  verify_input_datasets: true
+
+  verify_configuration_files: true
+
+  verify_output_directories: true
+
+  verify_metadata_outputs: true
+
+  verify_audit_outputs: true
+
+
+###############################################################################
+# Runtime Configuration
+#
+# Controls runtime identity and environment metadata.
+#
+# Runtime values are written into:
+#     - pipeline logs
+#     - execution summaries
+#     - audit records
+#     - metadata records
+###############################################################################
+
+runtime:
+
+  generate_run_id: true
+
+  include_timestamp: true
+
+  timestamp_format: "%Y%m%d_%H%M%S"
+
+  include_hostname: true
+
+  include_platform_version: true
+
+  include_python_version: true
+
+  include_execution_environment: true
+
+
+###############################################################################
+# Logging
+#
+# Controls Enterprise Pipeline logging.
+#
+# Logs are written to:
+#     logs/pipeline/medfabric_pipeline.log
+#
+# Module-level layers may also write their own logs under logs/modules.
+###############################################################################
+
+logging:
+
+  enabled: true
+
+  level: INFO
+
+  console_logging: true
+
+  file_logging: true
+
+  include_run_id: true
+
+  include_layer_name: true
+
+  include_execution_time: true
+
+  include_duration: true
+
+  include_traceback: true
+
+  log_directory: logs/pipeline
+
+  log_file_name: medfabric_pipeline.log
+
+
+###############################################################################
+# Validation
+#
+# Controls platform validation behavior.
+#
+# Validation should occur:
+#     - before execution
+#     - after execution
+#     - after each layer result is returned
+###############################################################################
+
+validation:
+
+  enabled: true
+
+  validate_configuration: true
+
+  validate_runtime: true
+
+  validate_layer_results: true
+
+  validate_required_outputs: true
+
+  validate_output_files: true
+
+  fail_on_validation_error: true
+
+
+###############################################################################
+# Metadata
+#
+# Controls pipeline metadata generation.
+#
+# Metadata outputs include:
+#     - pipeline dataset inventory
+#     - pipeline column dictionary
+#     - pipeline rule catalog
+###############################################################################
+
+metadata:
+
+  enabled: true
+
+  build_dataset_inventory: true
+
+  build_column_dictionary: true
+
+  build_rule_catalog: true
+
+  build_execution_summary: true
+
+  build_pipeline_history: true
+
+  build_layer_execution_history: true
+
+
+###############################################################################
+# Audit
+#
+# Controls pipeline audit capture.
+#
+# Audit records capture:
+#     - pipeline start
+#     - pipeline completion
+#     - layer start
+#     - layer completion
+#     - warnings
+#     - failures
+###############################################################################
+
+audit:
+
+  enabled: true
+
+  capture_success_events: true
+
+  capture_warning_events: true
+
+  capture_failure_events: true
+
+  capture_layer_start: true
+
+  capture_layer_completion: true
+
+  capture_pipeline_start: true
+
+  capture_pipeline_completion: true
+
+
+###############################################################################
+# Output Paths
+#
+# Defines all Enterprise Pipeline generated artifacts.
+#
+# Do not hardcode these paths inside Python modules.
+###############################################################################
+
+paths:
+
+  outputs:
+
+    pipeline_execution_summary:
+      path: data/pipeline/execution_summary/pipeline_execution_summary
+
+    layer_execution_summary:
+      path: data/pipeline/execution_summary/layer_execution_summary
+
+  metadata_outputs:
+
+    pipeline_dataset_inventory:
+      path: data/pipeline/metadata/pipeline_dataset_inventory
+
+    pipeline_column_dictionary:
+      path: data/pipeline/metadata/pipeline_column_dictionary
+
+    pipeline_rule_catalog:
+      path: data/pipeline/metadata/pipeline_rule_catalog
+
+  audit_outputs:
+
+    pipeline_audit_records:
+      path: data/pipeline/audit/pipeline_audit_records
+
+    pipeline_validation_results:
+      path: data/pipeline/audit/pipeline_validation_results
+
+    pipeline_execution_history:
+      path: data/pipeline/audit/pipeline_execution_history
+
+
+###############################################################################
+# Future Expansion
+#
+# Reserved for future enterprise orchestration capabilities.
+#
+# These are disabled in the current local portfolio implementation.
+###############################################################################
+
+future:
+
+  enable_parallel_execution: false
+
+  enable_distributed_execution: false
+
+  enable_incremental_processing: false
+
+  enable_resume_from_checkpoint: false
+
+  enable_airflow_support: false
+
+  enable_azure_data_factory_support: false
+
+  enable_github_actions_support: false
+
+  enable_container_execution: false
+
+  enable_kubernetes_execution: false
+
+
+###############################################################################
+# End of Configuration
+###############################################################################

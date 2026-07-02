@@ -316,7 +316,7 @@ models:
       source_dataset: "cost_features"
       source_column: "total_paid_amount"
       operator: "greater_than_or_equal"
-      value: 50000
+      value: 122736.145
     score_column: "high_cost_risk_score"
     prediction_column: "high_cost_prediction"
     risk_tier_column: "high_cost_risk_tier"
@@ -331,7 +331,7 @@ models:
       source_dataset: "utilization_features"
       source_column: "total_claims"
       operator: "greater_than_or_equal"
-      value: 8
+      value: 13
     score_column: "readmission_risk_score"
     prediction_column: "readmission_prediction"
     risk_tier_column: "readmission_risk_tier"
@@ -346,7 +346,7 @@ models:
       source_dataset: "utilization_features"
       source_column: "total_claims"
       operator: "greater_than_or_equal"
-      value: 10
+      value: 12
     score_column: "er_utilization_risk_score"
     prediction_column: "er_utilization_prediction"
     risk_tier_column: "er_utilization_risk_tier"
@@ -361,7 +361,7 @@ models:
       source_dataset: "risk_features"
       source_column: "latest_sdoh_risk_score"
       operator: "greater_than_or_equal"
-      value: 7
+      value: 14
     score_column: "rising_risk_score"
     prediction_column: "rising_risk_prediction"
     risk_tier_column: "rising_risk_tier"
@@ -374,9 +374,9 @@ models:
     target_column: "chronic_progression_target"
     target_rule:
       source_dataset: "risk_features"
-      source_column: "clinical_risk_signal"
-      operator: "equals"
-      value: 1
+      source_column: "latest_sdoh_risk_score"
+      operator: "greater_than_or_equal"
+      value: 14
     score_column: "chronic_progression_risk_score"
     prediction_column: "chronic_progression_prediction"
     risk_tier_column: "chronic_progression_risk_tier"
@@ -391,7 +391,7 @@ models:
       source_dataset: "pharmacy_features"
       source_column: "total_pharmacy_claims"
       operator: "less_than"
-      value: 2
+      value: 8
     score_column: "medication_non_adherence_risk_score"
     prediction_column: "medication_non_adherence_prediction"
     risk_tier_column: "medication_non_adherence_risk_tier"

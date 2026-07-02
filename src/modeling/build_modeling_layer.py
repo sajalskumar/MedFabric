@@ -33,6 +33,18 @@
 #         models/
 #         data/metadata/
 #
+# Important Modeling Standard:
+#     Columns used to generate synthetic target labels must NOT be used as model
+#     training features. Keeping the target source column in the feature matrix
+#     creates target leakage and causes unrealistic model metrics such as:
+#
+#         accuracy = 1.0
+#         precision = 1.0
+#         recall = 1.0
+#         roc_auc = 1.0
+#
+#     This file explicitly excludes target source columns from model features.
+#
 # Inputs:
 #     config/modeling/modeling.yaml
 #     data/feature_store/*.parquet
@@ -67,7 +79,13 @@ import yaml
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -101,6 +119,17 @@ STATUS_SKIPPED = "SKIPPED"
 class ModelingRuntime:
     """
     Runtime context for one Modeling layer execution.
+
+    Purpose
+    -------
+    Holds run-level metadata, loaded configuration, logger, and in-memory
+    records used to build audit, validation, dataset, model, and feature
+    metadata outputs.
+
+    Notes
+    -----
+    This runtime is intentionally local to the Modeling layer because this file
+    is independent of the Analytics Platform package.
     """
 
     run_id: str
@@ -136,27 +165,50 @@ class BuildResult:
 ###############################################################################
 
 def utc_now() -> datetime:
+    """
+    Return current timezone-aware UTC timestamp.
+    """
+
     return datetime.now(timezone.utc)
 
 
 def generate_run_id() -> str:
+    """
+    Generate timestamp-based run identifier.
+    """
+
     return utc_now().strftime("%Y%m%d_%H%M%S")
 
 
 def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
+    """
+    Resolve configured path relative to project root.
+    """
+
     path = Path(raw_path)
+
     if path.is_absolute():
         return path
+
     return project_root / path
 
 
 def ensure_directory(path: Path) -> None:
+    """
+    Create directory when it does not already exist.
+    """
+
     path.mkdir(parents=True, exist_ok=True)
 
 
 def safe_string(value: Any) -> str:
+    """
+    Convert value to string safely for metadata outputs.
+    """
+
     if value is None:
         return ""
+
     return str(value)
 
 
@@ -164,19 +216,51 @@ def safe_string(value: Any) -> str:
 # Logging
 ###############################################################################
 
-def configure_logging(project_root: Path, config: Dict[str, Any], run_id: str) -> logging.Logger:
+def configure_logging(
+    project_root: Path,
+    config: Dict[str, Any],
+    run_id: str,
+) -> logging.Logger:
     """
     Configure Modeling layer logging.
+
+    Parameters
+    ----------
+    project_root:
+        Repository root.
+
+    config:
+        Loaded Modeling YAML configuration.
+
+    run_id:
+        Current Modeling layer run identifier.
+
+    Returns
+    -------
+    logging.Logger
+        Configured Modeling logger.
+
+    Raises
+    ------
+    OSError
+        Raised when the configured log directory or log file cannot be created.
     """
 
     logging_config = config.get("logging", {})
+
     log_level_name = logging_config.get("level", "INFO")
     log_level = getattr(logging, str(log_level_name).upper(), logging.INFO)
 
-    log_dir = normalize_path(project_root, logging_config.get("module_log_dir", "logs/modules"))
+    log_dir = normalize_path(
+        project_root,
+        logging_config.get("module_log_dir", "logs/modules"),
+    )
     ensure_directory(log_dir)
 
-    log_file_path = log_dir / logging_config.get("log_file_name", "modeling_layer.log")
+    log_file_path = log_dir / logging_config.get(
+        "log_file_name",
+        "modeling_layer.log",
+    )
 
     logger = logging.getLogger("medfabric.modeling")
     logger.setLevel(log_level)
@@ -189,6 +273,10 @@ def configure_logging(project_root: Path, config: Dict[str, Any], run_id: str) -
     )
 
     class RunIdFilter(logging.Filter):
+        """
+        Inject run_id into every log record.
+        """
+
         def filter(self, record: logging.LogRecord) -> bool:
             record.run_id = run_id
             return True
@@ -222,6 +310,24 @@ def configure_logging(project_root: Path, config: Dict[str, Any], run_id: str) -
 def load_yaml_config(config_path: Path) -> Dict[str, Any]:
     """
     Load YAML configuration.
+
+    Parameters
+    ----------
+    config_path:
+        Path to YAML configuration file.
+
+    Returns
+    -------
+    dict
+        Loaded YAML configuration.
+
+    Raises
+    ------
+    FileNotFoundError
+        Raised when the configuration file does not exist.
+
+    ValueError
+        Raised when the configuration is empty or is not a YAML mapping.
     """
 
     if not config_path.exists():
@@ -242,6 +348,20 @@ def load_yaml_config(config_path: Path) -> Dict[str, Any]:
 def validate_config(config: Dict[str, Any]) -> None:
     """
     Validate required Modeling configuration sections.
+
+    Parameters
+    ----------
+    config:
+        Loaded Modeling YAML configuration.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    ValueError
+        Raised when required configuration sections are missing or invalid.
     """
 
     errors: List[str] = []
@@ -265,14 +385,25 @@ def validate_config(config: Dict[str, Any]) -> None:
             errors.append(f"Missing required configuration section: {section}")
 
     paths = config.get("paths", {})
+
     if not isinstance(paths, dict):
         errors.append("Configuration section 'paths' must be a dictionary.")
     else:
-        for section in ["inputs", "outputs", "model_outputs", "metadata_outputs", "audit_outputs"]:
+        for section in [
+            "inputs",
+            "outputs",
+            "model_outputs",
+            "metadata_outputs",
+            "audit_outputs",
+        ]:
             if section not in paths:
                 errors.append(f"Missing required configuration section: paths.{section}")
 
-    output_format = config.get("modeling", {}).get("output_format", DEFAULT_OUTPUT_FORMAT)
+    output_format = config.get("modeling", {}).get(
+        "output_format",
+        DEFAULT_OUTPUT_FORMAT,
+    )
+
     if output_format not in SUPPORTED_FILE_FORMATS:
         errors.append(
             f"Unsupported output_format '{output_format}'. "
@@ -289,6 +420,21 @@ def validate_config(config: Dict[str, Any]) -> None:
 def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRuntime:
     """
     Initialize Modeling runtime.
+
+    Parameters
+    ----------
+    config_path_raw:
+        Relative or absolute path to Modeling YAML configuration.
+
+    Returns
+    -------
+    ModelingRuntime
+        Initialized runtime context.
+
+    Raises
+    ------
+    Exception
+        Propagates configuration, path, and logging setup failures.
     """
 
     project_root = Path.cwd()
@@ -337,6 +483,34 @@ def add_audit_record(
     row_count: Optional[int] = None,
     output_path: Optional[str] = None,
 ) -> None:
+    """
+    Add audit record to runtime.
+
+    Parameters
+    ----------
+    runtime:
+        Modeling runtime.
+
+    step_name:
+        Logical processing step.
+
+    status:
+        Step status.
+
+    message:
+        Human-readable audit message.
+
+    row_count:
+        Optional row count.
+
+    output_path:
+        Optional output path.
+
+    Returns
+    -------
+    None
+    """
+
     runtime.audit_records.append(
         {
             "run_id": runtime.run_id,
@@ -360,6 +534,10 @@ def add_validation_record(
     message: str,
     failed_count: Optional[int] = None,
 ) -> None:
+    """
+    Add validation record to runtime.
+    """
+
     runtime.validation_records.append(
         {
             "run_id": runtime.run_id,
@@ -385,6 +563,10 @@ def add_dataset_record(
     column_count: int,
     message: str,
 ) -> None:
+    """
+    Add dataset inventory record.
+    """
+
     runtime.dataset_records.append(
         {
             "run_id": runtime.run_id,
@@ -412,6 +594,10 @@ def add_model_record(
     row_count: int,
     metric_summary: Dict[str, Any],
 ) -> None:
+    """
+    Add model registry record.
+    """
+
     runtime.model_records.append(
         {
             "run_id": runtime.run_id,
@@ -429,7 +615,15 @@ def add_model_record(
     )
 
 
-def add_feature_records(runtime: ModelingRuntime, feature_matrix: pd.DataFrame, member_key: str) -> None:
+def add_feature_records(
+    runtime: ModelingRuntime,
+    feature_matrix: pd.DataFrame,
+    member_key: str,
+) -> None:
+    """
+    Add feature registry records from modeling feature matrix.
+    """
+
     for column in feature_matrix.columns:
         if column == member_key:
             continue
@@ -453,10 +647,21 @@ def add_feature_records(runtime: ModelingRuntime, feature_matrix: pd.DataFrame, 
 ###############################################################################
 
 def get_output_format(runtime: ModelingRuntime) -> str:
-    return runtime.config.get("modeling", {}).get("output_format", DEFAULT_OUTPUT_FORMAT)
+    """
+    Return configured Modeling output format.
+    """
+
+    return runtime.config.get("modeling", {}).get(
+        "output_format",
+        DEFAULT_OUTPUT_FORMAT,
+    )
 
 
 def read_dataset(path: Path, file_format: Optional[str]) -> pd.DataFrame:
+    """
+    Read dataset from disk.
+    """
+
     if not path.exists():
         raise FileNotFoundError(f"Input dataset not found: {path}")
 
@@ -464,8 +669,10 @@ def read_dataset(path: Path, file_format: Optional[str]) -> pd.DataFrame:
 
     if resolved_format == "parquet":
         return pd.read_parquet(path)
+
     if resolved_format == "csv":
         return pd.read_csv(path)
+
     if resolved_format == "json":
         return pd.read_json(path)
 
@@ -473,21 +680,33 @@ def read_dataset(path: Path, file_format: Optional[str]) -> pd.DataFrame:
 
 
 def output_path_with_format(path: Path, output_format: str) -> Path:
+    """
+    Ensure output path has configured suffix.
+    """
+
     suffix = f".{output_format}"
+
     if path.suffix:
         return path.with_suffix(suffix)
+
     return Path(str(path) + suffix)
 
 
 def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None:
+    """
+    Write dataframe to disk.
+    """
+
     ensure_directory(path.parent)
 
     if file_format == "parquet":
         dataframe.to_parquet(path, index=False)
         return
+
     if file_format == "csv":
         dataframe.to_csv(path, index=False)
         return
+
     if file_format == "json":
         dataframe.to_json(path, orient="records", indent=2)
         return
@@ -498,6 +717,11 @@ def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None
 def load_input_datasets(runtime: ModelingRuntime) -> Dict[str, pd.DataFrame]:
     """
     Load configured Feature Store inputs only.
+
+    Notes
+    -----
+    This function must only load Feature Store inputs. Modeling must remain
+    independent from Analytics Platform outputs.
     """
 
     logger = runtime.logger
@@ -513,8 +737,10 @@ def load_input_datasets(runtime: ModelingRuntime) -> Dict[str, pd.DataFrame]:
 
         if not raw_path:
             message = f"No path configured for input dataset: {dataset_name}"
+
             if required:
                 raise ValueError(message)
+
             logger.warning("Skipping optional dataset with no path: %s", dataset_name)
             continue
 
@@ -545,6 +771,7 @@ def load_input_datasets(runtime: ModelingRuntime) -> Dict[str, pd.DataFrame]:
 
         except Exception as exc:
             message = f"Failed to load input dataset '{dataset_name}': {exc}"
+
             if required:
                 add_audit_record(
                     runtime=runtime,
@@ -556,6 +783,7 @@ def load_input_datasets(runtime: ModelingRuntime) -> Dict[str, pd.DataFrame]:
                 raise
 
             logger.warning("Optional input skipped: %s | Reason: %s", dataset_name, exc)
+
             add_audit_record(
                 runtime=runtime,
                 step_name=f"load_input_dataset:{dataset_name}",
@@ -573,25 +801,33 @@ def load_input_datasets(runtime: ModelingRuntime) -> Dict[str, pd.DataFrame]:
 # Validation Helpers
 ###############################################################################
 
-def validate_not_empty(runtime: ModelingRuntime, dataframe: pd.DataFrame, dataset_name: str) -> bool:
+def validate_not_empty(
+    runtime: ModelingRuntime,
+    dataframe: pd.DataFrame,
+    dataset_name: str,
+) -> bool:
+    """
+    Validate dataframe is not empty.
+    """
+
     if dataframe.empty:
         add_validation_record(
-            runtime,
-            dataset_name,
-            "not_empty",
-            STATUS_FAILED,
-            "Dataset is empty.",
-            1,
+            runtime=runtime,
+            dataset_name=dataset_name,
+            rule_name="not_empty",
+            status=STATUS_FAILED,
+            message="Dataset is empty.",
+            failed_count=1,
         )
         return False
 
     add_validation_record(
-        runtime,
-        dataset_name,
-        "not_empty",
-        STATUS_SUCCESS,
-        "Dataset is not empty.",
-        0,
+        runtime=runtime,
+        dataset_name=dataset_name,
+        rule_name="not_empty",
+        status=STATUS_SUCCESS,
+        message="Dataset is not empty.",
+        failed_count=0,
     )
     return True
 
@@ -602,27 +838,31 @@ def validate_required_columns(
     dataset_name: str,
     required_columns: Iterable[str],
 ) -> bool:
+    """
+    Validate required columns exist.
+    """
+
     required = list(required_columns)
     missing = [column for column in required if column not in dataframe.columns]
 
     if missing:
         add_validation_record(
-            runtime,
-            dataset_name,
-            "required_columns",
-            STATUS_FAILED,
-            f"Missing required columns: {missing}",
-            len(missing),
+            runtime=runtime,
+            dataset_name=dataset_name,
+            rule_name="required_columns",
+            status=STATUS_FAILED,
+            message=f"Missing required columns: {missing}",
+            failed_count=len(missing),
         )
         return False
 
     add_validation_record(
-        runtime,
-        dataset_name,
-        "required_columns",
-        STATUS_SUCCESS,
-        "All required columns are present.",
-        0,
+        runtime=runtime,
+        dataset_name=dataset_name,
+        rule_name="required_columns",
+        status=STATUS_SUCCESS,
+        message="All required columns are present.",
+        failed_count=0,
     )
     return True
 
@@ -633,53 +873,71 @@ def validate_member_key_not_null(
     dataset_name: str,
     member_key: str,
 ) -> bool:
+    """
+    Validate member key is present and non-null.
+    """
+
     if member_key not in dataframe.columns:
         add_validation_record(
-            runtime,
-            dataset_name,
-            "member_key_exists",
-            STATUS_FAILED,
-            f"Missing member key column: {member_key}",
-            1,
+            runtime=runtime,
+            dataset_name=dataset_name,
+            rule_name="member_key_exists",
+            status=STATUS_FAILED,
+            message=f"Missing member key column: {member_key}",
+            failed_count=1,
         )
         return False
 
     null_count = int(dataframe[member_key].isna().sum())
+
     if null_count > 0:
         add_validation_record(
-            runtime,
-            dataset_name,
-            "member_key_not_null",
-            STATUS_FAILED,
-            f"Member key contains nulls: {member_key}",
-            null_count,
+            runtime=runtime,
+            dataset_name=dataset_name,
+            rule_name="member_key_not_null",
+            status=STATUS_FAILED,
+            message=f"Member key contains nulls: {member_key}",
+            failed_count=null_count,
         )
         return False
 
     add_validation_record(
-        runtime,
-        dataset_name,
-        "member_key_not_null",
-        STATUS_SUCCESS,
-        "Member key is not null.",
-        0,
+        runtime=runtime,
+        dataset_name=dataset_name,
+        rule_name="member_key_not_null",
+        status=STATUS_SUCCESS,
+        message="Member key is not null.",
+        failed_count=0,
     )
     return True
 
 
-def validate_inputs(runtime: ModelingRuntime, datasets: Dict[str, pd.DataFrame]) -> None:
+def validate_inputs(
+    runtime: ModelingRuntime,
+    datasets: Dict[str, pd.DataFrame],
+) -> None:
+    """
+    Validate loaded input datasets.
+    """
+
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
 
     for dataset_name, dataframe in datasets.items():
         validate_not_empty(runtime, dataframe, dataset_name)
+
         if member_key in dataframe.columns:
-            validate_member_key_not_null(runtime, dataframe, dataset_name, member_key)
+            validate_member_key_not_null(
+                runtime=runtime,
+                dataframe=dataframe,
+                dataset_name=dataset_name,
+                member_key=member_key,
+            )
 
     add_audit_record(
-        runtime,
-        "validate_inputs",
-        STATUS_SUCCESS,
-        "Modeling input validation completed.",
+        runtime=runtime,
+        step_name="validate_inputs",
+        status=STATUS_SUCCESS,
+        message="Modeling input validation completed.",
     )
 
 
@@ -688,24 +946,37 @@ def validate_inputs(runtime: ModelingRuntime, datasets: Dict[str, pd.DataFrame])
 ###############################################################################
 
 def apply_operator(series: pd.Series, operator: str, value: Any) -> pd.Series:
+    """
+    Apply configured comparison operator to a pandas Series.
+    """
+
     if operator == "equals":
         return series == value
+
     if operator == "not_equals":
         return series != value
+
     if operator == "greater_than":
         return series > value
+
     if operator == "greater_than_or_equal":
         return series >= value
+
     if operator == "less_than":
         return series < value
+
     if operator == "less_than_or_equal":
         return series <= value
+
     if operator == "in":
         return series.isin(value)
+
     if operator == "not_in":
         return ~series.isin(value)
+
     if operator == "is_null":
         return series.isna()
+
     if operator == "is_not_null":
         return series.notna()
 
@@ -715,9 +986,6 @@ def apply_operator(series: pd.Series, operator: str, value: Any) -> pd.Series:
 def clean_duplicate_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
     """
     Remove duplicate column names created by joins.
-
-    Pandas merges may create suffixes or duplicate columns. This function keeps
-    the first occurrence to stabilize the modeling matrix.
     """
 
     return dataframe.loc[:, ~dataframe.columns.duplicated()].copy()
@@ -737,8 +1005,37 @@ def prepare_dataset_for_join(
     """
     Prepare one dataset for member-level feature matrix joining.
 
-    Non-key columns that already exist in the matrix are prefixed with the
-    dataset name to avoid collisions.
+    Purpose
+    -------
+    Deduplicate the dataset to member grain, drop configured excluded columns,
+    and prefix colliding non-key columns with dataset name.
+
+    Parameters
+    ----------
+    dataframe:
+        Source dataframe.
+
+    dataset_name:
+        Logical dataset name from configuration.
+
+    member_key:
+        Member identifier column.
+
+    exclude_columns:
+        Columns excluded from the joined modeling matrix.
+
+    existing_columns:
+        Columns already present in the modeling matrix.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Prepared dataframe ready to join.
+
+    Raises
+    ------
+    ValueError
+        Raised when the dataset does not contain the member key.
     """
 
     if member_key not in dataframe.columns:
@@ -747,13 +1044,16 @@ def prepare_dataset_for_join(
     prepared = dataframe.drop_duplicates(subset=[member_key]).copy()
 
     drop_columns = [column for column in exclude_columns if column in prepared.columns]
+
     if drop_columns:
         prepared = prepared.drop(columns=drop_columns)
 
     rename_map: Dict[str, str] = {}
+
     for column in prepared.columns:
         if column == member_key:
             continue
+
         if column in existing_columns:
             rename_map[column] = f"{dataset_name}__{column}"
 
@@ -769,6 +1069,12 @@ def build_feature_matrix(
 ) -> pd.DataFrame:
     """
     Build unified modeling feature matrix from Feature Store datasets.
+
+    Notes
+    -----
+    This function does not remove target leakage columns because target rules
+    are model-specific. Leakage columns are excluded later when final training
+    feature columns are selected.
     """
 
     logger = runtime.logger
@@ -831,7 +1137,7 @@ def build_feature_matrix(
     add_feature_records(runtime, matrix, member_key)
 
     add_dataset_record(
-        runtime,
+        runtime=runtime,
         dataset_name="modeling_feature_matrix",
         dataset_type="modeling_output",
         status=STATUS_SUCCESS,
@@ -851,7 +1157,7 @@ def build_feature_matrix(
 
 
 ###############################################################################
-# Target Generation
+# Target Generation and Leakage Control
 ###############################################################################
 
 def generate_target_for_model(
@@ -863,6 +1169,32 @@ def generate_target_for_model(
     """
     Generate binary target variable using YAML rule.
 
+    Parameters
+    ----------
+    runtime:
+        Modeling runtime.
+
+    feature_matrix:
+        Unified modeling matrix.
+
+    model_key:
+        Model key from configuration.
+
+    model_config:
+        Model configuration.
+
+    Returns
+    -------
+    pandas.Series
+        Binary target label.
+
+    Raises
+    ------
+    ValueError
+        Raised when target source column is missing.
+
+    Notes
+    -----
     The target rule is defined in config/modeling/modeling.yaml.
     """
 
@@ -872,9 +1204,9 @@ def generate_target_for_model(
     value = target_rule.get("value")
 
     if source_column not in feature_matrix.columns:
-        # If joins renamed a duplicate column, try dataset-prefixed column.
         source_dataset = target_rule.get("source_dataset")
         prefixed_column = f"{source_dataset}__{source_column}"
+
         if prefixed_column in feature_matrix.columns:
             source_column = prefixed_column
         else:
@@ -883,7 +1215,51 @@ def generate_target_for_model(
             )
 
     mask = apply_operator(feature_matrix[source_column], operator, value)
+
     return mask.astype(int)
+
+
+def get_target_source_columns(models_config: Dict[str, Any]) -> List[str]:
+    """
+    Collect target source columns used to generate labels.
+
+    Purpose
+    -------
+    Identify columns that directly define target labels so they can be excluded
+    from model training features.
+
+    Parameters
+    ----------
+    models_config:
+        Configured models from modeling.yaml.
+
+    Returns
+    -------
+    list[str]
+        Unique target source columns and possible dataset-prefixed variants.
+
+    Notes
+    -----
+    This is the core target-leakage prevention logic.
+    """
+
+    source_columns: List[str] = []
+
+    for model_config in models_config.values():
+        if not bool(model_config.get("enabled", True)):
+            continue
+
+        target_rule = model_config.get("target_rule", {})
+        source_column = target_rule.get("source_column")
+        source_dataset = target_rule.get("source_dataset")
+
+        if source_column:
+            source_columns.append(source_column)
+
+        if source_dataset and source_column:
+            source_columns.append(f"{source_dataset}__{source_column}")
+
+    return sorted(set(source_columns))
 
 
 def build_target_summary(
@@ -921,13 +1297,18 @@ def build_target_summary(
         )
 
         add_validation_record(
-            runtime,
+            runtime=runtime,
             dataset_name="target_summary",
             rule_name=f"target_distribution:{column}",
-            status=STATUS_SUCCESS if positive_count > 0 and negative_count > 0 else STATUS_WARNING,
+            status=(
+                STATUS_SUCCESS
+                if positive_count > 0 and negative_count > 0
+                else STATUS_WARNING
+            ),
             message=(
                 f"Target distribution for {column}: "
-                f"positive={positive_count}, negative={negative_count}"
+                f"positive={positive_count}, negative={negative_count}, "
+                f"positive_rate={positive_rate:.6f}"
             ),
             failed_count=0 if positive_count > 0 and negative_count > 0 else 1,
         )
@@ -943,15 +1324,44 @@ def get_feature_columns(
     dataframe: pd.DataFrame,
     member_key: str,
     target_columns: List[str],
+    leakage_columns: Optional[List[str]] = None,
 ) -> List[str]:
     """
     Select eligible feature columns.
+
+    Parameters
+    ----------
+    dataframe:
+        Modeling dataframe containing features and targets.
+
+    member_key:
+        Member identifier column.
+
+    target_columns:
+        Generated target columns.
+
+    leakage_columns:
+        Columns used to create target labels and therefore excluded from
+        training features.
+
+    Returns
+    -------
+    list[str]
+        Eligible model feature columns.
+
+    Notes
+    -----
+    Excluding leakage columns prevents models from directly learning the label
+    generation rule.
     """
 
     excluded = set(target_columns)
     excluded.add(member_key)
     excluded.add("modeling_layer_run_id")
     excluded.add("modeling_layer_built_at_utc")
+
+    for column in leakage_columns or []:
+        excluded.add(column)
 
     feature_columns = [
         column for column in dataframe.columns
@@ -980,7 +1390,10 @@ def build_preprocessor(
         (
             "imputer",
             SimpleImputer(
-                strategy=preprocessing_config.get("numeric_imputation_strategy", "median")
+                strategy=preprocessing_config.get(
+                    "numeric_imputation_strategy",
+                    "median",
+                )
             ),
         )
     ]
@@ -1014,7 +1427,9 @@ def build_preprocessor(
         transformers.append(("numeric", Pipeline(numeric_steps), numeric_features))
 
     if categorical_features:
-        transformers.append(("categorical", Pipeline(categorical_steps), categorical_features))
+        transformers.append(
+            ("categorical", Pipeline(categorical_steps), categorical_features)
+        )
 
     return ColumnTransformer(transformers=transformers, remainder="drop")
 
@@ -1043,7 +1458,11 @@ def build_classifier(defaults: Dict[str, Any]) -> RandomForestClassifier:
     )
 
 
-def calculate_metrics(y_true: pd.Series, y_pred: np.ndarray, y_score: np.ndarray) -> Dict[str, Any]:
+def calculate_metrics(
+    y_true: pd.Series,
+    y_pred: np.ndarray,
+    y_score: np.ndarray,
+) -> Dict[str, Any]:
     """
     Calculate classification metrics.
     """
@@ -1063,7 +1482,10 @@ def calculate_metrics(y_true: pd.Series, y_pred: np.ndarray, y_score: np.ndarray
     return metrics
 
 
-def assign_risk_tiers(scores: pd.Series, risk_tiers: Dict[str, Any]) -> pd.Series:
+def assign_risk_tiers(
+    scores: pd.Series,
+    risk_tiers: Dict[str, Any],
+) -> pd.Series:
     """
     Assign configured risk tier labels.
     """
@@ -1086,11 +1508,7 @@ def extract_feature_importance(
     feature_columns: List[str],
 ) -> pd.DataFrame:
     """
-    Extract feature importance.
-
-    For one-hot encoded features, sklearn creates expanded column names. This
-    function attempts to retrieve transformed names. If unavailable, it falls
-    back to input feature columns.
+    Extract feature importance from trained model pipeline.
     """
 
     model = pipeline.named_steps.get("model")
@@ -1106,7 +1524,6 @@ def extract_feature_importance(
         feature_names = feature_columns
 
     importances = model.feature_importances_
-
     length = min(len(feature_names), len(importances))
 
     importance_df = pd.DataFrame(
@@ -1123,11 +1540,26 @@ def extract_feature_importance(
 # Model Output Path Helpers
 ###############################################################################
 
-def get_model_output_config(runtime: ModelingRuntime, model_key: str) -> Dict[str, Any]:
+def get_model_output_config(
+    runtime: ModelingRuntime,
+    model_key: str,
+) -> Dict[str, Any]:
+    """
+    Return configured output paths for one model.
+    """
+
     return runtime.config.get("paths", {}).get("model_outputs", {}).get(model_key, {})
 
 
-def get_output_path(runtime: ModelingRuntime, output_group: str, output_name: str) -> Path:
+def get_output_path(
+    runtime: ModelingRuntime,
+    output_group: str,
+    output_name: str,
+) -> Path:
+    """
+    Resolve configured output path.
+    """
+
     output_config = runtime.config.get("paths", {}).get(output_group, {})
     output_entry = output_config.get(output_name)
 
@@ -1143,7 +1575,12 @@ def get_output_path(runtime: ModelingRuntime, output_group: str, output_name: st
 
 
 def save_pickle_object(obj: Any, path: Path) -> None:
+    """
+    Save Python object as pickle.
+    """
+
     ensure_directory(path.parent)
+
     with path.open("wb") as file:
         pickle.dump(obj, file)
 
@@ -1219,8 +1656,14 @@ def train_and_score_model(
     full_predictions = pipeline.predict(X)
 
     score_column = model_config.get("score_column", f"{model_key}_score")
-    prediction_column = model_config.get("prediction_column", f"{model_key}_prediction")
-    risk_tier_column = model_config.get("risk_tier_column", f"{model_key}_risk_tier")
+    prediction_column = model_config.get(
+        "prediction_column",
+        f"{model_key}_prediction",
+    )
+    risk_tier_column = model_config.get(
+        "risk_tier_column",
+        f"{model_key}_risk_tier",
+    )
 
     scoring_df = pd.DataFrame(
         {
@@ -1265,14 +1708,20 @@ def train_and_score_model(
     output_config = get_model_output_config(runtime, model_key)
 
     model_path = normalize_path(runtime.project_root, output_config.get("model_path"))
+
     metrics_path = output_path_with_format(
         normalize_path(runtime.project_root, output_config.get("metrics_path")),
         "parquet",
     )
+
     feature_importance_path = output_path_with_format(
-        normalize_path(runtime.project_root, output_config.get("feature_importance_path")),
+        normalize_path(
+            runtime.project_root,
+            output_config.get("feature_importance_path"),
+        ),
         "parquet",
     )
+
     scoring_path = output_path_with_format(
         normalize_path(runtime.project_root, output_config.get("scoring_path")),
         get_output_format(runtime),
@@ -1323,6 +1772,11 @@ def train_and_score_enabled_models(
 ) -> Dict[str, pd.DataFrame]:
     """
     Train and score all enabled models.
+
+    Notes
+    -----
+    This function now excludes target source columns from feature_columns.
+    That prevents target leakage from synthetic label generation rules.
     """
 
     logger = runtime.logger
@@ -1339,36 +1793,62 @@ def train_and_score_enabled_models(
             continue
 
         target_column = model_config.get("target_column")
+
         modeling_frame[target_column] = generate_target_for_model(
             runtime=runtime,
             feature_matrix=modeling_frame,
             model_key=model_key,
             model_config=model_config,
         )
+
         target_columns.append(target_column)
 
-    target_summary = build_target_summary(runtime, modeling_frame[[member_key] + target_columns])
+    target_summary = build_target_summary(
+        runtime,
+        modeling_frame[[member_key] + target_columns],
+    )
 
     target_summary_path = output_path_with_format(
         get_output_path(runtime, "outputs", "modeling_target_summary"),
         get_output_format(runtime),
     )
+
     write_dataset(target_summary, target_summary_path, get_output_format(runtime))
 
     logger.info("COMPLETE: Generate model targets | Targets: %s", len(target_columns))
 
-    scoring_outputs: Dict[str, pd.DataFrame] = {}
+    leakage_columns = get_target_source_columns(models_config)
+
+    logger.info(
+        "Target leakage columns excluded from training features: %s",
+        leakage_columns,
+    )
+
+    add_validation_record(
+        runtime=runtime,
+        dataset_name="modeling_feature_matrix",
+        rule_name="target_leakage_columns_excluded",
+        status=STATUS_SUCCESS,
+        message=(
+            "Target source columns excluded from model training features: "
+            f"{leakage_columns}"
+        ),
+        failed_count=0,
+    )
 
     feature_columns = get_feature_columns(
         dataframe=modeling_frame,
         member_key=member_key,
         target_columns=target_columns,
+        leakage_columns=leakage_columns,
     )
 
     logger.info(
         "START: Train and score enabled models | Feature Columns: %s",
         len(feature_columns),
     )
+
+    scoring_outputs: Dict[str, pd.DataFrame] = {}
 
     for model_key, model_config in models_config.items():
         if not bool(model_config.get("enabled", True)):
@@ -1398,10 +1878,21 @@ def train_and_score_enabled_models(
 ###############################################################################
 
 def build_dataset_inventory(runtime: ModelingRuntime) -> pd.DataFrame:
+    """
+    Build dataset inventory.
+    """
+
     return pd.DataFrame(runtime.dataset_records)
 
 
-def build_column_dictionary(runtime: ModelingRuntime, output_assets: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+def build_column_dictionary(
+    runtime: ModelingRuntime,
+    output_assets: Dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """
+    Build output column dictionary.
+    """
+
     rows: List[Dict[str, Any]] = []
 
     for dataset_name, dataframe in output_assets.items():
@@ -1425,19 +1916,35 @@ def build_column_dictionary(runtime: ModelingRuntime, output_assets: Dict[str, p
 
 
 def build_model_registry(runtime: ModelingRuntime) -> pd.DataFrame:
+    """
+    Build model registry.
+    """
+
     return pd.DataFrame(runtime.model_records)
 
 
 def build_feature_registry(runtime: ModelingRuntime) -> pd.DataFrame:
+    """
+    Build feature registry.
+    """
+
     return pd.DataFrame(runtime.feature_records)
 
 
-def build_execution_summary(runtime: ModelingRuntime, scoring_outputs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+def build_execution_summary(
+    runtime: ModelingRuntime,
+    scoring_outputs: Dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """
+    Build Modeling execution summary.
+    """
+
     end_time = utc_now()
     duration_seconds = (end_time - runtime.start_time_utc).total_seconds()
 
     failed_validation_count = sum(
-        1 for record in runtime.validation_records
+        1
+        for record in runtime.validation_records
         if record.get("status") == STATUS_FAILED
     )
 
@@ -1471,12 +1978,17 @@ def write_core_modeling_outputs(
     runtime: ModelingRuntime,
     feature_matrix: pd.DataFrame,
 ) -> None:
+    """
+    Write core Modeling outputs.
+    """
+
     output_format = get_output_format(runtime)
 
     feature_matrix_path = output_path_with_format(
         get_output_path(runtime, "outputs", "modeling_feature_matrix"),
         output_format,
     )
+
     write_dataset(feature_matrix, feature_matrix_path, output_format)
 
     add_audit_record(
@@ -1493,6 +2005,10 @@ def write_metadata_and_audit_outputs(
     runtime: ModelingRuntime,
     scoring_outputs: Dict[str, pd.DataFrame],
 ) -> None:
+    """
+    Write Modeling metadata and audit outputs.
+    """
+
     output_format = get_output_format(runtime)
 
     metadata_assets = {
@@ -1513,6 +2029,7 @@ def write_metadata_and_audit_outputs(
             get_output_path(runtime, "metadata_outputs", output_name),
             output_format,
         )
+
         write_dataset(dataframe, output_path, output_format)
 
         runtime.logger.info(
@@ -1527,6 +2044,7 @@ def write_metadata_and_audit_outputs(
             get_output_path(runtime, "audit_outputs", output_name),
             output_format,
         )
+
         write_dataset(dataframe, output_path, output_format)
 
         runtime.logger.info(

@@ -13,6 +13,33 @@
 #     Clinical Analytics, Quality Analytics, Predictive Analytics, and Provider
 #     Analytics outputs.
 #
+# Architectural Rule:
+#     Care Management consumes already-built upstream analytics outputs.
+#
+#     This file does NOT generate raw data.
+#     This file does NOT build Silver dimensional models.
+#     This file does NOT train predictive models.
+#     This file does NOT score members.
+#
+# Dependency Flow:
+#     Population Health + Clinical Analytics + Quality Analytics
+#         ↓
+#     Predictive Analytics + Provider Analytics
+#         ↓
+#     Layer 2G - Care Management
+#         ↓
+#     data/analytics_platform/care_management/
+#
+# Architecture:
+#     This file contains Care Management business logic only.
+#
+#     Shared Analytics Platform concerns are handled by:
+#         - src.analytics_platform.common.runtime
+#         - src.analytics_platform.common.io
+#         - src.analytics_platform.common.audit
+#         - src.analytics_platform.common.validation
+#         - src.analytics_platform.common.metadata
+#
 # Inputs:
 #     config/analytics_platform/care_management.yaml
 #
@@ -28,17 +55,41 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import sys
 import traceback
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import yaml
+
+from src.analytics_platform.common.audit import (
+    add_failed_audit,
+    add_success_audit,
+)
+from src.analytics_platform.common.io import (
+    get_output_format,
+    load_input_datasets,
+    write_output_assets,
+)
+from src.analytics_platform.common.metadata import (
+    add_dataset_record,
+    add_rule_record,
+    write_audit_outputs,
+    write_metadata_outputs,
+)
+from src.analytics_platform.common.rules import apply_operator
+from src.analytics_platform.common.runtime import (
+    AnalyticsBuildResult,
+    AnalyticsDomainRuntime,
+    STATUS_FAILED,
+    STATUS_SUCCESS,
+    create_domain_runtime,
+    normalize_config_file,
+    utc_now,
+)
+from src.analytics_platform.common.validation import require_columns
+from src.common.exception_manager import PipelineError, ValidationError
+from src.common.pipeline_context import create_pipeline_context
 
 
 ###############################################################################
@@ -49,205 +100,44 @@ DEFAULT_CONFIG_PATH = "config/analytics_platform/care_management.yaml"
 
 DEFAULT_LAYER_NAME = "Layer 2G - Care Management"
 DEFAULT_DOMAIN_NAME = "Care Management"
-DEFAULT_OUTPUT_FORMAT = "parquet"
+DOMAIN_SECTION = "care_management"
 
-SUPPORTED_FILE_FORMATS = {"parquet", "csv", "json"}
-
-STATUS_SUCCESS = "SUCCESS"
-STATUS_FAILED = "FAILED"
-STATUS_WARNING = "WARNING"
-STATUS_SKIPPED = "SKIPPED"
+LOGGER_NAME = "medfabric.analytics_platform.care_management"
 
 
 ###############################################################################
-# Runtime Data Classes
+# Configuration and Runtime
 ###############################################################################
-
-@dataclass
-class CareManagementRuntime:
-    """
-    Runtime context for one Care Management execution.
-    """
-
-    run_id: str
-    project_root: Path
-    config_path: Path
-    start_time_utc: datetime
-    config: Dict[str, Any]
-    logger: logging.Logger
-    layer_name: str
-    domain_name: str
-    audit_records: List[Dict[str, Any]] = field(default_factory=list)
-    validation_records: List[Dict[str, Any]] = field(default_factory=list)
-    dataset_records: List[Dict[str, Any]] = field(default_factory=list)
-    rule_records: List[Dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
-class BuildResult:
-    """
-    Standard build result returned by Care Management.
-    """
-
-    name: str
-    status: str
-    message: str
-    row_count: int = 0
-    column_count: int = 0
-
-
-###############################################################################
-# General Utilities
-###############################################################################
-
-def utc_now() -> datetime:
-    """
-    Return timezone-aware UTC timestamp.
-    """
-
-    return datetime.now(timezone.utc)
-
-
-def generate_run_id() -> str:
-    """
-    Generate timestamp-based run ID.
-    """
-
-    return utc_now().strftime("%Y%m%d_%H%M%S")
-
-
-def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
-    """
-    Resolve configured path relative to project root.
-    """
-
-    path = Path(raw_path)
-
-    if path.is_absolute():
-        return path
-
-    return project_root / path
-
-
-def ensure_directory(path: Path) -> None:
-    """
-    Create directory if it does not exist.
-    """
-
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def safe_string(value: Any) -> str:
-    """
-    Convert value to safe string.
-    """
-
-    if value is None:
-        return ""
-
-    return str(value)
-
-
-###############################################################################
-# Logging
-###############################################################################
-
-def configure_logging(
-    project_root: Path,
-    config: Dict[str, Any],
-    run_id: str,
-) -> logging.Logger:
-    """
-    Configure Care Management logging.
-    """
-
-    logging_config = config.get("logging", {})
-
-    log_level_name = logging_config.get("level", "INFO")
-    log_level = getattr(logging, str(log_level_name).upper(), logging.INFO)
-
-    log_dir = normalize_path(
-        project_root,
-        logging_config.get("module_log_dir", "logs/modules"),
-    )
-    ensure_directory(log_dir)
-
-    log_file_path = log_dir / logging_config.get(
-        "log_file_name",
-        "care_management.log",
-    )
-
-    logger = logging.getLogger("medfabric.analytics_platform.care_management")
-    logger.setLevel(log_level)
-    logger.handlers.clear()
-    logger.propagate = False
-
-    formatter = logging.Formatter(
-        fmt="[%(asctime)s] [RUN_ID=%(run_id)s] [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    class RunIdFilter(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            record.run_id = run_id
-            return True
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(log_level)
-    stream_handler.setFormatter(formatter)
-    stream_handler.addFilter(RunIdFilter())
-
-    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(RunIdFilter())
-
-    logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
-
-    logger.info("=" * 80)
-    logger.info("MedFabric Care Management started")
-    logger.info("=" * 80)
-    logger.info("Run ID: %s", run_id)
-    logger.info("Log file: %s", log_file_path)
-
-    return logger
-
-
-###############################################################################
-# Configuration
-###############################################################################
-
-def load_yaml_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load YAML configuration.
-    """
-
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as file:
-        config = yaml.safe_load(file)
-
-    if config is None:
-        raise ValueError(f"Configuration file is empty: {config_path}")
-
-    if not isinstance(config, dict):
-        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
-
-    return config
-
 
 def validate_config(config: Dict[str, Any]) -> None:
     """
+    Purpose
+    -------
     Validate required Care Management configuration sections.
-    """
 
-    errors: List[str] = []
+    Parameters
+    ----------
+    config:
+        Loaded Care Management YAML configuration.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    PipelineError
+        Raised when required configuration sections are missing.
+
+    Notes
+    -----
+    Generic YAML loading is handled by ConfigurationManager through
+    PipelineContext. This function validates only the Care Management domain
+    contract.
+    """
 
     required_sections = [
         "care_management",
-        "logging",
         "paths",
         "join_keys",
         "care_management_framework",
@@ -262,528 +152,108 @@ def validate_config(config: Dict[str, Any]) -> None:
         "audit",
     ]
 
-    for section in required_sections:
-        if section not in config:
-            errors.append(f"Missing required configuration section: {section}")
+    missing_sections = [
+        section for section in required_sections if section not in config
+    ]
 
-    paths = config.get("paths", {})
-    if not isinstance(paths, dict):
-        errors.append("Configuration section 'paths' must be a dictionary.")
-    else:
-        for subsection in ["inputs", "outputs", "metadata_outputs", "audit_outputs"]:
-            if subsection not in paths:
-                errors.append(f"Missing required configuration section: paths.{subsection}")
+    paths_config = config.get("paths", {})
 
-    output_format = (
-        config.get("care_management", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
+    for subsection in ["inputs", "outputs", "metadata_outputs", "audit_outputs"]:
+        if subsection not in paths_config:
+            missing_sections.append(f"paths.{subsection}")
+
+    if missing_sections:
+        raise PipelineError(
+            "Care Management configuration validation failed. "
+            f"Missing sections: {missing_sections}"
+        )
+
+
+def initialize_runtime(config_path: str) -> AnalyticsDomainRuntime:
+    """
+    Purpose
+    -------
+    Initialize Care Management runtime using MedFabric PipelineContext.
+
+    Parameters
+    ----------
+    config_path:
+        Care Management configuration path.
+
+    Returns
+    -------
+    AnalyticsDomainRuntime
+        Initialized Care Management runtime.
+
+    Raises
+    ------
+    PipelineError
+        Raised when configuration loading or validation fails.
+
+    Notes
+    -----
+    This follows the same shared framework pattern as Predictive Analytics,
+    Provider Analytics, and Value-Based Care.
+    """
+
+    config_file = normalize_config_file(config_path)
+
+    context = create_pipeline_context(
+        pipeline_name="Layer 2G - Care Management"
     )
 
-    if output_format not in SUPPORTED_FILE_FORMATS:
-        errors.append(
-            f"Unsupported output_format '{output_format}'. "
-            f"Supported formats: {sorted(SUPPORTED_FILE_FORMATS)}"
-        )
-
-    if errors:
-        raise ValueError(
-            "Care Management configuration validation failed:\n"
-            + "\n".join(f"- {error}" for error in errors)
-        )
-
-
-def initialize_runtime(
-    config_path_raw: str = DEFAULT_CONFIG_PATH,
-) -> CareManagementRuntime:
-    """
-    Initialize Care Management runtime.
-    """
-
-    project_root = Path.cwd()
-    config_path = normalize_path(project_root, config_path_raw)
-    run_id = generate_run_id()
-
-    config = load_yaml_config(config_path)
+    config = context.configuration.load_yaml(config_file)
     validate_config(config)
 
-    layer_config = config.get("care_management", {})
-
-    layer_name = layer_config.get("layer_name", DEFAULT_LAYER_NAME)
-    domain_name = layer_config.get("domain_name", DEFAULT_DOMAIN_NAME)
-
-    logger = configure_logging(project_root, config, run_id)
-
-    runtime = CareManagementRuntime(
-        run_id=run_id,
-        project_root=project_root,
-        config_path=config_path,
-        start_time_utc=utc_now(),
+    runtime = create_domain_runtime(
+        context=context,
         config=config,
-        logger=logger,
-        layer_name=layer_name,
-        domain_name=domain_name,
+        config_file=config_file,
+        domain_section=DOMAIN_SECTION,
+        default_layer_name=DEFAULT_LAYER_NAME,
+        default_domain_name=DEFAULT_DOMAIN_NAME,
     )
 
-    add_audit_record(
+    add_success_audit(
         runtime=runtime,
         step_name="initialize_runtime",
-        status=STATUS_SUCCESS,
         message="Care Management runtime initialized successfully.",
+        source_layer="Layer 2 - Analytics Platform",
+        source_dataset=config_file,
     )
 
     return runtime
 
 
 ###############################################################################
-# Audit, Validation, Metadata Records
+# Shared Business Helpers
 ###############################################################################
 
-def add_audit_record(
-    runtime: CareManagementRuntime,
-    step_name: str,
-    status: str,
-    message: str,
-    row_count: Optional[int] = None,
-    output_path: Optional[str] = None,
-) -> None:
+def select_available_columns(dataframe: pd.DataFrame, columns: List[str]) -> List[str]:
     """
-    Add audit record.
-    """
+    Purpose
+    -------
+    Return configured columns that exist in a dataframe.
 
-    runtime.audit_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "step_name": step_name,
-            "status": status,
-            "message": message,
-            "row_count": row_count,
-            "output_path": output_path,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
+    Parameters
+    ----------
+    dataframe:
+        Source dataframe.
 
+    columns:
+        Candidate column list.
 
-def add_validation_record(
-    runtime: CareManagementRuntime,
-    dataset_name: str,
-    rule_name: str,
-    status: str,
-    message: str,
-    failed_count: Optional[int] = None,
-) -> None:
-    """
-    Add validation record.
+    Returns
+    -------
+    list[str]
+        Columns from the candidate list that exist in the dataframe.
+
+    Raises
+    ------
+    None
     """
 
-    runtime.validation_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "rule_name": rule_name,
-            "status": status,
-            "message": message,
-            "failed_count": failed_count,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_dataset_record(
-    runtime: CareManagementRuntime,
-    dataset_name: str,
-    dataset_type: str,
-    status: str,
-    path: Optional[str],
-    row_count: int,
-    column_count: int,
-    message: str,
-) -> None:
-    """
-    Add dataset inventory record.
-    """
-
-    runtime.dataset_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "dataset_type": dataset_type,
-            "status": status,
-            "path": path,
-            "row_count": row_count,
-            "column_count": column_count,
-            "message": message,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_rule_record(
-    runtime: CareManagementRuntime,
-    rule_group: str,
-    rule_name: str,
-    rule_type: str,
-    description: str,
-    source_dataset: str,
-    rule_config: Dict[str, Any],
-) -> None:
-    """
-    Add rule catalog record.
-    """
-
-    runtime.rule_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "rule_group": rule_group,
-            "rule_name": rule_name,
-            "rule_type": rule_type,
-            "description": description,
-            "source_dataset": source_dataset,
-            "rule_config_json": safe_string(rule_config),
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-###############################################################################
-# Dataset IO
-###############################################################################
-
-def get_output_format(runtime: CareManagementRuntime) -> str:
-    """
-    Return configured output format.
-    """
-
-    return (
-        runtime.config.get("care_management", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
-    )
-
-
-def read_dataset(path: Path, file_format: Optional[str]) -> pd.DataFrame:
-    """
-    Read dataset from disk.
-    """
-
-    if not path.exists():
-        raise FileNotFoundError(f"Input dataset not found: {path}")
-
-    resolved_format = file_format or path.suffix.replace(".", "").lower()
-
-    if resolved_format == "parquet":
-        return pd.read_parquet(path)
-
-    if resolved_format == "csv":
-        return pd.read_csv(path)
-
-    if resolved_format == "json":
-        return pd.read_json(path)
-
-    raise ValueError(f"Unsupported input file format: {resolved_format}")
-
-
-def output_path_with_format(path: Path, output_format: str) -> Path:
-    """
-    Ensure output path has configured suffix.
-    """
-
-    suffix = f".{output_format}"
-
-    if path.suffix:
-        return path.with_suffix(suffix)
-
-    return Path(str(path) + suffix)
-
-
-def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None:
-    """
-    Write dataframe to disk.
-    """
-
-    ensure_directory(path.parent)
-
-    if file_format == "parquet":
-        dataframe.to_parquet(path, index=False)
-        return
-
-    if file_format == "csv":
-        dataframe.to_csv(path, index=False)
-        return
-
-    if file_format == "json":
-        dataframe.to_json(path, orient="records", indent=2)
-        return
-
-    raise ValueError(f"Unsupported output file format: {file_format}")
-
-
-def load_input_datasets(
-    runtime: CareManagementRuntime,
-) -> Dict[str, pd.DataFrame]:
-    """
-    Load configured Care Management input datasets.
-    """
-
-    logger = runtime.logger
-    inputs_config = runtime.config.get("paths", {}).get("inputs", {})
-
-    datasets: Dict[str, pd.DataFrame] = {}
-
-    logger.info("START: Load Care Management input datasets")
-
-    for dataset_name, dataset_config in inputs_config.items():
-        raw_path = dataset_config.get("path")
-        file_format = dataset_config.get("format")
-        required = bool(dataset_config.get("required", True))
-
-        if not raw_path:
-            message = f"No path configured for input dataset: {dataset_name}"
-
-            if required:
-                raise ValueError(message)
-
-            logger.warning("Skipping optional dataset with no path: %s", dataset_name)
-            continue
-
-        dataset_path = normalize_path(runtime.project_root, raw_path)
-
-        try:
-            dataframe = read_dataset(dataset_path, file_format)
-            datasets[dataset_name] = dataframe
-
-            logger.info(
-                "Loaded input dataset: %s | Rows: %s | Columns: %s | Path: %s",
-                dataset_name,
-                len(dataframe),
-                len(dataframe.columns),
-                dataset_path,
-            )
-
-            add_dataset_record(
-                runtime=runtime,
-                dataset_name=dataset_name,
-                dataset_type="input",
-                status=STATUS_SUCCESS,
-                path=str(dataset_path),
-                row_count=len(dataframe),
-                column_count=len(dataframe.columns),
-                message="Care Management input dataset loaded successfully.",
-            )
-
-        except Exception as exc:
-            message = f"Failed to load input dataset '{dataset_name}': {exc}"
-
-            if required:
-                add_audit_record(
-                    runtime=runtime,
-                    step_name=f"load_input_dataset:{dataset_name}",
-                    status=STATUS_FAILED,
-                    message=message,
-                    output_path=str(dataset_path),
-                )
-                raise
-
-            logger.warning("Optional input skipped: %s | Reason: %s", dataset_name, exc)
-
-            add_audit_record(
-                runtime=runtime,
-                step_name=f"load_input_dataset:{dataset_name}",
-                status=STATUS_SKIPPED,
-                message=message,
-                output_path=str(dataset_path),
-            )
-
-    logger.info("COMPLETE: Load Care Management input datasets | Count: %s", len(datasets))
-
-    return datasets
-
-
-###############################################################################
-# Validation Helpers
-###############################################################################
-
-def validate_not_empty(
-    runtime: CareManagementRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-) -> bool:
-    """
-    Validate dataframe is not empty.
-    """
-
-    if dataframe.empty:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="not_empty",
-            status=STATUS_FAILED,
-            message="Dataset is empty.",
-            failed_count=1,
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="not_empty",
-        status=STATUS_SUCCESS,
-        message="Dataset is not empty.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_required_columns(
-    runtime: CareManagementRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    required_columns: Iterable[str],
-) -> bool:
-    """
-    Validate required columns exist.
-    """
-
-    required = list(required_columns)
-    missing = [column for column in required if column not in dataframe.columns]
-
-    if missing:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="required_columns",
-            status=STATUS_FAILED,
-            message=f"Missing required columns: {missing}",
-            failed_count=len(missing),
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="required_columns",
-        status=STATUS_SUCCESS,
-        message="All required columns are present.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_member_key_not_null(
-    runtime: CareManagementRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    member_key: str,
-) -> bool:
-    """
-    Validate member key exists and is not null.
-    """
-
-    if member_key not in dataframe.columns:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="member_key_exists",
-            status=STATUS_FAILED,
-            message=f"Missing member key column: {member_key}",
-            failed_count=1,
-        )
-        return False
-
-    null_count = int(dataframe[member_key].isna().sum())
-
-    if null_count > 0:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="member_key_not_null",
-            status=STATUS_FAILED,
-            message=f"Member key contains nulls: {member_key}",
-            failed_count=null_count,
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="member_key_not_null",
-        status=STATUS_SUCCESS,
-        message="Member key is not null.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_inputs(
-    runtime: CareManagementRuntime,
-    datasets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Validate loaded inputs.
-    """
-
-    member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-
-    for dataset_name, dataframe in datasets.items():
-        validate_not_empty(runtime, dataframe, dataset_name)
-
-        if member_key in dataframe.columns:
-            validate_member_key_not_null(runtime, dataframe, dataset_name, member_key)
-
-    add_audit_record(
-        runtime=runtime,
-        step_name="validate_inputs",
-        status=STATUS_SUCCESS,
-        message="Care Management input validation completed.",
-    )
-
-
-###############################################################################
-# Rule Helpers
-###############################################################################
-
-def apply_operator(series: pd.Series, operator: str, value: Any) -> pd.Series:
-    """
-    Apply configured comparison operator.
-    """
-
-    if operator == "equals":
-        return series == value
-
-    if operator == "not_equals":
-        return series != value
-
-    if operator == "greater_than":
-        return series > value
-
-    if operator == "greater_than_or_equal":
-        return series >= value
-
-    if operator == "less_than":
-        return series < value
-
-    if operator == "less_than_or_equal":
-        return series <= value
-
-    if operator == "in":
-        return series.isin(value)
-
-    if operator == "not_in":
-        return ~series.isin(value)
-
-    if operator == "is_null":
-        return series.isna()
-
-    if operator == "is_not_null":
-        return series.notna()
-
-    raise ValueError(f"Unsupported operator: {operator}")
+    return [column for column in columns if column in dataframe.columns]
 
 
 def deduplicate_member_dataset(
@@ -792,7 +262,35 @@ def deduplicate_member_dataset(
     sort_columns: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Deduplicate a member-level dataset.
+
+    Parameters
+    ----------
+    dataframe:
+        Source dataframe.
+
+    member_key:
+        Member key column.
+
+    sort_columns:
+        Optional columns used before deduplication to keep the highest-priority
+        member row.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Deduplicated dataframe.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    If the member key is missing, the dataframe is returned as-is because some
+    upstream summary assets may not be member-grain.
     """
 
     if member_key not in dataframe.columns:
@@ -801,7 +299,10 @@ def deduplicate_member_dataset(
     result = dataframe.copy()
 
     if sort_columns:
-        existing_sort_columns = [column for column in sort_columns if column in result.columns]
+        existing_sort_columns = [
+            column for column in sort_columns if column in result.columns
+        ]
+
         if existing_sort_columns:
             result = result.sort_values(existing_sort_columns, ascending=True)
 
@@ -815,7 +316,37 @@ def merge_member_enrichments(
     member_key: str,
 ) -> pd.DataFrame:
     """
-    Merge member-level enrichment datasets onto base dataframe.
+    Purpose
+    -------
+    Merge member-level enrichment datasets onto a base dataframe.
+
+    Parameters
+    ----------
+    base_df:
+        Base member-level dataframe.
+
+    datasets:
+        Loaded input datasets.
+
+    enrichment_dataset_names:
+        Dataset names to merge.
+
+    member_key:
+        Member key column.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Base dataframe enriched with available member-level datasets.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    Duplicate column names are prefixed with the enrichment dataset name so that
+    information is preserved instead of overwritten.
     """
 
     output_df = base_df.copy()
@@ -830,8 +361,8 @@ def merge_member_enrichments(
             continue
 
         enrichment_deduped = deduplicate_member_dataset(
-            enrichment_df,
-            member_key,
+            dataframe=enrichment_df,
+            member_key=member_key,
             sort_columns=[
                 "program_priority_rank",
                 "priority_rank",
@@ -840,9 +371,12 @@ def merge_member_enrichments(
             ],
         )
 
-        columns_to_keep = [column for column in enrichment_deduped.columns if column != member_key]
+        columns_to_keep = [
+            column for column in enrichment_deduped.columns if column != member_key
+        ]
 
-        rename_map = {}
+        rename_map: Dict[str, str] = {}
+
         for column in columns_to_keep:
             if column in output_df.columns:
                 rename_map[column] = f"{dataset_name}__{column}"
@@ -854,22 +388,127 @@ def merge_member_enrichments(
     return output_df
 
 
+def calculate_group_metric(
+    dataframe: pd.DataFrame,
+    group_by: List[str],
+    metric_name: str,
+    metric_config: Dict[str, Any],
+) -> pd.DataFrame:
+    """
+    Purpose
+    -------
+    Calculate a configured grouped metric.
+
+    Parameters
+    ----------
+    dataframe:
+        Source dataframe.
+
+    group_by:
+        Grouping columns.
+
+    metric_name:
+        Output metric column name.
+
+    metric_config:
+        Metric configuration.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Grouped metric dataframe.
+
+    Raises
+    ------
+    ValidationError
+        Raised when metric configuration is invalid.
+
+    Notes
+    -----
+    Supported calculation types:
+        - count_distinct
+        - mean
+        - sum
+        - count_rows
+    """
+
+    calculation_type = metric_config.get("calculation_type")
+    column = metric_config.get("column")
+
+    if calculation_type == "count_rows":
+        return dataframe.groupby(group_by).size().reset_index(name=metric_name)
+
+    if not column:
+        raise ValidationError(
+            f"Metric '{metric_name}' requires a configured column."
+        )
+
+    if column not in dataframe.columns:
+        raise ValidationError(
+            f"Metric column missing for '{metric_name}': {column}"
+        )
+
+    if calculation_type == "count_distinct":
+        return (
+            dataframe.groupby(group_by)[column]
+            .nunique(dropna=True)
+            .reset_index(name=metric_name)
+        )
+
+    if calculation_type == "mean":
+        return (
+            dataframe.groupby(group_by)[column]
+            .mean()
+            .reset_index(name=metric_name)
+        )
+
+    if calculation_type == "sum":
+        return (
+            dataframe.groupby(group_by)[column]
+            .sum()
+            .reset_index(name=metric_name)
+        )
+
+    raise ValidationError(f"Unsupported calculation_type: {calculation_type}")
+
+
 ###############################################################################
 # Care Programs
 ###############################################################################
 
 def build_care_programs(
-    runtime: CareManagementRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build configured care program assignments.
 
-    Output grain:
-        One row per member per care program.
+    Parameters
+    ----------
+    runtime:
+        Care Management runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Care program assignments.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured source datasets or rule columns are missing.
+
+    Notes
+    -----
+    Output grain is one row per member per care program.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("care_programs", {})
 
     if not bool(config.get("enabled", True)):
@@ -886,6 +525,7 @@ def build_care_programs(
 
     for rule_key, rule_config in config.get("program_rules", {}).items():
         if not bool(rule_config.get("enabled", True)):
+            logger.info("SKIP care program rule disabled: %s", rule_key)
             continue
 
         source_dataset = rule_config.get("source_dataset")
@@ -899,15 +539,17 @@ def build_care_programs(
         description = rule_config.get("description", "")
 
         if source_dataset not in datasets:
-            raise ValueError(f"Care program source dataset missing: {source_dataset}")
+            raise ValidationError(f"Care program source dataset missing: {source_dataset}")
 
         source_df = datasets[source_dataset]
 
-        validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset,
             required_columns=[member_key, rule_column],
+            source_layer="Upstream Analytics",
+            source_dataset=source_dataset,
         )
 
         mask = apply_operator(source_df[rule_column], operator, value)
@@ -915,9 +557,13 @@ def build_care_programs(
         program_df = source_df.loc[mask].copy()
 
         program_df = deduplicate_member_dataset(
-            program_df,
-            member_key,
-            sort_columns=["priority_rank", "segment_priority_rank", "risk_priority_rank"],
+            dataframe=program_df,
+            member_key=member_key,
+            sort_columns=[
+                "priority_rank",
+                "segment_priority_rank",
+                "risk_priority_rank",
+            ],
         )
 
         program_df = merge_member_enrichments(
@@ -932,9 +578,11 @@ def build_care_programs(
         program_df["care_program_category"] = care_program_category
         program_df["program_priority_rank"] = program_priority_rank
         program_df["care_program_description"] = description
-        program_df["analytics_layer_run_id"] = runtime.run_id
+        program_df["analytics_layer_run_id"] = runtime.context.run_id
         program_df["analytics_domain"] = runtime.domain_name
         program_df["analytics_asset_name"] = "care_programs"
+        program_df["source_layer"] = runtime.layer_name
+        program_df["source_dataset"] = source_dataset
         program_df["built_at_utc"] = utc_now().isoformat()
 
         add_rule_record(
@@ -944,6 +592,7 @@ def build_care_programs(
             rule_type="care_program_assignment",
             description=description,
             source_dataset=source_dataset,
+            source_layer="Upstream Analytics",
             rule_config=rule_config,
         )
 
@@ -969,6 +618,8 @@ def build_care_programs(
                 "analytics_layer_run_id",
                 "analytics_domain",
                 "analytics_asset_name",
+                "source_layer",
+                "source_dataset",
                 "built_at_utc",
             ]
         )
@@ -982,6 +633,8 @@ def build_care_programs(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Care programs built successfully.",
+        source_layer=runtime.layer_name,
+        source_dataset="care_program_rules",
     )
 
     logger.info("COMPLETE: Build care programs | Rows: %s", len(output_df))
@@ -993,26 +646,39 @@ def build_care_programs(
 # Case Management Worklist
 ###############################################################################
 
-def select_available_columns(dataframe: pd.DataFrame, columns: List[str]) -> List[str]:
-    """
-    Return columns that exist in dataframe.
-    """
-
-    return [column for column in columns if column in dataframe.columns]
-
-
 def build_case_management_worklist(
-    runtime: CareManagementRuntime,
+    runtime: AnalyticsDomainRuntime,
     care_programs: pd.DataFrame,
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build case management worklist.
 
-    Output grain:
-        One row per member.
+    Parameters
+    ----------
+    runtime:
+        Care Management runtime.
+
+    care_programs:
+        Care program assignment dataframe.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Case management worklist.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    Output grain is one row per member. The highest-priority program assignment
+    becomes the case-management worklist driver.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("case_management_worklist", {})
 
     if not bool(config.get("enabled", True)):
@@ -1025,8 +691,8 @@ def build_case_management_worklist(
         return pd.DataFrame()
 
     priority_columns = select_available_columns(
-        care_programs,
-        config.get("priority_columns", []),
+        dataframe=care_programs,
+        columns=config.get("priority_columns", []),
     )
 
     sort_columns = priority_columns if priority_columns else ["program_priority_rank"]
@@ -1038,8 +704,8 @@ def build_case_management_worklist(
     )
 
     output_columns = select_available_columns(
-        output_df,
-        config.get("output_columns", []),
+        dataframe=output_df,
+        columns=config.get("output_columns", []),
     )
 
     if output_columns:
@@ -1047,9 +713,11 @@ def build_case_management_worklist(
 
     output_df["case_status"] = "Open"
     output_df["case_priority_rank"] = range(1, len(output_df) + 1)
-    output_df["analytics_layer_run_id"] = runtime.run_id
+    output_df["analytics_layer_run_id"] = runtime.context.run_id
     output_df["analytics_domain"] = runtime.domain_name
     output_df["analytics_asset_name"] = "case_management_worklist"
+    output_df["source_layer"] = runtime.layer_name
+    output_df["source_dataset"] = "care_programs"
     output_df["built_at_utc"] = utc_now().isoformat()
 
     add_rule_record(
@@ -1059,6 +727,7 @@ def build_case_management_worklist(
         rule_type="dedupe_and_rank",
         description="Creates one prioritized care management row per member.",
         source_dataset="care_programs",
+        source_layer=runtime.layer_name,
         rule_config=config,
     )
 
@@ -1071,6 +740,8 @@ def build_case_management_worklist(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Case management worklist built successfully.",
+        source_layer=runtime.layer_name,
+        source_dataset="care_programs",
     )
 
     logger.info("COMPLETE: Build case management worklist | Rows: %s", len(output_df))
@@ -1083,14 +754,38 @@ def build_case_management_worklist(
 ###############################################################################
 
 def build_transitions_of_care(
-    runtime: CareManagementRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
-    Build transitions of care candidate registry.
+    Purpose
+    -------
+    Build transitions-of-care candidate registry.
+
+    Parameters
+    ----------
+    runtime:
+        Care Management runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Transitions-of-care candidate registry.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured source datasets or rule columns are missing.
+
+    Notes
+    -----
+    Output grain is one row per member per transition rule.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("transitions_of_care", {})
 
     if not bool(config.get("enabled", True)):
@@ -1101,7 +796,7 @@ def build_transitions_of_care(
     source_dataset = config.get("source_dataset", "high_priority_member_registry")
 
     if source_dataset not in datasets:
-        raise ValueError(f"Transitions of care source dataset missing: {source_dataset}")
+        raise ValidationError(f"Transitions of care source dataset missing: {source_dataset}")
 
     source_df = datasets[source_dataset]
     output_frames: List[pd.DataFrame] = []
@@ -1110,36 +805,43 @@ def build_transitions_of_care(
 
     for rule_key, rule_config in config.get("transition_rules", {}).items():
         if not bool(rule_config.get("enabled", True)):
+            logger.info("SKIP transition rule disabled: %s", rule_key)
             continue
 
         rule_column = rule_config.get("rule_column")
         operator = rule_config.get("operator")
         value = rule_config.get("value")
 
-        validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset,
             required_columns=[member_key, rule_column],
+            source_layer="Layer 2D - Predictive Analytics",
+            source_dataset=source_dataset,
         )
 
         mask = apply_operator(source_df[rule_column], operator, value)
 
         transition_df = source_df.loc[mask].copy()
         transition_df = deduplicate_member_dataset(
-            transition_df,
-            member_key,
+            dataframe=transition_df,
+            member_key=member_key,
             sort_columns=["priority_rank"],
         )
 
         transition_df["transition_key"] = rule_key
         transition_df["transition_name"] = rule_config.get("transition_name", rule_key)
         transition_df["transition_category"] = rule_config.get("transition_category", "")
-        transition_df["transition_priority_rank"] = rule_config.get("transition_priority_rank")
+        transition_df["transition_priority_rank"] = rule_config.get(
+            "transition_priority_rank"
+        )
         transition_df["transition_description"] = rule_config.get("description", "")
-        transition_df["analytics_layer_run_id"] = runtime.run_id
+        transition_df["analytics_layer_run_id"] = runtime.context.run_id
         transition_df["analytics_domain"] = runtime.domain_name
         transition_df["analytics_asset_name"] = "transitions_of_care"
+        transition_df["source_layer"] = "Layer 2D - Predictive Analytics"
+        transition_df["source_dataset"] = source_dataset
         transition_df["built_at_utc"] = utc_now().isoformat()
 
         add_rule_record(
@@ -1149,6 +851,7 @@ def build_transitions_of_care(
             rule_type="transition_candidate_selection",
             description=rule_config.get("description", ""),
             source_dataset=source_dataset,
+            source_layer="Layer 2D - Predictive Analytics",
             rule_config=rule_config,
         )
 
@@ -1174,6 +877,8 @@ def build_transitions_of_care(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Transitions of care built successfully.",
+        source_layer="Layer 2D - Predictive Analytics",
+        source_dataset=source_dataset,
     )
 
     logger.info("COMPLETE: Build transitions of care | Rows: %s", len(output_df))
@@ -1186,14 +891,38 @@ def build_transitions_of_care(
 ###############################################################################
 
 def build_disease_management(
-    runtime: CareManagementRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
-    Build disease management program candidates.
+    Purpose
+    -------
+    Build disease-management program candidates.
+
+    Parameters
+    ----------
+    runtime:
+        Care Management runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Disease-management program candidates.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured source datasets or rule columns are missing.
+
+    Notes
+    -----
+    Output grain is one row per member per disease-management rule.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("disease_management", {})
 
     if not bool(config.get("enabled", True)):
@@ -1204,7 +933,7 @@ def build_disease_management(
     source_dataset = config.get("source_dataset", "condition_registry")
 
     if source_dataset not in datasets:
-        raise ValueError(f"Disease management source dataset missing: {source_dataset}")
+        raise ValidationError(f"Disease management source dataset missing: {source_dataset}")
 
     source_df = datasets[source_dataset]
     output_frames: List[pd.DataFrame] = []
@@ -1213,32 +942,43 @@ def build_disease_management(
 
     for rule_key, rule_config in config.get("disease_rules", {}).items():
         if not bool(rule_config.get("enabled", True)):
+            logger.info("SKIP disease management rule disabled: %s", rule_key)
             continue
 
         rule_column = rule_config.get("rule_column")
         operator = rule_config.get("operator")
         value = rule_config.get("value")
 
-        validate_required_columns(
+        require_columns(
             runtime=runtime,
             dataframe=source_df,
             dataset_name=source_dataset,
             required_columns=[member_key, rule_column],
+            source_layer="Clinical Analytics",
+            source_dataset=source_dataset,
         )
 
         mask = apply_operator(source_df[rule_column], operator, value)
 
         disease_df = source_df.loc[mask].copy()
-        disease_df = deduplicate_member_dataset(disease_df, member_key)
+        disease_df = deduplicate_member_dataset(
+            dataframe=disease_df,
+            member_key=member_key,
+        )
 
         disease_df["disease_rule_key"] = rule_key
-        disease_df["disease_program_name"] = rule_config.get("disease_program_name", rule_key)
+        disease_df["disease_program_name"] = rule_config.get(
+            "disease_program_name",
+            rule_key,
+        )
         disease_df["disease_category"] = rule_config.get("disease_category", "")
         disease_df["disease_priority_rank"] = rule_config.get("disease_priority_rank")
         disease_df["disease_program_description"] = rule_config.get("description", "")
-        disease_df["analytics_layer_run_id"] = runtime.run_id
+        disease_df["analytics_layer_run_id"] = runtime.context.run_id
         disease_df["analytics_domain"] = runtime.domain_name
         disease_df["analytics_asset_name"] = "disease_management"
+        disease_df["source_layer"] = "Clinical Analytics"
+        disease_df["source_dataset"] = source_dataset
         disease_df["built_at_utc"] = utc_now().isoformat()
 
         add_rule_record(
@@ -1248,6 +988,7 @@ def build_disease_management(
             rule_type="disease_program_assignment",
             description=rule_config.get("description", ""),
             source_dataset=source_dataset,
+            source_layer="Clinical Analytics",
             rule_config=rule_config,
         )
 
@@ -1273,6 +1014,8 @@ def build_disease_management(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Disease management built successfully.",
+        source_layer="Clinical Analytics",
+        source_dataset=source_dataset,
     )
 
     logger.info("COMPLETE: Build disease management | Rows: %s", len(output_df))
@@ -1285,14 +1028,38 @@ def build_disease_management(
 ###############################################################################
 
 def build_outreach_tracking(
-    runtime: CareManagementRuntime,
+    runtime: AnalyticsDomainRuntime,
     case_management_worklist: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Build outreach tracking placeholder records.
+    Purpose
+    -------
+    Build outreach tracking records.
+
+    Parameters
+    ----------
+    runtime:
+        Care Management runtime.
+
+    case_management_worklist:
+        Case management worklist dataframe.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Outreach tracking records.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    This creates initialized outreach tracking records that can later be
+    updated by care-management workflow systems.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("outreach_tracking", {})
 
     if not bool(config.get("enabled", True)):
@@ -1305,14 +1072,22 @@ def build_outreach_tracking(
     output_df = case_management_worklist.copy()
 
     output_df["outreach_status"] = config.get("default_outreach_status", "Pending")
-    output_df["outreach_channel"] = config.get("default_outreach_channel", "Care Manager Review")
-    output_df["owner_role"] = config.get("default_owner_role", "Care Management Team")
+    output_df["outreach_channel"] = config.get(
+        "default_outreach_channel",
+        "Care Manager Review",
+    )
+    output_df["owner_role"] = config.get(
+        "default_owner_role",
+        "Care Management Team",
+    )
     output_df["outreach_attempt_count"] = 0
     output_df["last_outreach_date"] = None
     output_df["next_outreach_action"] = "Initial Review"
-    output_df["analytics_layer_run_id"] = runtime.run_id
+    output_df["analytics_layer_run_id"] = runtime.context.run_id
     output_df["analytics_domain"] = runtime.domain_name
     output_df["analytics_asset_name"] = "outreach_tracking"
+    output_df["source_layer"] = runtime.layer_name
+    output_df["source_dataset"] = "case_management_worklist"
     output_df["built_at_utc"] = utc_now().isoformat()
 
     add_rule_record(
@@ -1320,8 +1095,11 @@ def build_outreach_tracking(
         rule_group="outreach_tracking",
         rule_name="default_outreach_tracking",
         rule_type="status_initialization",
-        description="Initializes outreach tracking fields for case management worklist.",
+        description=(
+            "Initializes outreach tracking fields for case management worklist."
+        ),
         source_dataset="case_management_worklist",
+        source_layer=runtime.layer_name,
         rule_config=config,
     )
 
@@ -1334,6 +1112,8 @@ def build_outreach_tracking(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Outreach tracking built successfully.",
+        source_layer=runtime.layer_name,
+        source_dataset="case_management_worklist",
     )
 
     logger.info("COMPLETE: Build outreach tracking | Rows: %s", len(output_df))
@@ -1345,63 +1125,40 @@ def build_outreach_tracking(
 # Program Effectiveness
 ###############################################################################
 
-def calculate_group_metric(
-    dataframe: pd.DataFrame,
-    group_by: List[str],
-    metric_name: str,
-    metric_config: Dict[str, Any],
-) -> pd.DataFrame:
-    """
-    Calculate configured grouped metric.
-    """
-
-    calculation_type = metric_config.get("calculation_type")
-    column = metric_config.get("column")
-
-    if calculation_type == "count_distinct":
-        return (
-            dataframe.groupby(group_by)[column]
-            .nunique(dropna=True)
-            .reset_index(name=metric_name)
-        )
-
-    if calculation_type == "mean":
-        return (
-            dataframe.groupby(group_by)[column]
-            .mean()
-            .reset_index(name=metric_name)
-        )
-
-    if calculation_type == "sum":
-        return (
-            dataframe.groupby(group_by)[column]
-            .sum()
-            .reset_index(name=metric_name)
-        )
-
-    if calculation_type == "count_rows":
-        return (
-            dataframe.groupby(group_by)
-            .size()
-            .reset_index(name=metric_name)
-        )
-
-    raise ValueError(f"Unsupported calculation_type: {calculation_type}")
-
-
 def build_program_effectiveness(
-    runtime: CareManagementRuntime,
+    runtime: AnalyticsDomainRuntime,
     care_programs: pd.DataFrame,
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build program effectiveness summary.
 
-    Current version summarizes assigned members by care program.
-    Future versions can add actual outcome tracking once intervention and
-    follow-up event data exists.
+    Parameters
+    ----------
+    runtime:
+        Care Management runtime.
+
+    care_programs:
+        Care program assignment dataframe.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Program effectiveness summary.
+
+    Raises
+    ------
+    ValidationError
+        Raised when configured grouping or metric columns are missing.
+
+    Notes
+    -----
+    Current version summarizes assigned members by care program. Future versions
+    can add outcome tracking once intervention and follow-up event data exists.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("program_effectiveness", {})
 
     if not bool(config.get("enabled", True)):
@@ -1414,22 +1171,29 @@ def build_program_effectiveness(
     group_by = config.get("group_by", [])
     metrics = config.get("metrics", {})
 
-    validate_required_columns(
+    require_columns(
         runtime=runtime,
         dataframe=care_programs,
         dataset_name="care_programs",
         required_columns=group_by,
+        source_layer=runtime.layer_name,
+        source_dataset="care_programs",
     )
 
     output_df = care_programs[group_by].drop_duplicates().copy()
 
     for metric_name, metric_config in metrics.items():
-        validate_required_columns(
-            runtime=runtime,
-            dataframe=care_programs,
-            dataset_name="care_programs",
-            required_columns=[metric_config.get("column")],
-        )
+        metric_column = metric_config.get("column")
+
+        if metric_config.get("calculation_type") != "count_rows":
+            require_columns(
+                runtime=runtime,
+                dataframe=care_programs,
+                dataset_name="care_programs",
+                required_columns=[metric_column],
+                source_layer=runtime.layer_name,
+                source_dataset="care_programs",
+            )
 
         metric_df = calculate_group_metric(
             dataframe=care_programs,
@@ -1447,12 +1211,15 @@ def build_program_effectiveness(
             rule_type=metric_config.get("calculation_type", ""),
             description=f"Program effectiveness metric: {metric_name}",
             source_dataset="care_programs",
+            source_layer=runtime.layer_name,
             rule_config=metric_config,
         )
 
-    output_df["analytics_layer_run_id"] = runtime.run_id
+    output_df["analytics_layer_run_id"] = runtime.context.run_id
     output_df["analytics_domain"] = runtime.domain_name
     output_df["analytics_asset_name"] = "program_effectiveness"
+    output_df["source_layer"] = runtime.layer_name
+    output_df["source_dataset"] = "care_programs"
     output_df["built_at_utc"] = utc_now().isoformat()
 
     add_dataset_record(
@@ -1464,6 +1231,8 @@ def build_program_effectiveness(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Program effectiveness built successfully.",
+        source_layer=runtime.layer_name,
+        source_dataset="care_programs",
     )
 
     logger.info("COMPLETE: Build program effectiveness | Rows: %s", len(output_df))
@@ -1472,226 +1241,114 @@ def build_program_effectiveness(
 
 
 ###############################################################################
-# Metadata Outputs
-###############################################################################
-
-def build_dataset_inventory(runtime: CareManagementRuntime) -> pd.DataFrame:
-    """
-    Build dataset inventory.
-    """
-
-    return pd.DataFrame(runtime.dataset_records)
-
-
-def build_column_dictionary(
-    runtime: CareManagementRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build output column dictionary.
-    """
-
-    rows: List[Dict[str, Any]] = []
-
-    for dataset_name, dataframe in output_assets.items():
-        for column in dataframe.columns:
-            rows.append(
-                {
-                    "run_id": runtime.run_id,
-                    "layer_name": runtime.layer_name,
-                    "domain_name": runtime.domain_name,
-                    "dataset_name": dataset_name,
-                    "column_name": column,
-                    "data_type": str(dataframe[column].dtype),
-                    "non_null_count": int(dataframe[column].notna().sum()),
-                    "null_count": int(dataframe[column].isna().sum()),
-                    "row_count": int(len(dataframe)),
-                    "event_timestamp_utc": utc_now().isoformat(),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-
-def build_rule_catalog(runtime: CareManagementRuntime) -> pd.DataFrame:
-    """
-    Build rule catalog.
-    """
-
-    return pd.DataFrame(runtime.rule_records)
-
-
-def build_execution_summary(
-    runtime: CareManagementRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build execution summary.
-    """
-
-    end_time = utc_now()
-    duration_seconds = (end_time - runtime.start_time_utc).total_seconds()
-
-    failed_validation_count = sum(
-        1 for record in runtime.validation_records
-        if record.get("status") == STATUS_FAILED
-    )
-
-    summary = {
-        "run_id": runtime.run_id,
-        "layer_name": runtime.layer_name,
-        "domain_name": runtime.domain_name,
-        "config_path": str(runtime.config_path),
-        "start_time_utc": runtime.start_time_utc.isoformat(),
-        "end_time_utc": end_time.isoformat(),
-        "duration_seconds": duration_seconds,
-        "output_asset_count": len(output_assets),
-        "audit_record_count": len(runtime.audit_records),
-        "validation_record_count": len(runtime.validation_records),
-        "failed_validation_count": failed_validation_count,
-        "dataset_record_count": len(runtime.dataset_records),
-        "rule_record_count": len(runtime.rule_records),
-        "status": STATUS_SUCCESS if failed_validation_count == 0 else STATUS_WARNING,
-    }
-
-    return pd.DataFrame([summary])
-
-
-###############################################################################
-# Output Writing
-###############################################################################
-
-def get_output_path(
-    runtime: CareManagementRuntime,
-    output_group: str,
-    output_name: str,
-) -> Path:
-    """
-    Resolve configured output path.
-    """
-
-    output_config = runtime.config.get("paths", {}).get(output_group, {})
-    output_entry = output_config.get(output_name)
-
-    if isinstance(output_entry, dict):
-        raw_path = output_entry.get("path")
-    else:
-        raw_path = output_entry
-
-    if not raw_path:
-        raw_path = f"data/analytics_platform/{output_group}/{output_name}"
-
-    return normalize_path(runtime.project_root, raw_path)
-
-
-def write_care_management_outputs(
-    runtime: CareManagementRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write Care Management outputs.
-    """
-
-    output_format = get_output_format(runtime)
-
-    for output_name, dataframe in output_assets.items():
-        output_path = get_output_path(runtime, "outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote Care Management output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-        add_audit_record(
-            runtime=runtime,
-            step_name=f"write_output:{output_name}",
-            status=STATUS_SUCCESS,
-            message="Care Management output written successfully.",
-            row_count=len(dataframe),
-            output_path=str(output_path),
-        )
-
-
-def write_metadata_and_audit_outputs(
-    runtime: CareManagementRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write metadata and audit outputs.
-    """
-
-    output_format = get_output_format(runtime)
-
-    metadata_assets = {
-        "care_management_dataset_inventory": build_dataset_inventory(runtime),
-        "care_management_column_dictionary": build_column_dictionary(runtime, output_assets),
-        "care_management_rule_catalog": build_rule_catalog(runtime),
-    }
-
-    audit_assets = {
-        "care_management_audit_records": pd.DataFrame(runtime.audit_records),
-        "care_management_validation_results": pd.DataFrame(runtime.validation_records),
-        "care_management_execution_summary": build_execution_summary(runtime, output_assets),
-    }
-
-    for output_name, dataframe in metadata_assets.items():
-        output_path = get_output_path(runtime, "metadata_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote metadata output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-    for output_name, dataframe in audit_assets.items():
-        output_path = get_output_path(runtime, "audit_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote audit output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-
-###############################################################################
 # Main Orchestration
 ###############################################################################
 
 def build_care_management_layer(
     config_path: str = DEFAULT_CONFIG_PATH,
-) -> BuildResult:
+) -> AnalyticsBuildResult:
     """
-    Build complete Care Management layer.
+    Purpose
+    -------
+    Build the complete Care Management layer.
+
+    Parameters
+    ----------
+    config_path:
+        Care Management configuration path.
+
+    Returns
+    -------
+    AnalyticsBuildResult
+        Standard build result containing status, message, row count, and column
+        count.
+
+    Raises
+    ------
+    None
+        Exceptions are captured and returned as a failed AnalyticsBuildResult.
+
+    Notes
+    -----
+    This layer consumes configured upstream analytics outputs and produces care
+    programs, worklists, transitions-of-care registries, disease management
+    candidates, outreach tracking records, and program effectiveness summaries.
     """
 
-    runtime: Optional[CareManagementRuntime] = None
+    runtime: Optional[AnalyticsDomainRuntime] = None
 
     try:
         runtime = initialize_runtime(config_path)
-        logger = runtime.logger
+        logger = runtime.get_logger(LOGGER_NAME)
 
-        logger.info("Configuration path: %s", runtime.config_path)
+        logger.info("=" * 80)
+        logger.info("MedFabric Care Management started")
+        logger.info("=" * 80)
+        logger.info("Configuration file: %s", runtime.config_file)
 
-        datasets = load_input_datasets(runtime)
-        validate_inputs(runtime, datasets)
+        output_format = get_output_format(
+            runtime=runtime,
+            domain_section=DOMAIN_SECTION,
+        )
 
-        care_programs = build_care_programs(runtime, datasets)
-        case_management_worklist = build_case_management_worklist(runtime, care_programs)
-        transitions_of_care = build_transitions_of_care(runtime, datasets)
-        disease_management = build_disease_management(runtime, datasets)
-        outreach_tracking = build_outreach_tracking(runtime, case_management_worklist)
-        program_effectiveness = build_program_effectiveness(runtime, care_programs)
+        member_key = runtime.config.get("join_keys", {}).get(
+            "member_key",
+            "member_id",
+        )
+        provider_key = runtime.config.get("join_keys", {}).get(
+            "provider_key",
+            "provider_id",
+        )
+
+        datasets = load_input_datasets(
+            runtime=runtime,
+            input_source_layer_map={
+                "high_priority_member_registry": "Layer 2D - Predictive Analytics",
+                "member_prediction_summary": "Layer 2D - Predictive Analytics",
+                "population_segment_registry": "Population Health Analytics",
+                "condition_registry": "Clinical Analytics",
+                "quality_gap_registry": "Quality Analytics",
+                "provider_performance_summary": "Layer 2F - Provider Analytics",
+            },
+            key_column_map={
+                "high_priority_member_registry": member_key,
+                "member_prediction_summary": member_key,
+                "population_segment_registry": member_key,
+                "condition_registry": member_key,
+                "quality_gap_registry": member_key,
+                "provider_performance_summary": provider_key,
+            },
+        )
+
+        care_programs = build_care_programs(
+            runtime=runtime,
+            datasets=datasets,
+        )
+
+        case_management_worklist = build_case_management_worklist(
+            runtime=runtime,
+            care_programs=care_programs,
+        )
+
+        transitions_of_care = build_transitions_of_care(
+            runtime=runtime,
+            datasets=datasets,
+        )
+
+        disease_management = build_disease_management(
+            runtime=runtime,
+            datasets=datasets,
+        )
+
+        outreach_tracking = build_outreach_tracking(
+            runtime=runtime,
+            case_management_worklist=case_management_worklist,
+        )
+
+        program_effectiveness = build_program_effectiveness(
+            runtime=runtime,
+            care_programs=care_programs,
+        )
 
         output_assets: Dict[str, pd.DataFrame] = {
             "care_programs": care_programs,
@@ -1702,54 +1359,101 @@ def build_care_management_layer(
             "program_effectiveness": program_effectiveness,
         }
 
-        write_care_management_outputs(runtime, output_assets)
-
-        add_audit_record(
+        write_output_assets(
             runtime=runtime,
-            step_name="build_care_management_layer",
-            status=STATUS_SUCCESS,
-            message="Care Management completed successfully.",
+            output_assets=output_assets,
+            output_format=output_format,
         )
 
-        write_metadata_and_audit_outputs(runtime, output_assets)
+        add_success_audit(
+            runtime=runtime,
+            step_name="build_care_management_layer",
+            message="Care Management completed successfully.",
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            source_layer="Layer 2G - Care Management",
+            source_dataset="care_management_outputs",
+        )
+
+        write_metadata_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            dataset_inventory_name="care_management_dataset_inventory",
+            column_dictionary_name="care_management_column_dictionary",
+            rule_catalog_name="care_management_rule_catalog",
+        )
+
+        write_audit_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            audit_records_name="care_management_audit_records",
+            validation_results_name="care_management_validation_results",
+            execution_summary_name="care_management_execution_summary",
+        )
 
         logger.info("=" * 80)
         logger.info("MedFabric Care Management completed successfully")
         logger.info("=" * 80)
 
-        return BuildResult(
-            name="care_management",
+        return AnalyticsBuildResult(
+            name=DOMAIN_SECTION,
             status=STATUS_SUCCESS,
             message="Care Management completed successfully.",
-            row_count=sum(len(df) for df in output_assets.values()),
-            column_count=sum(len(df.columns) for df in output_assets.values()),
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            column_count=sum(
+                len(dataframe.columns) for dataframe in output_assets.values()
+            ),
         )
 
     except Exception as exc:
         if runtime is not None:
-            runtime.logger.error("=" * 80)
-            runtime.logger.error("Care Management failed")
-            runtime.logger.error("Error: %s", exc)
-            runtime.logger.error("Traceback:\n%s", traceback.format_exc())
-            runtime.logger.error("=" * 80)
+            logger = runtime.get_logger(LOGGER_NAME)
 
-            add_audit_record(
+            logger.error("=" * 80)
+            logger.error("Care Management failed")
+            logger.error("Error: %s", exc)
+            logger.error("Traceback:\n%s", traceback.format_exc())
+            logger.error("=" * 80)
+
+            add_failed_audit(
                 runtime=runtime,
                 step_name="build_care_management_layer",
-                status=STATUS_FAILED,
                 message=str(exc),
+                source_layer="Layer 2G - Care Management",
+                source_dataset="care_management",
             )
 
             try:
-                write_metadata_and_audit_outputs(runtime, {})
-            except Exception as audit_exc:
-                runtime.logger.error("Failed to write audit outputs: %s", audit_exc)
+                output_format = get_output_format(
+                    runtime=runtime,
+                    domain_section=DOMAIN_SECTION,
+                )
 
-        return BuildResult(
-            name="care_management",
+                write_audit_outputs(
+                    runtime=runtime,
+                    output_assets={},
+                    output_format=output_format,
+                    audit_records_name="care_management_audit_records",
+                    validation_results_name="care_management_validation_results",
+                    execution_summary_name="care_management_execution_summary",
+                )
+
+            except Exception as audit_exc:
+                logger.error(
+                    "Failed to write Care Management audit outputs: %s",
+                    audit_exc,
+                )
+
+        return AnalyticsBuildResult(
+            name=DOMAIN_SECTION,
             status=STATUS_FAILED,
             message=str(exc),
         )
+
+    finally:
+        if runtime is not None:
+            runtime.context.logging.close()
 
 
 ###############################################################################
@@ -1758,10 +1462,22 @@ def build_care_management_layer(
 
 def main() -> None:
     """
-    Command-line entry point.
+    Purpose
+    -------
+    Command-line entry point for Care Management.
 
-    Run:
-        python -m src.analytics_platform.care_management.build_care_management_layer
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    SystemExit
+        Raised with exit code 1 when execution fails.
     """
 
     config_path = os.environ.get(

@@ -31,6 +31,25 @@
 #     quality analytics, predictive analytics, care management, provider
 #     analytics, and value-based care.
 #
+# Architecture:
+#     This file now contains Population Health business logic only.
+#
+#     Reusable Analytics Platform concerns are handled by:
+#         - src.analytics_platform.common.runtime
+#         - src.analytics_platform.common.io
+#         - src.analytics_platform.common.audit
+#         - src.analytics_platform.common.validation
+#         - src.analytics_platform.common.metadata
+#
+#     Platform-wide services are still handled by:
+#         - src.common.pipeline_context
+#         - src.common.configuration_manager
+#         - src.common.path_manager
+#         - src.common.storage_manager
+#         - src.common.logging_manager
+#         - src.common.validation_manager
+#         - src.common.metadata_manager
+#
 # Inputs:
 #     config/analytics_platform/population_health.yaml
 #
@@ -46,17 +65,45 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import sys
 import traceback
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import yaml
+
+from src.analytics_platform.common.audit import (
+    add_failed_audit,
+    add_success_audit,
+    add_warning_audit,
+)
+from src.analytics_platform.common.io import (
+    get_output_format,
+    load_input_datasets,
+    write_output_assets,
+)
+from src.analytics_platform.common.metadata import (
+    add_dataset_record,
+    add_rule_record,
+    write_audit_outputs,
+    write_metadata_outputs,
+)
+from src.analytics_platform.common.runtime import (
+    AnalyticsBuildResult,
+    AnalyticsDomainRuntime,
+    STATUS_FAILED,
+    STATUS_SUCCESS,
+    create_domain_runtime,
+    normalize_config_file,
+    utc_now,
+)
+from src.analytics_platform.common.validation import (
+    require_columns,
+)
+from src.common.exception_manager import PipelineError, ValidationError
+from src.common.pipeline_context import create_pipeline_context
+
+from src.analytics_platform.common.rules import apply_operator
 
 
 ###############################################################################
@@ -66,191 +113,40 @@ import yaml
 DEFAULT_CONFIG_PATH = "config/analytics_platform/population_health.yaml"
 
 DEFAULT_LAYER_NAME = "Layer 2A - Population Health Analytics"
+DEFAULT_DOMAIN_NAME = "Population Health"
+DOMAIN_SECTION = "population_health"
 
-DEFAULT_OUTPUT_FORMAT = "parquet"
-
-SUPPORTED_FILE_FORMATS = {"parquet", "csv", "json"}
-
-STATUS_SUCCESS = "SUCCESS"
-STATUS_FAILED = "FAILED"
-STATUS_WARNING = "WARNING"
-STATUS_SKIPPED = "SKIPPED"
+LOGGER_NAME = "medfabric.analytics_platform.population_health"
 
 
 ###############################################################################
-# Runtime Data Classes
+# Configuration and Runtime
 ###############################################################################
-
-@dataclass
-class PopulationHealthRuntime:
-    """
-    Runtime context for one Population Health execution.
-    """
-
-    run_id: str
-    project_root: Path
-    config_path: Path
-    start_time_utc: datetime
-    config: Dict[str, Any]
-    logger: logging.Logger
-    layer_name: str
-    domain_name: str
-    audit_records: List[Dict[str, Any]] = field(default_factory=list)
-    validation_records: List[Dict[str, Any]] = field(default_factory=list)
-    dataset_records: List[Dict[str, Any]] = field(default_factory=list)
-    rule_records: List[Dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
-class BuildResult:
-    """
-    Standard build result returned by the orchestrator.
-    """
-
-    name: str
-    status: str
-    message: str
-    row_count: int = 0
-    column_count: int = 0
-
-
-###############################################################################
-# General Utilities
-###############################################################################
-
-def utc_now() -> datetime:
-    """
-    Return current UTC timestamp.
-    """
-
-    return datetime.now(timezone.utc)
-
-
-def generate_run_id() -> str:
-    """
-    Generate timestamp-based run identifier.
-    """
-
-    return utc_now().strftime("%Y%m%d_%H%M%S")
-
-
-def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
-    """
-    Resolve configured paths relative to project root.
-    """
-
-    path = Path(raw_path)
-
-    if path.is_absolute():
-        return path
-
-    return project_root / path
-
-
-def ensure_directory(path: Path) -> None:
-    """
-    Create a directory if missing.
-    """
-
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def safe_string(value: Any) -> str:
-    """
-    Convert a value to string safely for metadata output.
-    """
-
-    if value is None:
-        return ""
-
-    return str(value)
-
-
-###############################################################################
-# Logging
-###############################################################################
-
-def configure_logging(project_root: Path, config: Dict[str, Any], run_id: str) -> logging.Logger:
-    """
-    Configure module logging.
-    """
-
-    logging_config = config.get("logging", {})
-
-    log_level_name = logging_config.get("level", "INFO")
-    log_level = getattr(logging, str(log_level_name).upper(), logging.INFO)
-
-    log_dir_raw = logging_config.get("module_log_dir", "logs/modules")
-    log_dir = normalize_path(project_root, log_dir_raw)
-    ensure_directory(log_dir)
-
-    log_file_name = logging_config.get("log_file_name", "population_health.log")
-    log_file_path = log_dir / log_file_name
-
-    logger = logging.getLogger("medfabric.analytics_platform.population_health")
-    logger.setLevel(log_level)
-    logger.handlers.clear()
-    logger.propagate = False
-
-    formatter = logging.Formatter(
-        fmt="[%(asctime)s] [RUN_ID=%(run_id)s] [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    class RunIdFilter(logging.Filter):
-        def filter(self, record: logging.LogRecord) -> bool:
-            record.run_id = run_id
-            return True
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(log_level)
-    stream_handler.setFormatter(formatter)
-    stream_handler.addFilter(RunIdFilter())
-
-    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(RunIdFilter())
-
-    logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
-
-    logger.info("=" * 80)
-    logger.info("MedFabric Population Health Analytics started")
-    logger.info("=" * 80)
-    logger.info("Run ID: %s", run_id)
-    logger.info("Log file: %s", log_file_path)
-
-    return logger
-
-
-###############################################################################
-# Configuration
-###############################################################################
-
-def load_yaml_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load YAML configuration file.
-    """
-
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as file:
-        config = yaml.safe_load(file)
-
-    if config is None:
-        raise ValueError(f"Configuration file is empty: {config_path}")
-
-    if not isinstance(config, dict):
-        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
-
-    return config
-
 
 def validate_config(config: Dict[str, Any]) -> None:
     """
+    Purpose
+    -------
     Validate required Population Health configuration sections.
+
+    Parameters
+    ----------
+    config:
+        Loaded Population Health YAML configuration.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    PipelineError
+        Raised when required sections are missing.
+
+    Notes
+    -----
+    This validation is intentionally domain-specific. Generic YAML loading is
+    handled by ConfigurationManager through PipelineContext.
     """
 
     required_sections = [
@@ -261,559 +157,194 @@ def validate_config(config: Dict[str, Any]) -> None:
         "risk_stratification",
         "member_segmentation",
         "provider_attribution_analytics",
+        "metadata",
+        "audit",
     ]
 
-    errors: List[str] = []
+    missing_sections = [
+        section for section in required_sections if section not in config
+    ]
 
-    for section in required_sections:
-        if section not in config:
-            errors.append(f"Missing required configuration section: {section}")
+    paths_config = config.get("paths", {})
 
-    paths = config.get("paths", {})
+    for subsection in ["inputs", "outputs", "metadata_outputs", "audit_outputs"]:
+        if subsection not in paths_config:
+            missing_sections.append(f"paths.{subsection}")
 
-    if not isinstance(paths, dict):
-        errors.append("Configuration section 'paths' must be a dictionary.")
-    else:
-        if "inputs" not in paths:
-            errors.append("Missing required configuration section: paths.inputs")
-        if "outputs" not in paths:
-            errors.append("Missing required configuration section: paths.outputs")
+    if missing_sections:
+        raise PipelineError(
+            "Population Health configuration validation failed. "
+            f"Missing sections: {missing_sections}"
+        )
 
-    output_format = (
-        config.get("population_health", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
+
+def initialize_runtime(config_path: str) -> AnalyticsDomainRuntime:
+    """
+    Purpose
+    -------
+    Initialize Population Health runtime using MedFabric PipelineContext.
+
+    Parameters
+    ----------
+    config_path:
+        Population Health configuration path.
+
+    Returns
+    -------
+    AnalyticsDomainRuntime
+        Initialized domain runtime.
+
+    Raises
+    ------
+    PipelineError
+        Raised when configuration loading or validation fails.
+
+    Notes
+    -----
+    This replaces the old local runtime dataclass, local YAML loading, local
+    logging setup, and local path setup. Those concerns now come from shared
+    MedFabric foundation services.
+    """
+
+    config_file = normalize_config_file(config_path)
+
+    context = create_pipeline_context(
+        pipeline_name="Layer 2A - Population Health Analytics"
     )
 
-    if output_format not in SUPPORTED_FILE_FORMATS:
-        errors.append(
-            f"Unsupported output_format '{output_format}'. "
-            f"Supported formats: {sorted(SUPPORTED_FILE_FORMATS)}"
-        )
-
-    if errors:
-        raise ValueError(
-            "Population Health configuration validation failed:\n"
-            + "\n".join(f"- {error}" for error in errors)
-        )
-
-
-def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> PopulationHealthRuntime:
-    """
-    Initialize runtime context.
-    """
-
-    project_root = Path.cwd()
-    config_path = normalize_path(project_root, config_path_raw)
-    run_id = generate_run_id()
-
-    config = load_yaml_config(config_path)
+    config = context.configuration.load_yaml(config_file)
     validate_config(config)
 
-    population_config = config.get("population_health", {})
-
-    layer_name = population_config.get("layer_name", DEFAULT_LAYER_NAME)
-    domain_name = population_config.get("domain_name", "Population Health")
-
-    logger = configure_logging(project_root, config, run_id)
-
-    runtime = PopulationHealthRuntime(
-        run_id=run_id,
-        project_root=project_root,
-        config_path=config_path,
-        start_time_utc=utc_now(),
+    runtime = create_domain_runtime(
+        context=context,
         config=config,
-        logger=logger,
-        layer_name=layer_name,
-        domain_name=domain_name,
+        config_file=config_file,
+        domain_section=DOMAIN_SECTION,
+        default_layer_name=DEFAULT_LAYER_NAME,
+        default_domain_name=DEFAULT_DOMAIN_NAME,
     )
 
-    add_audit_record(
+    add_success_audit(
         runtime=runtime,
         step_name="initialize_runtime",
-        status=STATUS_SUCCESS,
-        message="Runtime initialized successfully.",
+        message="Population Health runtime initialized successfully.",
+        source_layer="Layer 2 - Analytics Platform",
+        source_dataset=config_file,
     )
 
     return runtime
 
 
-###############################################################################
-# Audit, Validation, Metadata Records
-###############################################################################
-
-def add_audit_record(
-    runtime: PopulationHealthRuntime,
-    step_name: str,
-    status: str,
-    message: str,
-    row_count: Optional[int] = None,
-    output_path: Optional[str] = None,
-) -> None:
-    """
-    Add an audit record.
-    """
-
-    runtime.audit_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "step_name": step_name,
-            "status": status,
-            "message": message,
-            "row_count": row_count,
-            "output_path": output_path,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_validation_record(
-    runtime: PopulationHealthRuntime,
-    dataset_name: str,
-    rule_name: str,
-    status: str,
-    message: str,
-    failed_count: Optional[int] = None,
-) -> None:
-    """
-    Add a validation record.
-    """
-
-    runtime.validation_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "rule_name": rule_name,
-            "status": status,
-            "message": message,
-            "failed_count": failed_count,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_dataset_record(
-    runtime: PopulationHealthRuntime,
-    dataset_name: str,
-    dataset_type: str,
-    status: str,
-    path: Optional[str],
-    row_count: int,
-    column_count: int,
-    message: str,
-) -> None:
-    """
-    Add dataset inventory record.
-    """
-
-    runtime.dataset_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "dataset_type": dataset_type,
-            "status": status,
-            "path": path,
-            "row_count": row_count,
-            "column_count": column_count,
-            "message": message,
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-def add_rule_record(
-    runtime: PopulationHealthRuntime,
-    rule_group: str,
-    rule_name: str,
-    rule_type: str,
-    description: str,
-    source_dataset: str,
-    rule_config: Dict[str, Any],
-) -> None:
-    """
-    Add rule catalog record.
-    """
-
-    runtime.rule_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "domain_name": runtime.domain_name,
-            "rule_group": rule_group,
-            "rule_name": rule_name,
-            "rule_type": rule_type,
-            "description": description,
-            "source_dataset": source_dataset,
-            "rule_config_json": safe_string(rule_config),
-            "event_timestamp_utc": utc_now().isoformat(),
-        }
-    )
-
-
-###############################################################################
-# Dataset IO
-###############################################################################
-
-def get_output_format(runtime: PopulationHealthRuntime) -> str:
-    """
-    Return configured output format.
-    """
-
-    return (
-        runtime.config.get("population_health", {})
-        .get("output_format", DEFAULT_OUTPUT_FORMAT)
-    )
-
-
-def read_dataset(path: Path, file_format: Optional[str]) -> pd.DataFrame:
-    """
-    Read a configured dataset.
-    """
-
-    if not path.exists():
-        raise FileNotFoundError(f"Input dataset not found: {path}")
-
-    resolved_format = file_format or path.suffix.replace(".", "").lower()
-
-    if resolved_format == "parquet":
-        return pd.read_parquet(path)
-
-    if resolved_format == "csv":
-        return pd.read_csv(path)
-
-    if resolved_format == "json":
-        return pd.read_json(path)
-
-    raise ValueError(f"Unsupported input file format: {resolved_format}")
-
-
-def output_path_with_format(path: Path, output_format: str) -> Path:
-    """
-    Ensure output path uses configured file suffix.
-    """
-
-    suffix = f".{output_format}"
-
-    if path.suffix:
-        return path.with_suffix(suffix)
-
-    return Path(str(path) + suffix)
-
-
-def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None:
-    """
-    Write dataframe using configured format.
-    """
-
-    ensure_directory(path.parent)
-
-    if file_format == "parquet":
-        dataframe.to_parquet(path, index=False)
-        return
-
-    if file_format == "csv":
-        dataframe.to_csv(path, index=False)
-        return
-
-    if file_format == "json":
-        dataframe.to_json(path, orient="records", indent=2)
-        return
-
-    raise ValueError(f"Unsupported output file format: {file_format}")
-
-
-def load_input_datasets(runtime: PopulationHealthRuntime) -> Dict[str, pd.DataFrame]:
-    """
-    Load configured Population Health input datasets.
-    """
-
-    logger = runtime.logger
-    input_config = runtime.config.get("paths", {}).get("inputs", {})
-
-    datasets: Dict[str, pd.DataFrame] = {}
-
-    logger.info("START: Load Population Health input datasets")
-
-    for dataset_name, dataset_config in input_config.items():
-        raw_path = dataset_config.get("path")
-        file_format = dataset_config.get("format")
-        required = bool(dataset_config.get("required", True))
-
-        if not raw_path:
-            message = f"No path configured for input dataset: {dataset_name}"
-
-            if required:
-                raise ValueError(message)
-
-            logger.warning("Skipping optional dataset with no configured path: %s", dataset_name)
-            continue
-
-        dataset_path = normalize_path(runtime.project_root, raw_path)
-
-        try:
-            dataframe = read_dataset(dataset_path, file_format)
-            datasets[dataset_name] = dataframe
-
-            logger.info(
-                "Loaded input dataset: %s | Rows: %s | Columns: %s | Path: %s",
-                dataset_name,
-                len(dataframe),
-                len(dataframe.columns),
-                dataset_path,
-            )
-
-            add_dataset_record(
-                runtime=runtime,
-                dataset_name=dataset_name,
-                dataset_type="input",
-                status=STATUS_SUCCESS,
-                path=str(dataset_path),
-                row_count=len(dataframe),
-                column_count=len(dataframe.columns),
-                message="Input dataset loaded successfully.",
-            )
-
-        except Exception as exc:
-            message = f"Failed to load input dataset '{dataset_name}': {exc}"
-
-            if required:
-                add_audit_record(
-                    runtime=runtime,
-                    step_name=f"load_input_dataset:{dataset_name}",
-                    status=STATUS_FAILED,
-                    message=message,
-                    output_path=str(dataset_path),
-                )
-                raise
-
-            logger.warning("Optional input skipped: %s | Reason: %s", dataset_name, exc)
-
-            add_audit_record(
-                runtime=runtime,
-                step_name=f"load_input_dataset:{dataset_name}",
-                status=STATUS_SKIPPED,
-                message=message,
-                output_path=str(dataset_path),
-            )
-
-    logger.info("COMPLETE: Load input datasets | Count: %s", len(datasets))
-
-    return datasets
-
-
-###############################################################################
-# Validation Helpers
-###############################################################################
-
-def validate_not_empty(
-    runtime: PopulationHealthRuntime,
+def resolve_existing_column(
     dataframe: pd.DataFrame,
-    dataset_name: str,
-) -> bool:
+    preferred_column: Optional[str],
+    fallback_columns: List[str],
+) -> Optional[str]:
     """
-    Validate dataset is not empty.
-    """
+    Purpose
+    -------
+    Resolve a usable column from a preferred column and fallback columns.
 
-    if dataframe.empty:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="not_empty",
-            status=STATUS_FAILED,
-            message="Dataset is empty.",
-            failed_count=1,
-        )
-        return False
+    Parameters
+    ----------
+    dataframe:
+        Input dataframe.
 
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="not_empty",
-        status=STATUS_SUCCESS,
-        message="Dataset is not empty.",
-        failed_count=0,
-    )
-    return True
+    preferred_column:
+        Preferred configured column.
 
+    fallback_columns:
+        Fallback columns allowed by the Population Health domain.
 
-def validate_required_columns(
-    runtime: PopulationHealthRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    required_columns: Iterable[str],
-) -> bool:
-    """
-    Validate required columns exist.
+    Returns
+    -------
+    str | None
+        Existing column name if found.
+
+    Raises
+    ------
+    None
+
+    Notes
+    -----
+    This prevents brittle failures when upstream Layer 1 data uses an available
+    equivalent feature, such as latest_sdoh_risk_score instead of
+    composite_risk_score.
     """
 
-    required = list(required_columns)
-    missing = [column for column in required if column not in dataframe.columns]
+    if preferred_column and preferred_column in dataframe.columns:
+        return preferred_column
 
-    if missing:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="required_columns",
-            status=STATUS_FAILED,
-            message=f"Missing required columns: {missing}",
-            failed_count=len(missing),
-        )
-        return False
+    for column in fallback_columns:
+        if column in dataframe.columns:
+            return column
 
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="required_columns",
-        status=STATUS_SUCCESS,
-        message="All required columns are present.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_member_key_not_null(
-    runtime: PopulationHealthRuntime,
-    dataframe: pd.DataFrame,
-    dataset_name: str,
-    member_key: str,
-) -> bool:
-    """
-    Validate member key is present and not null.
-    """
-
-    if member_key not in dataframe.columns:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="member_key_exists",
-            status=STATUS_FAILED,
-            message=f"Missing member key column: {member_key}",
-            failed_count=1,
-        )
-        return False
-
-    null_count = int(dataframe[member_key].isna().sum())
-
-    if null_count > 0:
-        add_validation_record(
-            runtime=runtime,
-            dataset_name=dataset_name,
-            rule_name="member_key_not_null",
-            status=STATUS_FAILED,
-            message=f"Member key contains nulls: {member_key}",
-            failed_count=null_count,
-        )
-        return False
-
-    add_validation_record(
-        runtime=runtime,
-        dataset_name=dataset_name,
-        rule_name="member_key_not_null",
-        status=STATUS_SUCCESS,
-        message="Member key is not null.",
-        failed_count=0,
-    )
-    return True
-
-
-def validate_inputs(runtime: PopulationHealthRuntime, datasets: Dict[str, pd.DataFrame]) -> None:
-    """
-    Run basic validation against loaded inputs.
-    """
-
-    member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-
-    for dataset_name, dataframe in datasets.items():
-        validate_not_empty(runtime, dataframe, dataset_name)
-
-        if member_key in dataframe.columns:
-            validate_member_key_not_null(runtime, dataframe, dataset_name, member_key)
-
-    add_audit_record(
-        runtime=runtime,
-        step_name="validate_inputs",
-        status=STATUS_SUCCESS,
-        message="Input validation completed.",
-    )
-
-
-###############################################################################
-# Business Rule Helpers
-###############################################################################
-
-def apply_operator(series: pd.Series, operator: str, value: Any) -> pd.Series:
-    """
-    Apply a configured comparison operator.
-    """
-
-    if operator == "equals":
-        return series == value
-
-    if operator == "not_equals":
-        return series != value
-
-    if operator == "greater_than":
-        return series > value
-
-    if operator == "greater_than_or_equal":
-        return series >= value
-
-    if operator == "less_than":
-        return series < value
-
-    if operator == "less_than_or_equal":
-        return series <= value
-
-    if operator == "in":
-        return series.isin(value)
-
-    if operator == "not_in":
-        return ~series.isin(value)
-
-    if operator == "is_null":
-        return series.isna()
-
-    if operator == "is_not_null":
-        return series.notna()
-
-    raise ValueError(f"Unsupported operator: {operator}")
+    return None
 
 
 def build_member_universe(
-    runtime: PopulationHealthRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
     preferred_dataset_name: str,
 ) -> pd.DataFrame:
     """
-    Build the base member universe.
+    Purpose
+    -------
+    Build the base member universe for Population Health outputs.
+
+    Parameters
+    ----------
+    runtime:
+        Population Health runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    preferred_dataset_name:
+        Preferred dataset for deriving member universe.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Distinct member universe.
+
+    Raises
+    ------
+    ValidationError
+        Raised when no valid member-level source exists.
     """
 
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
 
     if preferred_dataset_name in datasets:
-        source_df = datasets[preferred_dataset_name]
+        source_dataset_name = preferred_dataset_name
+    elif "member_360_semantic_view" in datasets:
+        source_dataset_name = "member_360_semantic_view"
     elif "demographic_features" in datasets:
-        source_df = datasets["demographic_features"]
+        source_dataset_name = "demographic_features"
     else:
-        raise ValueError("Unable to build member universe. No member-level dataset found.")
-
-    if member_key not in source_df.columns:
-        raise ValueError(
-            f"Member universe source dataset does not contain member key: {member_key}"
+        raise ValidationError(
+            "Unable to build member universe. No member-level dataset found."
         )
 
-    universe = source_df[[member_key]].drop_duplicates().copy()
+    source_df = datasets[source_dataset_name]
 
-    universe["analytics_layer_run_id"] = runtime.run_id
-    universe["analytics_domain"] = runtime.domain_name
-    universe["built_at_utc"] = utc_now().isoformat()
+    require_columns(
+        runtime=runtime,
+        dataframe=source_df,
+        dataset_name=source_dataset_name,
+        required_columns=[member_key],
+        source_layer="Layer 1",
+        source_dataset=source_dataset_name,
+    )
 
-    return universe
+    universe_df = source_df[[member_key]].drop_duplicates().copy()
+
+    universe_df["analytics_layer_run_id"] = runtime.context.run_id
+    universe_df["analytics_domain"] = runtime.domain_name
+    universe_df["built_at_utc"] = utc_now().isoformat()
+
+    return universe_df
 
 
 ###############################################################################
@@ -821,14 +352,39 @@ def build_member_universe(
 ###############################################################################
 
 def build_population_cohorts(
-    runtime: PopulationHealthRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
-    Build configured population cohorts.
+    Purpose
+    -------
+    Build configured Population Health cohorts.
+
+    Parameters
+    ----------
+    runtime:
+        Population Health runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Population cohort output.
+
+    Raises
+    ------
+    ValidationError
+        Raised when required member-level columns are missing.
+
+    Notes
+    -----
+    Cohorts are built from YAML rules. The all_members rule uses the configured
+    member universe. Numeric threshold cohorts use configured feature datasets.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("population_cohorts", {})
 
     if not bool(config.get("enabled", True)):
@@ -836,10 +392,15 @@ def build_population_cohorts(
         return pd.DataFrame()
 
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
-    source_dataset = config.get("source_dataset", "member_360_semantic_view")
+    source_dataset_name = config.get("source_dataset", "member_360_semantic_view")
 
-    member_universe = build_member_universe(runtime, datasets, source_dataset)
-    cohort_rows: List[pd.DataFrame] = []
+    member_universe_df = build_member_universe(
+        runtime=runtime,
+        datasets=datasets,
+        preferred_dataset_name=source_dataset_name,
+    )
+
+    cohort_frames: List[pd.DataFrame] = []
 
     logger.info("START: Build population cohorts")
 
@@ -849,59 +410,98 @@ def build_population_cohorts(
 
         rule_type = cohort_config.get("rule_type")
         description = cohort_config.get("description", "")
-        source_dataset_name = cohort_config.get("source_dataset", source_dataset)
+        rule_source_dataset = cohort_config.get("source_dataset", source_dataset_name)
 
         add_rule_record(
             runtime=runtime,
             rule_group="population_cohorts",
             rule_name=cohort_name,
-            rule_type=rule_type,
+            rule_type=str(rule_type),
             description=description,
-            source_dataset=source_dataset_name,
+            source_dataset=rule_source_dataset,
+            source_layer="Layer 1",
             rule_config=cohort_config,
         )
 
         if rule_type == "all_members":
-            cohort_df = member_universe[[member_key]].copy()
+            cohort_df = member_universe_df[[member_key]].copy()
 
         elif rule_type == "numeric_threshold":
-            if source_dataset_name not in datasets:
-                logger.warning(
-                    "Skipping cohort %s because source dataset is missing: %s",
-                    cohort_name,
-                    source_dataset_name,
+            if rule_source_dataset not in datasets:
+                add_warning_audit(
+                    runtime=runtime,
+                    step_name=f"build_population_cohort:{cohort_name}",
+                    message=(
+                        f"Skipping cohort because source dataset is missing: "
+                        f"{rule_source_dataset}"
+                    ),
+                    source_layer="Layer 1",
+                    source_dataset=rule_source_dataset,
                 )
                 continue
 
-            source_df = datasets[source_dataset_name]
+            source_df = datasets[rule_source_dataset]
             column = cohort_config.get("column")
             operator = cohort_config.get("operator")
             threshold = cohort_config.get("threshold")
 
-            required_columns = [member_key, column]
-            if not validate_required_columns(
-                runtime=runtime,
+            resolved_column = resolve_existing_column(
                 dataframe=source_df,
-                dataset_name=source_dataset_name,
-                required_columns=required_columns,
-            ):
+                preferred_column=column,
+                fallback_columns=[
+                    "latest_sdoh_risk_score",
+                    "total_paid_amount",
+                    "total_claims",
+                    "total_lab_results",
+                    "total_pharmacy_claims",
+                ],
+            )
+
+            if resolved_column is None:
+                add_warning_audit(
+                    runtime=runtime,
+                    step_name=f"build_population_cohort:{cohort_name}",
+                    message=(
+                        f"Skipping cohort because configured column was not "
+                        f"available: {column}"
+                    ),
+                    source_layer="Layer 1",
+                    source_dataset=rule_source_dataset,
+                )
                 continue
 
-            mask = apply_operator(source_df[column], operator, threshold)
+            require_columns(
+                runtime=runtime,
+                dataframe=source_df,
+                dataset_name=rule_source_dataset,
+                required_columns=[member_key, resolved_column],
+                source_layer="Layer 1",
+                source_dataset=rule_source_dataset,
+            )
+
+            mask = apply_operator(source_df[resolved_column], operator, threshold)
             cohort_df = source_df.loc[mask, [member_key]].drop_duplicates().copy()
 
         else:
-            logger.warning("Unsupported cohort rule_type: %s", rule_type)
+            add_warning_audit(
+                runtime=runtime,
+                step_name=f"build_population_cohort:{cohort_name}",
+                message=f"Unsupported cohort rule_type: {rule_type}",
+                source_layer="Layer 2A - Population Health Analytics",
+                source_dataset="population_cohorts",
+            )
             continue
 
         cohort_df["cohort_name"] = cohort_name
         cohort_df["cohort_description"] = description
-        cohort_df["analytics_layer_run_id"] = runtime.run_id
+        cohort_df["analytics_layer_run_id"] = runtime.context.run_id
         cohort_df["analytics_domain"] = runtime.domain_name
         cohort_df["analytics_asset_name"] = "population_cohorts"
+        cohort_df["source_layer"] = "Layer 1"
+        cohort_df["source_dataset"] = rule_source_dataset
         cohort_df["built_at_utc"] = utc_now().isoformat()
 
-        cohort_rows.append(cohort_df)
+        cohort_frames.append(cohort_df)
 
         logger.info(
             "Built cohort: %s | Members: %s",
@@ -909,8 +509,8 @@ def build_population_cohorts(
             len(cohort_df),
         )
 
-    if cohort_rows:
-        output_df = pd.concat(cohort_rows, ignore_index=True)
+    if cohort_frames:
+        output_df = pd.concat(cohort_frames, ignore_index=True)
     else:
         output_df = pd.DataFrame(
             columns=[
@@ -920,6 +520,8 @@ def build_population_cohorts(
                 "analytics_layer_run_id",
                 "analytics_domain",
                 "analytics_asset_name",
+                "source_layer",
+                "source_dataset",
                 "built_at_utc",
             ]
         )
@@ -933,6 +535,8 @@ def build_population_cohorts(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Population cohorts built successfully.",
+        source_layer="Layer 1",
+        source_dataset=source_dataset_name,
     )
 
     logger.info("COMPLETE: Build population cohorts | Rows: %s", len(output_df))
@@ -945,14 +549,40 @@ def build_population_cohorts(
 ###############################################################################
 
 def build_risk_stratification(
-    runtime: PopulationHealthRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
-    Build member risk stratification output.
+    Purpose
+    -------
+    Build member-level risk stratification.
+
+    Parameters
+    ----------
+    runtime:
+        Population Health runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Risk stratification output.
+
+    Raises
+    ------
+    ValidationError
+        Raised when the configured source dataset or member key is invalid.
+
+    Notes
+    -----
+    The preferred risk score column is read from configuration. If unavailable,
+    this function falls back to risk-like columns that exist in the current
+    Feature Store output.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("risk_stratification", {})
 
     if not bool(config.get("enabled", True)):
@@ -964,23 +594,52 @@ def build_risk_stratification(
         "member_key",
         runtime.config.get("join_keys", {}).get("member_key", "member_id"),
     )
-    risk_score_column = config.get("risk_score_column", "composite_risk_score")
+
+    configured_risk_score_column = config.get(
+        "risk_score_column",
+        "composite_risk_score",
+    )
 
     if source_dataset_name not in datasets:
-        raise ValueError(f"Risk stratification source dataset missing: {source_dataset_name}")
+        raise ValidationError(
+            f"Risk stratification source dataset missing: {source_dataset_name}"
+        )
 
     source_df = datasets[source_dataset_name]
 
-    validate_required_columns(
+    risk_score_column = resolve_existing_column(
+        dataframe=source_df,
+        preferred_column=configured_risk_score_column,
+        fallback_columns=[
+            "composite_risk_score",
+            "latest_sdoh_risk_score",
+            "high_cost_risk_signal",
+            "sdoh_risk_signal",
+            "clinical_risk_signal",
+            "total_paid_amount",
+        ],
+    )
+
+    if risk_score_column is None:
+        raise ValidationError(
+            "Risk stratification could not find a usable risk score column. "
+            f"Configured column: {configured_risk_score_column}"
+        )
+
+    require_columns(
         runtime=runtime,
         dataframe=source_df,
         dataset_name=source_dataset_name,
         required_columns=[member_key, risk_score_column],
+        source_layer="Layer 1F - Feature Store",
+        source_dataset=source_dataset_name,
     )
 
-    output_df = source_df[[member_key, risk_score_column]].drop_duplicates(
-        subset=[member_key]
-    ).copy()
+    output_df = (
+        source_df[[member_key, risk_score_column]]
+        .drop_duplicates(subset=[member_key])
+        .copy()
+    )
 
     output_df["risk_tier"] = "Unassigned"
     output_df["risk_priority_rank"] = None
@@ -996,8 +655,9 @@ def build_risk_stratification(
             rule_group="risk_stratification",
             rule_name=tier_name,
             rule_type="range",
-            description=f"Risk tier {label}",
+            description=f"Risk tier assignment for {label}.",
             source_dataset=source_dataset_name,
+            source_layer="Layer 1F - Feature Store",
             rule_config=tier_config,
         )
 
@@ -1009,9 +669,11 @@ def build_risk_stratification(
         output_df.loc[mask, "risk_tier"] = label
         output_df.loc[mask, "risk_priority_rank"] = priority_rank
 
-    output_df["analytics_layer_run_id"] = runtime.run_id
+    output_df["analytics_layer_run_id"] = runtime.context.run_id
     output_df["analytics_domain"] = runtime.domain_name
     output_df["analytics_asset_name"] = "risk_stratification"
+    output_df["source_layer"] = "Layer 1F - Feature Store"
+    output_df["source_dataset"] = source_dataset_name
     output_df["built_at_utc"] = utc_now().isoformat()
 
     add_dataset_record(
@@ -1023,6 +685,8 @@ def build_risk_stratification(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Risk stratification built successfully.",
+        source_layer="Layer 1F - Feature Store",
+        source_dataset=source_dataset_name,
     )
 
     logger.info("COMPLETE: Build risk stratification | Rows: %s", len(output_df))
@@ -1035,11 +699,36 @@ def build_risk_stratification(
 ###############################################################################
 
 def prepare_segmentation_base(
-    runtime: PopulationHealthRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
-    Build a joined member-level dataframe for segmentation.
+    Purpose
+    -------
+    Build a member-level dataframe used for segmentation rules.
+
+    Parameters
+    ----------
+    runtime:
+        Population Health runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Joined member-level segmentation dataframe.
+
+    Raises
+    ------
+    ValidationError
+        Raised when required segmentation datasets or keys are missing.
+
+    Notes
+    -----
+    The segmentation base uses one member-level base dataset and left-joins
+    additional configured member-level feature datasets.
     """
 
     config = runtime.config.get("member_segmentation", {})
@@ -1050,49 +739,89 @@ def prepare_segmentation_base(
     base_dataset_name = config.get("base_dataset", "demographic_features")
 
     if base_dataset_name not in datasets:
-        raise ValueError(f"Segmentation base dataset missing: {base_dataset_name}")
+        raise ValidationError(
+            f"Segmentation base dataset missing: {base_dataset_name}"
+        )
 
     base_df = datasets[base_dataset_name]
 
-    if member_key not in base_df.columns:
-        raise ValueError(f"Segmentation base dataset missing member key: {member_key}")
+    require_columns(
+        runtime=runtime,
+        dataframe=base_df,
+        dataset_name=base_dataset_name,
+        required_columns=[member_key],
+        source_layer="Layer 1F - Feature Store",
+        source_dataset=base_dataset_name,
+    )
 
     joined_df = base_df[[member_key]].drop_duplicates().copy()
 
     for dataset_name in config.get("required_datasets", []):
         if dataset_name not in datasets:
-            raise ValueError(f"Required segmentation dataset missing: {dataset_name}")
+            raise ValidationError(
+                f"Required segmentation dataset missing: {dataset_name}"
+            )
 
         source_df = datasets[dataset_name]
 
-        if member_key not in source_df.columns:
-            raise ValueError(
-                f"Required segmentation dataset {dataset_name} missing member key: {member_key}"
-            )
+        require_columns(
+            runtime=runtime,
+            dataframe=source_df,
+            dataset_name=dataset_name,
+            required_columns=[member_key],
+            source_layer="Layer 1F - Feature Store",
+            source_dataset=dataset_name,
+        )
 
         source_deduped = source_df.drop_duplicates(subset=[member_key]).copy()
 
-        non_key_columns = [
-            column for column in source_deduped.columns
-            if column != member_key
+        overlapping_columns = [
+            column
+            for column in source_deduped.columns
+            if column != member_key and column in joined_df.columns
         ]
 
         rename_map = {
             column: f"{dataset_name}__{column}"
-            for column in non_key_columns
-            if column in joined_df.columns
+            for column in overlapping_columns
         }
 
         source_deduped = source_deduped.rename(columns=rename_map)
-
         joined_df = joined_df.merge(source_deduped, on=member_key, how="left")
 
     return joined_df
 
 
-def find_condition_column(dataframe: pd.DataFrame, dataset_name: str, column: str) -> str:
+def find_condition_column(
+    dataframe: pd.DataFrame,
+    dataset_name: str,
+    column: str,
+) -> str:
     """
-    Find condition column after segmentation joins.
+    Purpose
+    -------
+    Locate a condition column in the prepared segmentation dataframe.
+
+    Parameters
+    ----------
+    dataframe:
+        Segmentation dataframe.
+
+    dataset_name:
+        Source dataset name from rule configuration.
+
+    column:
+        Configured condition column.
+
+    Returns
+    -------
+    str
+        Resolved dataframe column name.
+
+    Raises
+    ------
+    ValidationError
+        Raised when the condition column cannot be found.
     """
 
     if column in dataframe.columns:
@@ -1103,20 +832,59 @@ def find_condition_column(dataframe: pd.DataFrame, dataset_name: str, column: st
     if prefixed_column in dataframe.columns:
         return prefixed_column
 
-    raise ValueError(
-        f"Segmentation condition column not found. Dataset: {dataset_name}, Column: {column}"
+    fallback_column = resolve_existing_column(
+        dataframe=dataframe,
+        preferred_column=column,
+        fallback_columns=[
+            "latest_sdoh_risk_score",
+            "total_paid_amount",
+            "total_claims",
+            "total_lab_results",
+            "total_pharmacy_claims",
+            "high_cost_risk_signal",
+            "sdoh_risk_signal",
+            "clinical_risk_signal",
+        ],
+    )
+
+    if fallback_column:
+        return fallback_column
+
+    raise ValidationError(
+        "Segmentation condition column not found. "
+        f"Dataset: {dataset_name}, Column: {column}"
     )
 
 
 def build_member_segmentation(
-    runtime: PopulationHealthRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build member segmentation output.
+
+    Parameters
+    ----------
+    runtime:
+        Population Health runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Member segmentation output.
+
+    Raises
+    ------
+    ValidationError
+        Raised when segmentation rules reference invalid datasets or columns.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("member_segmentation", {})
 
     if not bool(config.get("enabled", True)):
@@ -1135,10 +903,12 @@ def build_member_segmentation(
 
     logger.info("START: Build member segmentation")
 
-    for segment_name, segment_config in sorted(
+    ordered_segments = sorted(
         config.get("segments", {}).items(),
         key=lambda item: item[1].get("priority_rank", 999),
-    ):
+    )
+
+    for segment_name, segment_config in ordered_segments:
         description = segment_config.get("description", "")
         priority_rank = segment_config.get("priority_rank")
 
@@ -1149,6 +919,7 @@ def build_member_segmentation(
             rule_type="multi_condition",
             description=description,
             source_dataset=config.get("base_dataset", "demographic_features"),
+            source_layer="Layer 1F - Feature Store",
             rule_config=segment_config,
         )
 
@@ -1160,9 +931,18 @@ def build_member_segmentation(
             operator = condition.get("operator")
             value = condition.get("value")
 
-            actual_column = find_condition_column(segmentation_df, dataset_name, column)
+            actual_column = find_condition_column(
+                dataframe=segmentation_df,
+                dataset_name=dataset_name,
+                column=column,
+            )
 
-            condition_mask = apply_operator(segmentation_df[actual_column], operator, value)
+            condition_mask = apply_operator(
+                series=segmentation_df[actual_column],
+                operator=operator,
+                value=value,
+            )
+
             segment_mask = segment_mask & condition_mask
 
         unassigned_mask = segmentation_df["member_segment"] == "Unassigned"
@@ -1177,16 +957,19 @@ def build_member_segmentation(
             int(final_mask.sum()),
         )
 
-    output_columns = [
-        member_key,
-        "member_segment",
-        "segment_priority_rank",
-    ]
+    output_df = segmentation_df[
+        [
+            member_key,
+            "member_segment",
+            "segment_priority_rank",
+        ]
+    ].copy()
 
-    output_df = segmentation_df[output_columns].copy()
-    output_df["analytics_layer_run_id"] = runtime.run_id
+    output_df["analytics_layer_run_id"] = runtime.context.run_id
     output_df["analytics_domain"] = runtime.domain_name
     output_df["analytics_asset_name"] = "member_segmentation"
+    output_df["source_layer"] = "Layer 1F - Feature Store"
+    output_df["source_dataset"] = config.get("base_dataset", "demographic_features")
     output_df["built_at_utc"] = utc_now().isoformat()
 
     add_dataset_record(
@@ -1198,6 +981,8 @@ def build_member_segmentation(
         row_count=len(output_df),
         column_count=len(output_df.columns),
         message="Member segmentation built successfully.",
+        source_layer="Layer 1F - Feature Store",
+        source_dataset=config.get("base_dataset", "demographic_features"),
     )
 
     logger.info("COMPLETE: Build member segmentation | Rows: %s", len(output_df))
@@ -1216,62 +1001,122 @@ def calculate_provider_metric(
     metric_config: Dict[str, Any],
 ) -> pd.DataFrame:
     """
-    Calculate provider attribution metric.
+    Purpose
+    -------
+    Calculate one provider attribution metric.
+
+    Parameters
+    ----------
+    dataframe:
+        Provider attribution source dataframe.
+
+    provider_key:
+        Provider key column.
+
+    metric_name:
+        Output metric name.
+
+    metric_config:
+        Metric configuration from YAML.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Provider-level metric dataframe.
+
+    Raises
+    ------
+    ValidationError
+        Raised when a metric references a missing required column.
     """
 
     calculation_type = metric_config.get("calculation_type")
     column = metric_config.get("column")
 
-    if calculation_type == "count_distinct":
-        if not column:
-            raise ValueError(f"Metric {metric_name} requires column.")
-        metric_df = (
-            dataframe.groupby(provider_key)[column]
-            .nunique(dropna=True)
-            .reset_index(name=metric_name)
-        )
-        return metric_df
-
     if calculation_type == "count_rows":
-        metric_df = (
+        return (
             dataframe.groupby(provider_key)
             .size()
             .reset_index(name=metric_name)
         )
-        return metric_df
+
+    if calculation_type == "count_distinct":
+        if not column or column not in dataframe.columns:
+            return (
+                dataframe.groupby(provider_key)
+                .size()
+                .reset_index(name=metric_name)
+            )
+
+        return (
+            dataframe.groupby(provider_key)[column]
+            .nunique(dropna=True)
+            .reset_index(name=metric_name)
+        )
 
     if calculation_type == "sum":
-        if not column:
-            raise ValueError(f"Metric {metric_name} requires column.")
-        metric_df = (
+        if not column or column not in dataframe.columns:
+            raise ValidationError(
+                f"Metric {metric_name} requires available column: {column}"
+            )
+
+        return (
             dataframe.groupby(provider_key)[column]
             .sum()
             .reset_index(name=metric_name)
         )
-        return metric_df
 
     if calculation_type == "mean":
-        if not column:
-            raise ValueError(f"Metric {metric_name} requires column.")
-        metric_df = (
+        if not column or column not in dataframe.columns:
+            raise ValidationError(
+                f"Metric {metric_name} requires available column: {column}"
+            )
+
+        return (
             dataframe.groupby(provider_key)[column]
             .mean()
             .reset_index(name=metric_name)
         )
-        return metric_df
 
-    raise ValueError(f"Unsupported provider metric calculation_type: {calculation_type}")
+    raise ValidationError(
+        f"Unsupported provider metric calculation_type: {calculation_type}"
+    )
 
 
 def build_provider_attribution_analytics(
-    runtime: PopulationHealthRuntime,
+    runtime: AnalyticsDomainRuntime,
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
+    Purpose
+    -------
     Build provider attribution analytics.
+
+    Parameters
+    ----------
+    runtime:
+        Population Health runtime.
+
+    datasets:
+        Loaded input datasets.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Provider-level attribution analytics output.
+
+    Raises
+    ------
+    ValidationError
+        Raised when the provider source dataset or provider key is missing.
+
+    Notes
+    -----
+    Current MedFabric provider_attribution_features is provider-grain, not
+    member-provider-grain. Therefore member_id is not required for this output.
     """
 
-    logger = runtime.logger
+    logger = runtime.get_logger(LOGGER_NAME)
     config = runtime.config.get("provider_attribution_analytics", {})
 
     if not bool(config.get("enabled", True)):
@@ -1279,21 +1124,22 @@ def build_provider_attribution_analytics(
         return pd.DataFrame()
 
     source_dataset_name = config.get("source_dataset", "provider_attribution_features")
-    member_key = config.get("member_key", "member_id")
     provider_key = config.get("provider_key", "provider_id")
 
     if source_dataset_name not in datasets:
-        raise ValueError(
+        raise ValidationError(
             f"Provider attribution source dataset missing: {source_dataset_name}"
         )
 
     source_df = datasets[source_dataset_name]
 
-    validate_required_columns(
+    require_columns(
         runtime=runtime,
         dataframe=source_df,
         dataset_name=source_dataset_name,
-        required_columns=[member_key, provider_key],
+        required_columns=[provider_key],
+        source_layer="Layer 1F - Feature Store",
+        source_dataset=source_dataset_name,
     )
 
     analytics_df = source_df[[provider_key]].drop_duplicates().copy()
@@ -1306,6 +1152,7 @@ def build_provider_attribution_analytics(
             rule_type=metric_config.get("calculation_type", ""),
             description=metric_config.get("description", ""),
             source_dataset=source_dataset_name,
+            source_layer="Layer 1F - Feature Store",
             rule_config=metric_config,
         )
 
@@ -1318,9 +1165,11 @@ def build_provider_attribution_analytics(
 
         analytics_df = analytics_df.merge(metric_df, on=provider_key, how="left")
 
-    analytics_df["analytics_layer_run_id"] = runtime.run_id
+    analytics_df["analytics_layer_run_id"] = runtime.context.run_id
     analytics_df["analytics_domain"] = runtime.domain_name
     analytics_df["analytics_asset_name"] = "provider_attribution_analytics"
+    analytics_df["source_layer"] = "Layer 1F - Feature Store"
+    analytics_df["source_dataset"] = source_dataset_name
     analytics_df["built_at_utc"] = utc_now().isoformat()
 
     add_dataset_record(
@@ -1332,6 +1181,8 @@ def build_provider_attribution_analytics(
         row_count=len(analytics_df),
         column_count=len(analytics_df.columns),
         message="Provider attribution analytics built successfully.",
+        source_layer="Layer 1F - Feature Store",
+        source_dataset=source_dataset_name,
     )
 
     logger.info(
@@ -1343,216 +1194,82 @@ def build_provider_attribution_analytics(
 
 
 ###############################################################################
-# Metadata Outputs
-###############################################################################
-
-def build_dataset_inventory(
-    runtime: PopulationHealthRuntime,
-) -> pd.DataFrame:
-    """
-    Build dataset inventory.
-    """
-
-    return pd.DataFrame(runtime.dataset_records)
-
-
-def build_column_dictionary(
-    runtime: PopulationHealthRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build column dictionary for Population Health outputs.
-    """
-
-    rows: List[Dict[str, Any]] = []
-
-    for dataset_name, dataframe in output_assets.items():
-        for column in dataframe.columns:
-            rows.append(
-                {
-                    "run_id": runtime.run_id,
-                    "layer_name": runtime.layer_name,
-                    "domain_name": runtime.domain_name,
-                    "dataset_name": dataset_name,
-                    "column_name": column,
-                    "data_type": str(dataframe[column].dtype),
-                    "non_null_count": int(dataframe[column].notna().sum()),
-                    "null_count": int(dataframe[column].isna().sum()),
-                    "row_count": int(len(dataframe)),
-                    "event_timestamp_utc": utc_now().isoformat(),
-                }
-            )
-
-    return pd.DataFrame(rows)
-
-
-def build_rule_catalog(runtime: PopulationHealthRuntime) -> pd.DataFrame:
-    """
-    Build rule catalog.
-    """
-
-    return pd.DataFrame(runtime.rule_records)
-
-
-def build_execution_summary(
-    runtime: PopulationHealthRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> pd.DataFrame:
-    """
-    Build one-row execution summary.
-    """
-
-    end_time = utc_now()
-    duration_seconds = (end_time - runtime.start_time_utc).total_seconds()
-
-    failed_validation_count = sum(
-        1 for record in runtime.validation_records
-        if record.get("status") == STATUS_FAILED
-    )
-
-    summary = {
-        "run_id": runtime.run_id,
-        "layer_name": runtime.layer_name,
-        "domain_name": runtime.domain_name,
-        "config_path": str(runtime.config_path),
-        "start_time_utc": runtime.start_time_utc.isoformat(),
-        "end_time_utc": end_time.isoformat(),
-        "duration_seconds": duration_seconds,
-        "output_asset_count": len(output_assets),
-        "audit_record_count": len(runtime.audit_records),
-        "validation_record_count": len(runtime.validation_records),
-        "failed_validation_count": failed_validation_count,
-        "dataset_record_count": len(runtime.dataset_records),
-        "rule_record_count": len(runtime.rule_records),
-        "status": STATUS_SUCCESS if failed_validation_count == 0 else STATUS_WARNING,
-    }
-
-    return pd.DataFrame([summary])
-
-
-###############################################################################
-# Output Writing
-###############################################################################
-
-def get_output_path(runtime: PopulationHealthRuntime, output_group: str, output_name: str) -> Path:
-    """
-    Resolve output path from configuration.
-    """
-
-    output_config = runtime.config.get("paths", {}).get(output_group, {})
-    output_entry = output_config.get(output_name)
-
-    if isinstance(output_entry, dict):
-        raw_path = output_entry.get("path")
-    else:
-        raw_path = output_entry
-
-    if not raw_path:
-        default_path = f"data/analytics_platform/{output_group}/{output_name}"
-        raw_path = default_path
-
-    return normalize_path(runtime.project_root, raw_path)
-
-
-def write_population_health_outputs(
-    runtime: PopulationHealthRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write Population Health analytics outputs.
-    """
-
-    output_format = get_output_format(runtime)
-
-    for output_name, dataframe in output_assets.items():
-        output_path = get_output_path(runtime, "outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote Population Health output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-        add_audit_record(
-            runtime=runtime,
-            step_name=f"write_output:{output_name}",
-            status=STATUS_SUCCESS,
-            message="Population Health output written successfully.",
-            row_count=len(dataframe),
-            output_path=str(output_path),
-        )
-
-
-def write_metadata_and_audit_outputs(
-    runtime: PopulationHealthRuntime,
-    output_assets: Dict[str, pd.DataFrame],
-) -> None:
-    """
-    Write metadata and audit outputs.
-    """
-
-    output_format = get_output_format(runtime)
-
-    metadata_assets = {
-        "population_health_dataset_inventory": build_dataset_inventory(runtime),
-        "population_health_column_dictionary": build_column_dictionary(runtime, output_assets),
-        "population_health_rule_catalog": build_rule_catalog(runtime),
-    }
-
-    audit_assets = {
-        "population_health_audit_records": pd.DataFrame(runtime.audit_records),
-        "population_health_validation_results": pd.DataFrame(runtime.validation_records),
-        "population_health_execution_summary": build_execution_summary(runtime, output_assets),
-    }
-
-    for output_name, dataframe in metadata_assets.items():
-        output_path = get_output_path(runtime, "metadata_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote metadata output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-    for output_name, dataframe in audit_assets.items():
-        output_path = get_output_path(runtime, "audit_outputs", output_name)
-        output_path = output_path_with_format(output_path, output_format)
-        write_dataset(dataframe, output_path, output_format)
-
-        runtime.logger.info(
-            "Wrote audit output: %s | Rows: %s | Path: %s",
-            output_name,
-            len(dataframe),
-            output_path,
-        )
-
-
-###############################################################################
 # Main Orchestration
 ###############################################################################
 
-def build_population_health_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
+def build_population_health_layer(
+    config_path: str = DEFAULT_CONFIG_PATH,
+) -> AnalyticsBuildResult:
     """
-    Build complete Population Health Analytics layer.
+    Purpose
+    -------
+    Build the complete Population Health Analytics layer.
+
+    Parameters
+    ----------
+    config_path:
+        Population Health configuration path.
+
+    Returns
+    -------
+    AnalyticsBuildResult
+        Standard build result containing status, message, row count, and column
+        count.
+
+    Raises
+    ------
+    None
+        Exceptions are captured and returned as a failed AnalyticsBuildResult.
+
+    Notes
+    -----
+    This function is intentionally the only public build entry point for the
+    Population Health domain.
     """
 
-    runtime: Optional[PopulationHealthRuntime] = None
+    runtime: Optional[AnalyticsDomainRuntime] = None
 
     try:
         runtime = initialize_runtime(config_path)
-        logger = runtime.logger
+        logger = runtime.get_logger(LOGGER_NAME)
 
-        logger.info("Configuration path: %s", runtime.config_path)
+        logger.info("=" * 80)
+        logger.info("MedFabric Population Health Analytics started")
+        logger.info("=" * 80)
+        logger.info("Configuration file: %s", runtime.config_file)
 
-        datasets = load_input_datasets(runtime)
-        validate_inputs(runtime, datasets)
+        output_format = get_output_format(
+            runtime=runtime,
+            domain_section=DOMAIN_SECTION,
+        )
+
+        datasets = load_input_datasets(
+            runtime=runtime,
+            input_source_layer_map={
+                "member_360": "Layer 1E - Gold",
+                "demographic_features": "Layer 1F - Feature Store",
+                "enrollment_features": "Layer 1F - Feature Store",
+                "cost_features": "Layer 1F - Feature Store",
+                "utilization_features": "Layer 1F - Feature Store",
+                "risk_features": "Layer 1F - Feature Store",
+                "provider_attribution_features": "Layer 1F - Feature Store",
+                "sdoh_features": "Layer 1F - Feature Store",
+                "member_360_semantic_view": "Layer 1G - Semantic Layer",
+                "provider_attribution_semantic_view": "Layer 1G - Semantic Layer",
+            },
+            key_column_map={
+                "member_360": "member_id",
+                "demographic_features": "member_id",
+                "enrollment_features": "member_id",
+                "cost_features": "member_id",
+                "utilization_features": "member_id",
+                "risk_features": "member_id",
+                "sdoh_features": "member_id",
+                "member_360_semantic_view": "member_id",
+                "provider_attribution_features": "provider_id",
+                "provider_attribution_semantic_view": "provider_id",
+            },
+        )
 
         population_cohorts = build_population_cohorts(runtime, datasets)
         risk_stratification = build_risk_stratification(runtime, datasets)
@@ -1569,54 +1286,95 @@ def build_population_health_layer(config_path: str = DEFAULT_CONFIG_PATH) -> Bui
             "provider_attribution_analytics": provider_attribution_analytics,
         }
 
-        write_population_health_outputs(runtime, output_assets)
-
-        add_audit_record(
+        write_output_assets(
             runtime=runtime,
-            step_name="build_population_health_layer",
-            status=STATUS_SUCCESS,
-            message="Population Health Analytics completed successfully.",
+            output_assets=output_assets,
+            output_format=output_format,
         )
 
-        write_metadata_and_audit_outputs(runtime, output_assets)
+        add_success_audit(
+            runtime=runtime,
+            step_name="build_population_health_layer",
+            message="Population Health Analytics completed successfully.",
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            source_layer="Layer 2A - Population Health Analytics",
+            source_dataset="population_health_outputs",
+        )
+
+        write_metadata_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            dataset_inventory_name="population_health_dataset_inventory",
+            column_dictionary_name="population_health_column_dictionary",
+            rule_catalog_name="population_health_rule_catalog",
+        )
+
+        write_audit_outputs(
+            runtime=runtime,
+            output_assets=output_assets,
+            output_format=output_format,
+            audit_records_name="population_health_audit_records",
+            validation_results_name="population_health_validation_results",
+            execution_summary_name="population_health_execution_summary",
+        )
 
         logger.info("=" * 80)
         logger.info("MedFabric Population Health Analytics completed successfully")
         logger.info("=" * 80)
 
-        return BuildResult(
+        return AnalyticsBuildResult(
             name="population_health",
             status=STATUS_SUCCESS,
             message="Population Health Analytics completed successfully.",
-            row_count=sum(len(df) for df in output_assets.values()),
-            column_count=sum(len(df.columns) for df in output_assets.values()),
+            row_count=sum(len(dataframe) for dataframe in output_assets.values()),
+            column_count=sum(len(dataframe.columns) for dataframe in output_assets.values()),
         )
 
     except Exception as exc:
         if runtime is not None:
-            runtime.logger.error("=" * 80)
-            runtime.logger.error("Population Health Analytics failed")
-            runtime.logger.error("Error: %s", exc)
-            runtime.logger.error("Traceback:\n%s", traceback.format_exc())
-            runtime.logger.error("=" * 80)
+            logger = runtime.get_logger(LOGGER_NAME)
 
-            add_audit_record(
+            logger.error("=" * 80)
+            logger.error("Population Health Analytics failed")
+            logger.error("Error: %s", exc)
+            logger.error("Traceback:\n%s", traceback.format_exc())
+            logger.error("=" * 80)
+
+            add_failed_audit(
                 runtime=runtime,
                 step_name="build_population_health_layer",
-                status=STATUS_FAILED,
                 message=str(exc),
+                source_layer="Layer 2A - Population Health Analytics",
+                source_dataset="population_health",
             )
 
             try:
-                write_metadata_and_audit_outputs(runtime, {})
-            except Exception as audit_exc:
-                runtime.logger.error("Failed to write audit outputs: %s", audit_exc)
+                output_format = get_output_format(
+                    runtime=runtime,
+                    domain_section=DOMAIN_SECTION,
+                )
 
-        return BuildResult(
+                write_audit_outputs(
+                    runtime=runtime,
+                    output_assets={},
+                    output_format=output_format,
+                    audit_records_name="population_health_audit_records",
+                    validation_results_name="population_health_validation_results",
+                    execution_summary_name="population_health_execution_summary",
+                )
+            except Exception as audit_exc:
+                logger.error("Failed to write audit outputs: %s", audit_exc)
+
+        return AnalyticsBuildResult(
             name="population_health",
             status=STATUS_FAILED,
             message=str(exc),
         )
+
+    finally:
+        if runtime is not None:
+            runtime.context.logging.close()
 
 
 ###############################################################################
@@ -1625,10 +1383,22 @@ def build_population_health_layer(config_path: str = DEFAULT_CONFIG_PATH) -> Bui
 
 def main() -> None:
     """
-    Command-line entry point.
+    Purpose
+    -------
+    Command-line entry point for Population Health Analytics.
 
-    Run:
-        python -m src.analytics_platform.population_health.build_population_health_layer
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    SystemExit
+        Raised with exit code 1 when execution fails.
     """
 
     config_path = os.environ.get(
