@@ -6,157 +6,93 @@
 #   config/modeling/modeling.yaml
 #
 # Layer:
-#   Layer 2D - Model Training & Scoring
+#   Layer 2D - Enterprise Modeling Framework
 #
 # Purpose:
-#   Defines configuration for MedFabric model training and model scoring.
+#   Defines configuration for target generation, model training, champion
+#   selection, model scoring, model artifacts, metadata, validation, and audit.
 #
-# Architectural Rule:
-#   Modeling is independent of the Analytics Platform.
-#
-#   Modeling consumes Feature Store outputs and produces model artifacts,
-#   model metadata, feature importance outputs, model metrics, and scoring
-#   datasets.
-#
-#   Modeling must NOT depend on:
-#
-#     data/analytics_platform/
-#
-#   Predictive Analytics will later consume model scoring outputs.
-#
-# Inputs:
-#   Feature Store:
-#     - data/feature_store/demographic_features.parquet
-#     - data/feature_store/enrollment_features.parquet
-#     - data/feature_store/claims_features.parquet
-#     - data/feature_store/cost_features.parquet
-#     - data/feature_store/utilization_features.parquet
-#     - data/feature_store/laboratory_features.parquet
-#     - data/feature_store/pharmacy_features.parquet
-#     - data/feature_store/sdoh_features.parquet
-#     - data/feature_store/provider_attribution_features.parquet
-#     - data/feature_store/temporal_features.parquet
-#     - data/feature_store/risk_features.parquet
-#
-# Outputs:
-#   models/
-#   data/modeling/
-#   data/scoring/
-#   data/metadata/
-#   data/audit/
+# Architectural Rules:
+#   - Modeling consumes Feature Store outputs only.
+#   - Modeling must not read from data/analytics_platform/.
+#   - Modeling must not import from src.analytics_platform.
+#   - Targets must be configurable.
+#   - Target source columns must be excluded from training features.
+#   - Algorithms must be controlled by YAML, not hardcoded in Python.
 #
 # Run:
 #   python -m src.modeling.build_modeling_layer
-#
 ###############################################################################
 
 modeling:
-  layer_name: "Layer 2D - Model Training & Scoring"
+  layer_name: "Layer 2D - Enterprise Modeling Framework"
   domain_name: "Modeling"
   output_format: "parquet"
   enabled: true
-
-###############################################################################
-# Logging
-###############################################################################
 
 logging:
   level: "INFO"
   module_log_dir: "logs/modules"
   log_file_name: "modeling_layer.log"
 
-###############################################################################
-# Paths
-###############################################################################
-
 paths:
-
-  ###########################################################################
-  # Feature Store Inputs
-  ###########################################################################
-
   inputs:
-
     demographic_features:
       path: "data/feature_store/demographic_features.parquet"
       format: "parquet"
       required: true
-
     enrollment_features:
       path: "data/feature_store/enrollment_features.parquet"
       format: "parquet"
       required: true
-
     claims_features:
       path: "data/feature_store/claims_features.parquet"
       format: "parquet"
       required: true
-
     cost_features:
       path: "data/feature_store/cost_features.parquet"
       format: "parquet"
       required: true
-
     utilization_features:
       path: "data/feature_store/utilization_features.parquet"
       format: "parquet"
       required: true
-
     laboratory_features:
       path: "data/feature_store/laboratory_features.parquet"
       format: "parquet"
       required: true
-
     pharmacy_features:
       path: "data/feature_store/pharmacy_features.parquet"
       format: "parquet"
       required: true
-
     sdoh_features:
       path: "data/feature_store/sdoh_features.parquet"
       format: "parquet"
       required: false
-
     temporal_features:
       path: "data/feature_store/temporal_features.parquet"
       format: "parquet"
       required: false
-
     risk_features:
       path: "data/feature_store/risk_features.parquet"
       format: "parquet"
       required: true
 
-  ###########################################################################
-  # Modeling Outputs
-  ###########################################################################
-
   outputs:
-
     modeling_root:
       path: "data/modeling"
-
     scoring_root:
       path: "data/scoring"
-
     model_root:
       path: "models"
-
     modeling_feature_matrix:
       path: "data/modeling/modeling_feature_matrix"
-
     modeling_target_summary:
       path: "data/modeling/modeling_target_summary"
-
     modeling_execution_summary:
       path: "data/modeling/modeling_execution_summary"
 
-  ###########################################################################
-  # Model Artifact Outputs
-  ###########################################################################
-
   model_outputs:
-
     high_cost:
       model_path: "models/high_cost/high_cost_model.pkl"
       metrics_path: "models/high_cost/high_cost_model_metrics"
@@ -205,60 +141,33 @@ paths:
       feature_importance_path: "models/care_gap_closure/care_gap_closure_feature_importance"
       scoring_path: "data/scoring/care_gap_closure_scores"
 
-  ###########################################################################
-  # Metadata Outputs
-  ###########################################################################
-
   metadata_outputs:
-
     default_output_dir:
       path: "data/metadata"
-
     modeling_dataset_inventory:
       path: "data/metadata/modeling_dataset_inventory"
-
     modeling_column_dictionary:
       path: "data/metadata/modeling_column_dictionary"
-
     modeling_model_registry:
       path: "data/metadata/modeling_model_registry"
-
     modeling_feature_registry:
       path: "data/metadata/modeling_feature_registry"
 
-  ###########################################################################
-  # Audit Outputs
-  ###########################################################################
-
   audit_outputs:
-
     default_output_dir:
       path: "data/audit"
-
     modeling_audit_records:
       path: "data/audit/modeling_audit_records"
-
     modeling_validation_results:
       path: "data/audit/modeling_validation_results"
-
     modeling_execution_summary:
       path: "data/audit/modeling_execution_summary"
 
-###############################################################################
-# Join Keys
-###############################################################################
-
 join_keys:
-
   member_key: "member_id"
-
-###############################################################################
-# Feature Matrix
-###############################################################################
 
 feature_matrix:
   enabled: true
-
   base_dataset: "risk_features"
   member_key: "member_id"
 
@@ -278,161 +187,262 @@ feature_matrix:
     - "feature_store_load_timestamp"
     - "feature_store_record_status"
 
-###############################################################################
-# Modeling Defaults
-###############################################################################
-
 modeling_defaults:
-
   random_state: 42
   test_size: 0.20
   validation_size: 0.20
   max_iter: 1000
   scoring_output_format: "parquet"
 
-  algorithm:
-    name: "random_forest_classifier"
-    type: "classification"
+  # Used by trainer.py to select the champion algorithm.
+  selection_metric: "roc_auc"
 
   preprocessing:
-
     numeric_imputation_strategy: "median"
     categorical_imputation_strategy: "most_frequent"
     scale_numeric_features: false
     one_hot_encode_categorical_features: true
 
 ###############################################################################
+# Training
+#
+# Release 1 keeps the algorithm set intentionally small for validation speed.
+# Release 2 can enable random_forest, extra_trees, gradient_boosting,
+# hist_gradient_boosting, and adaboost after the framework is stable.
+###############################################################################
+
+training:
+  enabled: true
+  strategy: "best_model"
+
+  algorithms:
+    dummy_classifier:
+      enabled: true
+      name: "Dummy Classifier"
+      model_type: "classification"
+      parameters:
+        strategy: "most_frequent"
+
+    logistic_regression:
+      enabled: false
+      name: "Logistic Regression"
+      model_type: "classification"
+      parameters:
+        penalty: "l2"
+        C: 1.0
+        solver: "lbfgs"
+        max_iter: 1000
+        class_weight: null
+
+    random_forest:
+      enabled: false
+      name: "Random Forest"
+      model_type: "classification"
+      parameters:
+        n_estimators: 200
+        max_depth: null
+        min_samples_split: 2
+        min_samples_leaf: 1
+        class_weight: null
+        n_jobs: -1
+
+    extra_trees:
+      enabled: false
+      name: "Extra Trees"
+      model_type: "classification"
+      parameters:
+        n_estimators: 200
+        max_depth: null
+        min_samples_split: 2
+        min_samples_leaf: 1
+        class_weight: null
+        n_jobs: -1
+
+    gradient_boosting:
+      enabled: false
+      name: "Gradient Boosting"
+      model_type: "classification"
+      parameters:
+        n_estimators: 100
+        learning_rate: 0.1
+        max_depth: 3
+
+    hist_gradient_boosting:
+      enabled: false
+      name: "Histogram Gradient Boosting"
+      model_type: "classification"
+      parameters:
+        max_iter: 100
+        learning_rate: 0.1
+        max_leaf_nodes: 31
+
+    adaboost:
+      enabled: false
+      name: "AdaBoost"
+      model_type: "classification"
+      parameters:
+        n_estimators: 100
+        learning_rate: 1.0
+
+###############################################################################
 # Model Definitions
+#
+# Target Framework Style:
+#
+#   target:
+#     strategy: "quantile"
+#     output_column: "<generated target column>"
+#     source:
+#       dataset: "<feature store dataset>"
+#       column: "<source feature column>"
+#     parameters:
+#       quantile: 0.90
+#       positive_direction: "greater_than_or_equal"
+#
+# This removes rigid fixed thresholds and adapts targets to the current
+# generated population.
 ###############################################################################
 
 models:
-
   high_cost:
     enabled: true
     model_name: "High Cost Model"
     model_type: "classification"
-    target_column: "high_cost_target"
-    target_rule:
-      source_dataset: "cost_features"
-      source_column: "total_paid_amount"
-      operator: "greater_than_or_equal"
-      value: 122736.145
+    target:
+      strategy: "quantile"
+      output_column: "high_cost_target"
+      source:
+        dataset: "cost_features"
+        column: "total_paid_amount"
+      parameters:
+        quantile: 0.90
+        positive_direction: "greater_than_or_equal"
     score_column: "high_cost_risk_score"
     prediction_column: "high_cost_prediction"
     risk_tier_column: "high_cost_risk_tier"
     positive_label: 1
 
   readmission:
-    enabled: true
+    enabled: false
     model_name: "Readmission Model"
     model_type: "classification"
-    target_column: "readmission_target"
-    target_rule:
-      source_dataset: "utilization_features"
-      source_column: "total_claims"
-      operator: "greater_than_or_equal"
-      value: 13
+    target:
+      strategy: "quantile"
+      output_column: "readmission_target"
+      source:
+        dataset: "utilization_features"
+        column: "total_claims"
+      parameters:
+        quantile: 0.85
+        positive_direction: "greater_than_or_equal"
     score_column: "readmission_risk_score"
     prediction_column: "readmission_prediction"
     risk_tier_column: "readmission_risk_tier"
     positive_label: 1
 
   er_utilization:
-    enabled: true
+    enabled: false
     model_name: "ER Utilization Model"
     model_type: "classification"
-    target_column: "er_utilization_target"
-    target_rule:
-      source_dataset: "utilization_features"
-      source_column: "total_claims"
-      operator: "greater_than_or_equal"
-      value: 12
+    target:
+      strategy: "quantile"
+      output_column: "er_utilization_target"
+      source:
+        dataset: "utilization_features"
+        column: "total_claims"
+      parameters:
+        quantile: 0.85
+        positive_direction: "greater_than_or_equal"
     score_column: "er_utilization_risk_score"
     prediction_column: "er_utilization_prediction"
     risk_tier_column: "er_utilization_risk_tier"
     positive_label: 1
 
   rising_risk:
-    enabled: true
+    enabled: false
     model_name: "Rising Risk Model"
     model_type: "classification"
-    target_column: "rising_risk_target"
-    target_rule:
-      source_dataset: "risk_features"
-      source_column: "latest_sdoh_risk_score"
-      operator: "greater_than_or_equal"
-      value: 14
+    target:
+      strategy: "quantile"
+      output_column: "rising_risk_target"
+      source:
+        dataset: "risk_features"
+        column: "latest_sdoh_risk_score"
+      parameters:
+        quantile: 0.85
+        positive_direction: "greater_than_or_equal"
     score_column: "rising_risk_score"
     prediction_column: "rising_risk_prediction"
     risk_tier_column: "rising_risk_tier"
     positive_label: 1
 
   chronic_progression:
-    enabled: true
+    enabled: false
     model_name: "Chronic Progression Model"
     model_type: "classification"
-    target_column: "chronic_progression_target"
-    target_rule:
-      source_dataset: "risk_features"
-      source_column: "latest_sdoh_risk_score"
-      operator: "greater_than_or_equal"
-      value: 14
+    target:
+      strategy: "quantile"
+      output_column: "chronic_progression_target"
+      source:
+        dataset: "risk_features"
+        column: "latest_sdoh_risk_score"
+      parameters:
+        quantile: 0.85
+        positive_direction: "greater_than_or_equal"
     score_column: "chronic_progression_risk_score"
     prediction_column: "chronic_progression_prediction"
     risk_tier_column: "chronic_progression_risk_tier"
     positive_label: 1
 
   medication_non_adherence:
-    enabled: true
+    enabled: false
     model_name: "Medication Non-Adherence Model"
     model_type: "classification"
-    target_column: "medication_non_adherence_target"
-    target_rule:
-      source_dataset: "pharmacy_features"
-      source_column: "total_pharmacy_claims"
-      operator: "less_than"
-      value: 8
+    target:
+      strategy: "quantile"
+      output_column: "medication_non_adherence_target"
+      source:
+        dataset: "pharmacy_features"
+        column: "total_pharmacy_claims"
+      parameters:
+        quantile: 0.20
+        positive_direction: "less_than_or_equal"
     score_column: "medication_non_adherence_risk_score"
     prediction_column: "medication_non_adherence_prediction"
     risk_tier_column: "medication_non_adherence_risk_tier"
     positive_label: 1
 
   avoidable_admission:
-    enabled: true
+    enabled: false
     model_name: "Avoidable Admission Model"
     model_type: "classification"
-    target_column: "avoidable_admission_target"
-    target_rule:
-      source_dataset: "risk_features"
-      source_column: "high_cost_risk_signal"
-      operator: "equals"
-      value: 1
+    target:
+      strategy: "existing_column"
+      output_column: "high_cost_risk_signal"
     score_column: "avoidable_admission_risk_score"
     prediction_column: "avoidable_admission_prediction"
     risk_tier_column: "avoidable_admission_risk_tier"
     positive_label: 1
 
   care_gap_closure:
-    enabled: true
+    enabled: false
     model_name: "Care Gap Closure Model"
     model_type: "classification"
-    target_column: "care_gap_closure_target"
-    target_rule:
-      source_dataset: "laboratory_features"
-      source_column: "abnormal_lab_rate"
-      operator: "less_than"
-      value: 0.50
+    target:
+      strategy: "quantile"
+      output_column: "care_gap_closure_target"
+      source:
+        dataset: "laboratory_features"
+        column: "abnormal_lab_rate"
+      parameters:
+        quantile: 0.50
+        positive_direction: "less_than_or_equal"
     score_column: "care_gap_closure_score"
     prediction_column: "care_gap_closure_prediction"
     risk_tier_column: "care_gap_closure_tier"
     positive_label: 1
 
-###############################################################################
-# Risk Tier Rules
-###############################################################################
-
 risk_tiers:
-
   very_high:
     min_value: 0.85
     max_value: 1.00
@@ -457,63 +467,44 @@ risk_tiers:
     label: "Low"
     priority_rank: 4
 
-###############################################################################
-# Validation Rules
-###############################################################################
-
 validation:
   enabled: true
-
   rules:
-
     required_inputs_exist:
       enabled: true
       severity: "ERROR"
-
     required_columns_exist:
       enabled: true
       severity: "ERROR"
-
     datasets_not_empty:
       enabled: true
       severity: "ERROR"
-
     member_key_not_null:
       enabled: true
       severity: "ERROR"
-
     target_distribution_check:
       enabled: true
       severity: "WARNING"
-
+    target_leakage_check:
+      enabled: true
+      severity: "ERROR"
     model_training_success_check:
       enabled: true
       severity: "ERROR"
-
     scoring_output_row_count_check:
       enabled: true
       severity: "WARNING"
 
-###############################################################################
-# Metadata
-###############################################################################
-
 metadata:
   enabled: true
-
   include_column_statistics: true
   include_dataset_inventory: true
   include_feature_registry: true
   include_model_registry: true
   include_lineage: true
 
-###############################################################################
-# Audit
-###############################################################################
-
 audit:
   enabled: true
-
   include_step_audit: true
   include_validation_results: true
   include_execution_summary: true
