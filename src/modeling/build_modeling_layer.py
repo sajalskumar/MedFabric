@@ -11,36 +11,21 @@
 # Purpose:
 #     Lightweight orchestrator for the MedFabric Modeling layer.
 #
-#     This builder coordinates the Modeling Framework components:
-#
+#     This builder coordinates:
 #       - Feature Store input loading
 #       - Modeling feature matrix construction
-#       - Target Builder Framework
-#       - Multi-algorithm training framework
+#       - Target generation
+#       - Multi-algorithm training
 #       - Champion model selection
 #       - Population scoring
 #       - Feature importance extraction
 #       - Model registry creation
 #       - Metadata and audit output writing
 #
-# Architectural Rules:
-#     - Modeling consumes Feature Store outputs only.
-#     - Modeling must not read from data/analytics_platform/.
-#     - Modeling must not import from src.analytics_platform.
-#     - Modeling must use the global MedFabric PipelineContext run_id.
-#     - The builder orchestrates only; business logic belongs in framework
-#       modules under src/modeling/.
-#
-# Inputs:
-#     config/modeling/modeling.yaml
-#     data/feature_store/*.parquet
-#
-# Outputs:
-#     data/modeling/
-#     data/scoring/
-#     data/metadata/
-#     data/audit/
-#     models/
+# Parallelism Scope:
+#     - Project-wide parallel configuration is read from config/pipeline.yaml.
+#     - Modeling currently uses parallelism only for candidate algorithm training.
+#     - Scoring remains sequential until Modeling is fully stabilized.
 #
 # Run:
 #     python -m src.modeling.build_modeling_layer
@@ -62,10 +47,12 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import yaml
 
+import fnmatch
+import time
+
+from src.common.parallel_utils import resolve_parallelism_config
 from src.common.pipeline_context import create_pipeline_context
-from src.modeling.evaluation.feature_importance import (
-    build_feature_importance_output,
-)
+from src.modeling.evaluation.feature_importance import build_feature_importance_output
 from src.modeling.registry.model_registry import (
     build_model_registry_dataframe,
     build_model_registry_record,
@@ -81,11 +68,10 @@ from src.modeling.training.trainer import train_model_candidates
 ###############################################################################
 
 DEFAULT_CONFIG_PATH = "config/modeling/modeling.yaml"
+DEFAULT_PIPELINE_CONFIG_PATH = "config/pipeline.yaml"
 
 DEFAULT_LAYER_NAME = "Layer 2D - Enterprise Modeling Framework"
-
 DEFAULT_DOMAIN_NAME = "Modeling"
-
 DEFAULT_OUTPUT_FORMAT = "parquet"
 
 SUPPORTED_OUTPUT_FORMATS = {"parquet", "csv", "json"}
@@ -104,19 +90,17 @@ STATUS_SKIPPED = "SKIPPED"
 class ModelingRuntime:
     """
     Runtime context for one Modeling layer execution.
-
-    Important
-    ---------
-    run_id must come from the global MedFabric PipelineContext. Modeling should
-    not generate an isolated local run_id because its outputs need to align with
-    the enterprise pipeline audit trail.
     """
 
     run_id: str
     project_root: Path
     config_path: Path
+    pipeline_config_path: Path
     start_time_utc: datetime
+    event_timestamp_utc: str
     config: Dict[str, Any]
+    pipeline_config: Dict[str, Any]
+    parallelism_config: Dict[str, Any]
     logger: logging.Logger
     layer_name: str
     domain_name: str
@@ -124,6 +108,8 @@ class ModelingRuntime:
     validation_records: List[Dict[str, Any]] = field(default_factory=list)
     dataset_records: List[Dict[str, Any]] = field(default_factory=list)
     model_registry_records: List[Dict[str, Any]] = field(default_factory=list)
+    candidate_leaderboard_frames: List[pd.DataFrame] = field(default_factory=list)
+    champion_summary_frames: List[pd.DataFrame] = field(default_factory=list)
 
 
 @dataclass
@@ -157,11 +143,7 @@ def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
     """
 
     path = Path(raw_path)
-
-    if path.is_absolute():
-        return path
-
-    return project_root / path
+    return path if path.is_absolute() else project_root / path
 
 
 def ensure_directory(path: Path) -> None:
@@ -174,15 +156,11 @@ def ensure_directory(path: Path) -> None:
 
 def output_path_with_format(path: Path, output_format: str) -> Path:
     """
-    Ensure an output path has the configured file suffix.
+    Ensure output path has the configured file suffix.
     """
 
     suffix = f".{output_format}"
-
-    if path.suffix:
-        return path.with_suffix(suffix)
-
-    return Path(str(path) + suffix)
+    return path.with_suffix(suffix) if path.suffix else Path(str(path) + suffix)
 
 
 ###############################################################################
@@ -196,11 +174,6 @@ def configure_logging(
 ) -> logging.Logger:
     """
     Configure Modeling Framework logging.
-
-    Notes
-    -----
-    This logger writes to the Modeling module log while using the global
-    PipelineContext run_id.
     """
 
     logging_config = config.get("logging", {})
@@ -231,7 +204,7 @@ def configure_logging(
 
     class RunIdFilter(logging.Filter):
         """
-        Inject global run_id into every Modeling log record.
+        Inject global run_id into every log record.
         """
 
         def filter(self, record: logging.LogRecord) -> bool:
@@ -281,6 +254,20 @@ def load_yaml_config(config_path: Path) -> Dict[str, Any]:
     return config
 
 
+def load_optional_yaml_config(config_path: Path) -> Dict[str, Any]:
+    """
+    Load optional YAML configuration.
+
+    Used for config/pipeline.yaml. If the file is missing, Modeling continues
+    with sequential fallback parallelism settings.
+    """
+
+    if not config_path.exists():
+        return {}
+
+    return load_yaml_config(config_path)
+
+
 def validate_config(config: Dict[str, Any]) -> None:
     """
     Validate required Modeling configuration sections.
@@ -328,29 +315,21 @@ def validate_config(config: Dict[str, Any]) -> None:
     ]
 
     missing_path_sections = [
-        section for section in required_path_sections
-        if section not in paths
+        section for section in required_path_sections if section not in paths
     ]
 
     if missing_path_sections:
-        raise ValueError(
-            f"Missing required paths sections: {missing_path_sections}"
-        )
+        raise ValueError(f"Missing required paths sections: {missing_path_sections}")
 
 
 def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRuntime:
     """
     Initialize Modeling runtime using global PipelineContext.
-
-    Important
-    ---------
-    Modeling must not generate its own local run_id. The run_id must come from
-    PipelineContext so all MedFabric layers share the same audit and metadata
-    lineage when executed as part of the enterprise pipeline.
     """
 
     project_root = Path.cwd()
     config_path = normalize_path(project_root, config_path_raw)
+    pipeline_config_path = normalize_path(project_root, DEFAULT_PIPELINE_CONFIG_PATH)
 
     pipeline_context = create_pipeline_context(
         pipeline_name="MedFabric Modeling Framework",
@@ -359,6 +338,8 @@ def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRu
     run_id = pipeline_context.run_id
 
     config = load_yaml_config(config_path)
+    pipeline_config = load_optional_yaml_config(pipeline_config_path)
+
     validate_config(config)
 
     modeling_config = config.get("modeling", {})
@@ -372,18 +353,32 @@ def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRu
         run_id=run_id,
     )
 
+    start_time_utc = utc_now()
+    event_timestamp_utc = start_time_utc.isoformat()
+
+    parallelism_config = resolve_parallelism_config(
+        pipeline_config=pipeline_config,
+    )
+
     runtime = ModelingRuntime(
         run_id=run_id,
         project_root=project_root,
         config_path=config_path,
-        start_time_utc=utc_now(),
+        pipeline_config_path=pipeline_config_path,
+        start_time_utc=start_time_utc,
+        event_timestamp_utc=event_timestamp_utc,
         config=config,
+        pipeline_config=pipeline_config,
+        parallelism_config=parallelism_config,
         logger=logger,
         layer_name=layer_name,
         domain_name=domain_name,
     )
 
     logger.info("Global pipeline run ID resolved from PipelineContext: %s", run_id)
+    logger.info("Runtime event timestamp UTC: %s", event_timestamp_utc)
+    logger.info("Pipeline config path: %s", pipeline_config_path)
+    logger.info("Parallelism config: %s", parallelism_config)
 
     add_audit_record(
         runtime=runtime,
@@ -396,7 +391,7 @@ def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRu
 
 
 ###############################################################################
-# Audit / Validation / Metadata Records
+# Audit / Validation / Dataset Records
 ###############################################################################
 
 def add_audit_record(
@@ -421,7 +416,7 @@ def add_audit_record(
             "message": message,
             "row_count": row_count,
             "output_path": output_path,
-            "event_timestamp_utc": utc_now().isoformat(),
+            "event_timestamp_utc": runtime.event_timestamp_utc,
         }
     )
 
@@ -448,7 +443,7 @@ def add_validation_record(
             "status": status,
             "message": message,
             "failed_count": failed_count,
-            "event_timestamp_utc": utc_now().isoformat(),
+            "event_timestamp_utc": runtime.event_timestamp_utc,
         }
     )
 
@@ -479,7 +474,7 @@ def add_dataset_record(
             "row_count": row_count,
             "column_count": column_count,
             "message": message,
-            "event_timestamp_utc": utc_now().isoformat(),
+            "event_timestamp_utc": runtime.event_timestamp_utc,
         }
     )
 
@@ -558,7 +553,7 @@ def get_output_path(
     output_name: str,
 ) -> Path:
     """
-    Resolve a named output path from modeling.yaml.
+    Resolve named output path from modeling.yaml.
     """
 
     output_config = runtime.config.get("paths", {}).get(output_group, {})
@@ -580,7 +575,7 @@ def get_model_output_config(
     model_key: str,
 ) -> Dict[str, Any]:
     """
-    Return configured artifact/scoring output paths for a model.
+    Return artifact/scoring output paths for a model.
     """
 
     output_config = (
@@ -603,11 +598,27 @@ def get_model_output_config(
     missing = [key for key in required_keys if key not in output_config]
 
     if missing:
-        raise ValueError(
-            f"Model output config for {model_key} missing keys: {missing}"
-        )
+        raise ValueError(f"Model output config for {model_key} missing keys: {missing}")
 
     return output_config
+
+
+def get_selection_metric(
+    modeling_defaults: Dict[str, Any],
+    training_config: Dict[str, Any],
+) -> str:
+    """
+    Resolve champion selection metric.
+    """
+
+    return (
+        training_config
+        .get("metrics", {})
+        .get(
+            "primary_metric",
+            modeling_defaults.get("selection_metric", "roc_auc"),
+        )
+    )
 
 
 ###############################################################################
@@ -617,9 +628,6 @@ def get_model_output_config(
 def load_input_datasets(runtime: ModelingRuntime) -> Dict[str, pd.DataFrame]:
     """
     Load configured Feature Store inputs.
-
-    Modeling must consume Feature Store only. Optional inputs are skipped if
-    missing. Required inputs fail fast.
     """
 
     inputs_config = runtime.config.get("paths", {}).get("inputs", {})
@@ -722,12 +730,6 @@ def prepare_dataset_for_join(
 ) -> pd.DataFrame:
     """
     Prepare one Feature Store dataset for member-level joining.
-
-    This function:
-      - validates member key
-      - deduplicates to member grain
-      - drops configured excluded columns
-      - prefixes colliding columns with dataset name
     """
 
     if member_key not in dataframe.columns:
@@ -760,7 +762,7 @@ def build_feature_matrix(
     datasets: Dict[str, pd.DataFrame],
 ) -> pd.DataFrame:
     """
-    Build unified modeling feature matrix from configured Feature Store datasets.
+    Build unified modeling feature matrix from Feature Store datasets.
     """
 
     config = runtime.config.get("feature_matrix", {})
@@ -815,7 +817,7 @@ def build_feature_matrix(
         )
 
     matrix["modeling_layer_run_id"] = runtime.run_id
-    matrix["modeling_layer_built_at_utc"] = utc_now().isoformat()
+    matrix["modeling_layer_built_at_utc"] = runtime.event_timestamp_utc
 
     add_dataset_record(
         runtime=runtime,
@@ -842,15 +844,18 @@ def get_feature_columns(
     member_key: str,
     target_columns: List[str],
     leakage_columns: List[str],
+    leakage_config: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """
     Select safe training feature columns.
-
     Excludes:
+
       - member key
       - generated target columns
-      - target leakage source columns
+      - target source leakage columns
       - Modeling runtime metadata columns
+      - YAML-configured leakage columns
+      - YAML-configured leakage patterns    
     """
 
     excluded = set(target_columns)
@@ -859,6 +864,18 @@ def get_feature_columns(
     excluded.add("modeling_layer_run_id")
     excluded.add("modeling_layer_built_at_utc")
 
+    leakage_config = leakage_config or {}
+
+    if bool(leakage_config.get("enabled", False)):
+        additional_columns = leakage_config.get("additional_columns", [])
+        exclude_patterns = leakage_config.get("exclude_patterns", [])
+
+        excluded.update(additional_columns)
+
+        for column in dataframe.columns:
+            for pattern in exclude_patterns:
+                if fnmatch.fnmatch(column.lower(), str(pattern).lower()):
+                    excluded.add(column)   
     return [column for column in dataframe.columns if column not in excluded]
 
 
@@ -868,10 +885,7 @@ def get_feature_columns(
 
 def get_algorithms_config(runtime: ModelingRuntime) -> Dict[str, Any]:
     """
-    Return algorithm configuration from YAML.
-
-    Algorithms must be YAML-controlled. This function intentionally reads
-    config/modeling/modeling.yaml rather than hardcoding algorithm behavior.
+    Return algorithm configuration from modeling.yaml.
     """
 
     training_config = runtime.config.get("training", {})
@@ -902,10 +916,16 @@ def run_models(
     """
 
     models_config = runtime.config.get("models", {})
-    modeling_defaults = runtime.config.get("modeling_defaults", {})
+    modeling_defaults = dict(runtime.config.get("modeling_defaults", {}))
+    training_config = runtime.config.get("training", {})
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
     risk_tiers_config = runtime.config.get("risk_tiers", {})
     output_format = get_output_format(runtime)
+
+    selection_metric = get_selection_metric(
+        modeling_defaults=modeling_defaults,
+        training_config=training_config,
+    )
 
     runtime.logger.info("START: Target Framework")
 
@@ -952,15 +972,20 @@ def run_models(
         member_key=member_key,
         target_columns=target_columns,
         leakage_columns=leakage_columns,
+        leakage_config=runtime.config.get("leakage_detection", {}),
     )
 
     if not feature_columns:
         raise ValueError("No eligible training feature columns found.")
 
-    runtime.logger.info("Training feature count: %s", len(feature_columns))
+    runtime.logger.info(
+        "Training feature count: %s",
+        len(feature_columns)
+        )
 
     scoring_outputs: Dict[str, pd.DataFrame] = {}
-    algorithms_config = get_algorithms_config(runtime)
+
+    get_algorithms_config(runtime)
 
     for model_key, model_config in models_config.items():
         if not bool(model_config.get("enabled", True)):
@@ -974,6 +999,7 @@ def run_models(
         runtime.logger.info("=" * 80)
         runtime.logger.info("START MODEL: %s", model_key)
         runtime.logger.info("=" * 80)
+        model_start_time = time.perf_counter()
 
         training_result = train_model_candidates(
             dataframe=modeling_frame,
@@ -982,19 +1008,32 @@ def run_models(
             model_key=model_key,
             model_name=model_name,
             modeling_defaults=modeling_defaults,
-            algorithms_config=algorithms_config,
+            training_config=training_config,
             run_id=runtime.run_id,
+            event_timestamp_utc=runtime.event_timestamp_utc,
             layer_name=runtime.layer_name,
             domain_name=runtime.domain_name,
+            parallelism_config=runtime.parallelism_config,
+            logger=runtime.logger,
         )
 
+        runtime.candidate_leaderboard_frames.append(
+            training_result.metrics_dataframe
+            )
+        runtime.champion_summary_frames.append(
+            training_result.champion_summary_dataframe
+            )
+
+        
         runtime.logger.info(
             "Champion selected | Model: %s | Algorithm: %s | Metrics: %s",
             model_key,
             training_result.champion_algorithm_key,
             training_result.champion_metrics,
         )
-
+        scoring_start_time = time.perf_counter()
+        runtime.logger.info("START Population Scoring | Model: %s", model_key)
+        
         scoring_result = score_population(
             dataframe=modeling_frame,
             feature_columns=feature_columns,
@@ -1006,7 +1045,12 @@ def run_models(
             risk_tiers_config=risk_tiers_config,
             run_id=runtime.run_id,
         )
-
+        runtime.logger.info(
+            "COMPLETE Population Scoring | Model: %s | %.2f sec | Rows: %s",
+            model_key,
+            time.perf_counter() - scoring_start_time,
+            scoring_result.row_count,
+        )
         feature_importance_df = build_feature_importance_output(
             pipeline=training_result.champion_pipeline,
             feature_columns=feature_columns,
@@ -1027,10 +1071,7 @@ def run_models(
         )
 
         metrics_path = output_path_with_format(
-            normalize_path(
-                runtime.project_root,
-                output_config.get("metrics_path"),
-            ),
+            normalize_path(runtime.project_root, output_config.get("metrics_path")),
             "parquet",
         )
 
@@ -1043,10 +1084,7 @@ def run_models(
         )
 
         scoring_path = output_path_with_format(
-            normalize_path(
-                runtime.project_root,
-                output_config.get("scoring_path"),
-            ),
+            normalize_path(runtime.project_root, output_config.get("scoring_path")),
             output_format,
         )
 
@@ -1067,7 +1105,7 @@ def run_models(
             target_column=target_column,
             champion_algorithm_key=training_result.champion_algorithm_key,
             champion_algorithm_name=training_result.champion_algorithm_name,
-            selection_metric=modeling_defaults.get("selection_metric", "roc_auc"),
+            selection_metric=selection_metric,
             champion_metrics=training_result.champion_metrics,
             model_path=str(model_path),
             scoring_path=str(scoring_path),
@@ -1093,15 +1131,15 @@ def run_models(
             runtime=runtime,
             step_name=f"model_complete:{model_key}",
             status=STATUS_SUCCESS,
-            message=(
-                f"Model completed. Champion="
-                f"{training_result.champion_algorithm_key}"
-            ),
+            message=f"Model completed. Champion={training_result.champion_algorithm_key}",
             row_count=scoring_result.row_count,
             output_path=str(scoring_path),
         )
 
-        runtime.logger.info("COMPLETE MODEL: %s", model_key)
+        runtime.logger.info("COMPLETE MODEL: %s | Total Time: %.2f sec",
+                            model_key,
+                            time.perf_counter() - model_start_time,
+        )
 
     return scoring_outputs
 
@@ -1160,9 +1198,19 @@ def build_execution_summary(
                 "layer_name": runtime.layer_name,
                 "domain_name": runtime.domain_name,
                 "config_path": str(runtime.config_path),
+                "pipeline_config_path": str(runtime.pipeline_config_path),
                 "start_time_utc": runtime.start_time_utc.isoformat(),
                 "end_time_utc": end_time.isoformat(),
                 "duration_seconds": duration_seconds,
+                "parallel_execution": runtime.parallelism_config.get(
+                    "parallel_execution"
+                ),
+                "max_parallel_workers": runtime.parallelism_config.get(
+                    "max_parallel_workers"
+                ),
+                "parallel_strategy": runtime.parallelism_config.get(
+                    "parallel_strategy"
+                ),
                 "model_count": len(scoring_outputs),
                 "scored_dataset_count": len(scoring_outputs),
                 "dataset_record_count": len(runtime.dataset_records),
@@ -1185,10 +1233,22 @@ def write_metadata_and_audit_outputs(
     scoring_outputs: Dict[str, pd.DataFrame],
 ) -> None:
     """
-    Write Modeling metadata and audit outputs.
+    Write Modeling metadata, audit, and enterprise modeling outputs.
     """
 
     output_format = get_output_format(runtime)
+
+    candidate_leaderboard_df = (
+        pd.concat(runtime.candidate_leaderboard_frames, ignore_index=True)
+        if runtime.candidate_leaderboard_frames
+        else pd.DataFrame()
+    )
+
+    champion_summary_df = (
+        pd.concat(runtime.champion_summary_frames, ignore_index=True)
+        if runtime.champion_summary_frames
+        else pd.DataFrame()
+    )
 
     metadata_assets = {
         "modeling_dataset_inventory": pd.DataFrame(runtime.dataset_records),
@@ -1201,9 +1261,14 @@ def write_metadata_and_audit_outputs(
         "modeling_audit_records": pd.DataFrame(runtime.audit_records),
         "modeling_validation_results": pd.DataFrame(runtime.validation_records),
         "modeling_execution_summary": build_execution_summary(
-            runtime,
-            scoring_outputs,
+            runtime=runtime,
+            scoring_outputs=scoring_outputs,
         ),
+    }
+
+    modeling_output_assets = {
+        "candidate_model_leaderboard": candidate_leaderboard_df,
+        "champion_model_summary": champion_summary_df,
     }
 
     for output_name, dataframe in metadata_assets.items():
@@ -1236,6 +1301,21 @@ def write_metadata_and_audit_outputs(
             output_path,
         )
 
+    for output_name, dataframe in modeling_output_assets.items():
+        output_path = output_path_with_format(
+            get_output_path(runtime, "outputs", output_name),
+            output_format,
+        )
+
+        write_dataset(dataframe, output_path, output_format)
+
+        runtime.logger.info(
+            "Wrote modeling output: %s | Rows: %s | Path: %s",
+            output_name,
+            len(dataframe),
+            output_path,
+        )
+
 
 ###############################################################################
 # Main Orchestration
@@ -1244,12 +1324,6 @@ def write_metadata_and_audit_outputs(
 def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
     """
     Build complete Modeling Framework.
-
-    Returns
-    -------
-    BuildResult
-        Standard result object used by standalone execution and pipeline
-        orchestration.
     """
 
     runtime: Optional[ModelingRuntime] = None
@@ -1326,9 +1400,6 @@ def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
 def main() -> None:
     """
     Command-line entry point.
-
-    Run:
-        python -m src.modeling.build_modeling_layer
     """
 
     config_path = os.environ.get(

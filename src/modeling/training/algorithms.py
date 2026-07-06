@@ -175,7 +175,7 @@ def get_default_algorithms_config() -> Dict[str, Any]:
 
     return {
         "dummy_classifier": {
-            "enabled": true if False else True,
+            "enabled": True,
             "name": "Dummy Classifier",
             "parameters": {
                 "strategy": "most_frequent",

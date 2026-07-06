@@ -10,6 +10,7 @@
 #
 # Purpose:
 #     Extracts feature importance outputs from trained champion model pipelines.
+#.    this is standalone module validation test, not a production modelling logic. 
 #
 # Run:
 #     python -m src.modeling.evaluation.feature_importance
@@ -172,8 +173,17 @@ def main() -> None:
                 "one_hot_encode_categorical_features": True,
             },
         },
-        algorithms_config=get_default_algorithms_config(),
+        training_config={
+            "prformance":{
+                "enable_training_sample": False,
+            },
+            "metrics": {
+                "primary_metric": "roc_auc",
+            },
+            "algorithm":get_default_algorithms_config(),
+        },
         run_id="TEST_RUN",
+        event_timestamp_utc="TEST_TIMESTAMP_UTC"
     )
 
     output = build_feature_importance_output(

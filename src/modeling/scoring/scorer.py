@@ -183,8 +183,8 @@ def main() -> None:
         dataframe=dataframe,
         feature_columns=["age", "gender"],
         target_column="target",
-        model_key="high_cost",
-        model_name="High Cost Model",
+        model_key="validation_model",
+        model_name="Validation Model",
         modeling_defaults={
             "random_state": 42,
             "test_size": 0.20,
@@ -196,8 +196,17 @@ def main() -> None:
                 "one_hot_encode_categorical_features": True,
             },
         },
-        algorithms_config=get_default_algorithms_config(),
+        training_config={
+            "performance": {
+                "enalble_training_sample": False
+            },
+            "metrics": {
+                "primary_metric": "roc_auc",
+            },
+            "algorithms": get_default_algorithms_config(),
+        },
         run_id="TEST_RUN",
+        event_timestamp_utc="TEST_TIMESTAMP_UTC"
     )
 
     risk_tiers_config = {
@@ -211,13 +220,13 @@ def main() -> None:
         dataframe=dataframe,
         feature_columns=["age", "gender"],
         member_key="member_id",
-        model_key="high_cost",
-        model_name="High Cost Model",
+        model_key="validation_model",
+        model_name="Validation Model",
         pipeline=training_result.champion_pipeline,
         model_config={
-            "score_column": "high_cost_risk_score",
-            "prediction_column": "high_cost_prediction",
-            "risk_tier_column": "high_cost_risk_tier",
+            "score_column": "validation_model_score",
+            "prediction_column": "validation_model_prediction",
+            "risk_tier_column": "validation_model_risk_tier",
         },
         risk_tiers_config=risk_tiers_config,
         run_id="TEST_RUN",
