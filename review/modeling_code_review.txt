@@ -1,0 +1,5769 @@
+
+###############################################################################
+# FILE: config/modeling/modeling.yaml
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/modeling.yaml
+#
+# Layer:
+#   Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#   Defines all configuration for the MedFabric Modeling layer, including:
+#
+#     - Feature Store input datasets
+#     - Modeling feature matrix construction
+#     - Dynamic target generation
+#     - Target leakage prevention
+#     - Candidate algorithm training
+#     - Champion model selection
+#     - Population scoring
+#     - Risk tier assignment
+#     - Model artifacts
+#     - Model metrics
+#     - Feature importance outputs
+#     - Model registry metadata
+#     - Audit and validation outputs
+#     - Candidate model leaderboard outputs
+#     - Champion model summary outputs
+#     - Training sampling controls
+#     - Algorithm timing controls
+#     - Future experiment tracking controls
+#     - Future drift monitoring controls
+#
+# Architectural Rules:
+#   - Modeling consumes Feature Store outputs only.
+#   - Modeling must not read from data/analytics_platform/.
+#   - Modeling must not import from src.analytics_platform.
+#   - Targets must be generated from YAML-defined target configuration.
+#   - Target source columns must be excluded from training features.
+#   - Algorithms must be enabled, disabled, and parameterized in YAML.
+#   - Training optimization settings must affect training only.
+#   - Scoring must always run against the full modeling population.
+#   - Champion selection must be based on configured evaluation metrics.
+#   - Model outputs must be traceable to run ID and configuration.
+#
+# Current Release:
+#   Release 2D.1 - Modeling Framework Foundation
+#
+# Current Scope:
+#   - Target Builder Framework
+#   - Dynamic quantile-based targets
+#   - YAML-controlled algorithms
+#   - Global PipelineContext run ID
+#   - Clean modeling orchestrator
+#   - Training sample configuration
+#   - Algorithm timing configuration
+#   - Candidate leaderboard configuration
+#   - Champion model summary configuration
+#
+# Next Scope:
+#   - Full multi-algorithm champion selection
+#   - Cross-validation
+#   - Hyperparameter search
+#   - Threshold optimization
+#   - Experiment tracking
+#   - Model drift monitoring
+#
+# Run:
+#   python -m src.modeling.build_modeling_layer
+#
+###############################################################################
+
+
+###############################################################################
+# Modeling Layer Identity
+###############################################################################
+
+modeling:
+
+  layer_name: "Layer 2D - Enterprise Modeling Framework"
+
+  domain_name: "Modeling"
+
+  output_format: "parquet"
+
+  enabled: true
+
+
+###############################################################################
+# Framework Metadata
+###############################################################################
+
+framework:
+
+  version: "2D.1"
+
+  release_name: "Release 2D.1 - Modeling Framework Foundation"
+
+  owner: "MedFabric"
+
+  status: "active"
+
+  configuration_type: "enterprise_modeling_framework"
+
+
+###############################################################################
+# Logging
+###############################################################################
+
+logging:
+
+  level: "INFO"
+
+  module_log_dir: "logs/modules"
+
+  log_file_name: "modeling_layer.log"
+
+
+###############################################################################
+# Paths
+###############################################################################
+
+paths:
+
+  inputs:
+
+    demographic_features:
+      path: "data/feature_store/demographic_features.parquet"
+      format: "parquet"
+      required: true
+
+    enrollment_features:
+      path: "data/feature_store/enrollment_features.parquet"
+      format: "parquet"
+      required: true
+
+    claims_features:
+      path: "data/feature_store/claims_features.parquet"
+      format: "parquet"
+      required: true
+
+    cost_features:
+      path: "data/feature_store/cost_features.parquet"
+      format: "parquet"
+      required: true
+
+    utilization_features:
+      path: "data/feature_store/utilization_features.parquet"
+      format: "parquet"
+      required: true
+
+    laboratory_features:
+      path: "data/feature_store/laboratory_features.parquet"
+      format: "parquet"
+      required: true
+
+    pharmacy_features:
+      path: "data/feature_store/pharmacy_features.parquet"
+      format: "parquet"
+      required: true
+
+    sdoh_features:
+      path: "data/feature_store/sdoh_features.parquet"
+      format: "parquet"
+      required: false
+
+    temporal_features:
+      path: "data/feature_store/temporal_features.parquet"
+      format: "parquet"
+      required: false
+
+    risk_features:
+      path: "data/feature_store/risk_features.parquet"
+      format: "parquet"
+      required: true
+
+
+  outputs:
+
+    modeling_root:
+      path: "data/modeling"
+
+    scoring_root:
+      path: "data/scoring"
+
+    model_root:
+      path: "models"
+
+    modeling_feature_matrix:
+      path: "data/modeling/modeling_feature_matrix"
+
+    modeling_target_summary:
+      path: "data/modeling/modeling_target_summary"
+
+    modeling_execution_summary:
+      path: "data/modeling/modeling_execution_summary"
+
+    candidate_model_leaderboard:
+      path: "data/modeling/candidate_model_leaderboard"
+
+    champion_model_summary:
+      path: "data/modeling/champion_model_summary"
+
+    target_leakage_report:
+      path: "data/modeling/target_leakage_report"
+
+    feature_baseline_statistics:
+      path: "data/modeling/feature_baseline_statistics"
+
+
+  model_outputs:
+
+    high_cost:
+      model_path: "models/high_cost/high_cost_model.pkl"
+      metrics_path: "models/high_cost/high_cost_model_metrics"
+      feature_importance_path: "models/high_cost/high_cost_feature_importance"
+      scoring_path: "data/scoring/high_cost_scores"
+
+    readmission:
+      model_path: "models/readmission/readmission_model.pkl"
+      metrics_path: "models/readmission/readmission_model_metrics"
+      feature_importance_path: "models/readmission/readmission_feature_importance"
+      scoring_path: "data/scoring/readmission_scores"
+
+    er_utilization:
+      model_path: "models/er_utilization/er_utilization_model.pkl"
+      metrics_path: "models/er_utilization/er_utilization_model_metrics"
+      feature_importance_path: "models/er_utilization/er_utilization_feature_importance"
+      scoring_path: "data/scoring/er_utilization_scores"
+
+    rising_risk:
+      model_path: "models/rising_risk/rising_risk_model.pkl"
+      metrics_path: "models/rising_risk/rising_risk_model_metrics"
+      feature_importance_path: "models/rising_risk/rising_risk_feature_importance"
+      scoring_path: "data/scoring/rising_risk_scores"
+
+    chronic_progression:
+      model_path: "models/chronic_progression/chronic_progression_model.pkl"
+      metrics_path: "models/chronic_progression/chronic_progression_model_metrics"
+      feature_importance_path: "models/chronic_progression/chronic_progression_feature_importance"
+      scoring_path: "data/scoring/chronic_progression_scores"
+
+    medication_non_adherence:
+      model_path: "models/medication_non_adherence/medication_non_adherence_model.pkl"
+      metrics_path: "models/medication_non_adherence/medication_non_adherence_model_metrics"
+      feature_importance_path: "models/medication_non_adherence/medication_non_adherence_feature_importance"
+      scoring_path: "data/scoring/medication_non_adherence_scores"
+
+    avoidable_admission:
+      model_path: "models/avoidable_admission/avoidable_admission_model.pkl"
+      metrics_path: "models/avoidable_admission/avoidable_admission_model_metrics"
+      feature_importance_path: "models/avoidable_admission/avoidable_admission_feature_importance"
+      scoring_path: "data/scoring/avoidable_admission_scores"
+
+    care_gap_closure:
+      model_path: "models/care_gap_closure/care_gap_closure_model.pkl"
+      metrics_path: "models/care_gap_closure/care_gap_closure_model_metrics"
+      feature_importance_path: "models/care_gap_closure/care_gap_closure_feature_importance"
+      scoring_path: "data/scoring/care_gap_closure_scores"
+
+
+  metadata_outputs:
+
+    default_output_dir:
+      path: "data/metadata"
+
+    modeling_dataset_inventory:
+      path: "data/metadata/modeling_dataset_inventory"
+
+    modeling_column_dictionary:
+      path: "data/metadata/modeling_column_dictionary"
+
+    modeling_model_registry:
+      path: "data/metadata/modeling_model_registry"
+
+    modeling_feature_registry:
+      path: "data/metadata/modeling_feature_registry"
+
+
+  audit_outputs:
+
+    default_output_dir:
+      path: "data/audit"
+
+    modeling_audit_records:
+      path: "data/audit/modeling_audit_records"
+
+    modeling_validation_results:
+      path: "data/audit/modeling_validation_results"
+
+    modeling_execution_summary:
+      path: "data/audit/modeling_execution_summary"
+
+
+###############################################################################
+# Join Keys
+###############################################################################
+
+join_keys:
+
+  member_key: "member_id"
+
+
+###############################################################################
+# Feature Matrix
+###############################################################################
+
+feature_matrix:
+
+  enabled: true
+
+  base_dataset: "risk_features"
+
+  member_key: "member_id"
+
+  join_datasets:
+    - "demographic_features"
+    - "enrollment_features"
+    - "claims_features"
+    - "cost_features"
+    - "utilization_features"
+    - "laboratory_features"
+    - "pharmacy_features"
+    - "sdoh_features"
+    - "temporal_features"
+
+  exclude_columns:
+    - "feature_store_run_id"
+    - "feature_store_load_timestamp"
+    - "feature_store_record_status"
+
+
+###############################################################################
+# Modeling Defaults
+###############################################################################
+
+modeling_defaults:
+
+  random_state: 42
+
+  test_size: 0.20
+
+  validation_size: 0.20
+
+  max_iter: 1000
+
+  scoring_output_format: "parquet"
+
+  selection_metric: "roc_auc"
+
+  preprocessing:
+
+    numeric_imputation_strategy: "median"
+
+    categorical_imputation_strategy: "most_frequent"
+
+    scale_numeric_features: true
+
+    one_hot_encode_categorical_features: true
+
+
+###############################################################################
+# Training
+###############################################################################
+
+training:
+
+  enabled: true
+
+  strategy: "best_model"
+
+  performance:
+
+    enable_training_sample: true
+
+    train_sample_fraction: 0.20
+
+    min_train_rows: 5000
+
+    max_train_rows: 20000
+
+    sampling_strategy: "stratified"
+
+    log_algorithm_timing: true
+
+  cross_validation:
+
+    enabled: false
+
+    folds: 5
+
+    shuffle: true
+
+  hyperparameter_search:
+
+    enabled: false
+
+    method: "random_search"
+
+    folds: 5
+
+    iterations: 25
+
+    scoring_metric: "roc_auc"
+
+  imbalance:
+
+    enabled: false
+
+    strategy: "class_weight"
+
+    supported_strategies:
+      - "none"
+      - "class_weight"
+      - "undersample"
+      - "oversample"
+
+  threshold_optimization:
+
+    enabled: false
+
+    strategy: "fixed"
+
+    fixed_threshold: 0.50
+
+    optimization_metric: "f1"
+
+  metrics:
+
+    primary_metric: "roc_auc"
+
+    secondary_metrics:
+      - "accuracy"
+      - "precision"
+      - "recall"
+      - "f1"
+      - "balanced_accuracy"
+
+  algorithms:
+
+    dummy_classifier:
+      enabled: true
+      name: "Dummy Classifier"
+      model_type: "classification"
+      parameters:
+        strategy: "most_frequent"
+
+    logistic_regression:
+      enabled: true
+      name: "Logistic Regression"
+      model_type: "classification"
+      parameters:
+        penalty: "l2"
+        C: 1.0
+        solver: "lbfgs"
+        max_iter: 500
+        class_weight: null
+
+    random_forest:
+      enabled: false
+      name: "Random Forest"
+      model_type: "classification"
+      parameters:
+        n_estimators: 200
+        max_depth: null
+        min_samples_split: 2
+        min_samples_leaf: 1
+        class_weight: null
+        n_jobs: -1
+
+    extra_trees:
+      enabled: false
+      name: "Extra Trees"
+      model_type: "classification"
+      parameters:
+        n_estimators: 200
+        max_depth: null
+        min_samples_split: 2
+        min_samples_leaf: 1
+        class_weight: null
+        n_jobs: -1
+
+    gradient_boosting:
+      enabled: false
+      name: "Gradient Boosting"
+      model_type: "classification"
+      parameters:
+        n_estimators: 100
+        learning_rate: 0.1
+        max_depth: 3
+
+    hist_gradient_boosting:
+      enabled: false
+      name: "Histogram Gradient Boosting"
+      model_type: "classification"
+      parameters:
+        max_iter: 100
+        learning_rate: 0.1
+        max_leaf_nodes: 31
+
+    adaboost:
+      enabled: false
+      name: "AdaBoost"
+      model_type: "classification"
+      parameters:
+        n_estimators: 100
+        learning_rate: 1.0
+
+
+###############################################################################
+# Experiment Tracking
+###############################################################################
+
+experiments:
+
+  enabled: false
+
+  save_all_candidate_results: true
+
+  retain_top_n_candidates: 10
+
+  include_algorithm_parameters: true
+
+  include_training_sample_details: true
+
+  include_timing_details: true
+
+
+###############################################################################
+# Explainability
+###############################################################################
+
+explainability:
+
+  enabled: true
+
+  feature_importance:
+
+    enabled: true
+
+    method: "model_native"
+
+  permutation_importance:
+
+    enabled: false
+
+    n_repeats: 5
+
+    random_state: 42
+
+  shap:
+
+    enabled: false
+
+  partial_dependence:
+
+    enabled: false
+
+
+###############################################################################
+# Drift Monitoring
+###############################################################################
+
+drift:
+
+  enabled: false
+
+  baseline_strategy: "latest_champion_training_run"
+
+  psi_threshold: 0.20
+
+  ks_threshold: 0.10
+
+  output_path: "data/modeling/drift"
+
+
+###############################################################################
+# Model Definitions
+###############################################################################
+
+models:
+
+  high_cost:
+    enabled: true
+    model_name: "High Cost Model"
+    model_type: "classification"
+
+    target:
+      strategy: "quantile"
+      output_column: "high_cost_target"
+      source:
+        dataset: "cost_features"
+        column: "total_paid_amount"
+      parameters:
+        quantile: 0.90
+        positive_direction: "greater_than_or_equal"
+
+    score_column: "high_cost_risk_score"
+    prediction_column: "high_cost_prediction"
+    risk_tier_column: "high_cost_risk_tier"
+    positive_label: 1
+
+  readmission:
+    enabled: true
+    model_name: "Readmission Model"
+    model_type: "classification"
+
+    target:
+      strategy: "quantile"
+      output_column: "readmission_target"
+      source:
+        dataset: "utilization_features"
+        column: "total_claims"
+      parameters:
+        quantile: 0.85
+        positive_direction: "greater_than_or_equal"
+
+    score_column: "readmission_risk_score"
+    prediction_column: "readmission_prediction"
+    risk_tier_column: "readmission_risk_tier"
+    positive_label: 1
+
+  er_utilization:
+    enabled: true
+    model_name: "ER Utilization Model"
+    model_type: "classification"
+
+    target:
+      strategy: "quantile"
+      output_column: "er_utilization_target"
+      source:
+        dataset: "utilization_features"
+        column: "total_claims"
+      parameters:
+        quantile: 0.85
+        positive_direction: "greater_than_or_equal"
+
+    score_column: "er_utilization_risk_score"
+    prediction_column: "er_utilization_prediction"
+    risk_tier_column: "er_utilization_risk_tier"
+    positive_label: 1
+
+  rising_risk:
+    enabled: true
+    model_name: "Rising Risk Model"
+    model_type: "classification"
+
+    target:
+      strategy: "quantile"
+      output_column: "rising_risk_target"
+      source:
+        dataset: "risk_features"
+        column: "latest_sdoh_risk_score"
+      parameters:
+        quantile: 0.85
+        positive_direction: "greater_than_or_equal"
+
+    score_column: "rising_risk_score"
+    prediction_column: "rising_risk_prediction"
+    risk_tier_column: "rising_risk_tier"
+    positive_label: 1
+
+  chronic_progression:
+    enabled: true
+    model_name: "Chronic Progression Model"
+    model_type: "classification"
+
+    target:
+      strategy: "quantile"
+      output_column: "chronic_progression_target"
+      source:
+        dataset: "risk_features"
+        column: "latest_sdoh_risk_score"
+      parameters:
+        quantile: 0.85
+        positive_direction: "greater_than_or_equal"
+
+    score_column: "chronic_progression_risk_score"
+    prediction_column: "chronic_progression_prediction"
+    risk_tier_column: "chronic_progression_risk_tier"
+    positive_label: 1
+
+  medication_non_adherence:
+    enabled: true
+    model_name: "Medication Non-Adherence Model"
+    model_type: "classification"
+
+    target:
+      strategy: "quantile"
+      output_column: "medication_non_adherence_target"
+      source:
+        dataset: "pharmacy_features"
+        column: "total_pharmacy_claims"
+      parameters:
+        quantile: 0.20
+        positive_direction: "less_than_or_equal"
+
+    score_column: "medication_non_adherence_risk_score"
+    prediction_column: "medication_non_adherence_prediction"
+    risk_tier_column: "medication_non_adherence_risk_tier"
+    positive_label: 1
+
+  avoidable_admission:
+    enabled: true
+    model_name: "Avoidable Admission Model"
+    model_type: "classification"
+
+    target:
+      strategy: "existing_column"
+      output_column: "high_cost_risk_signal"
+
+    score_column: "avoidable_admission_risk_score"
+    prediction_column: "avoidable_admission_prediction"
+    risk_tier_column: "avoidable_admission_risk_tier"
+    positive_label: 1
+
+  care_gap_closure:
+    enabled: true
+    model_name: "Care Gap Closure Model"
+    model_type: "classification"
+
+    target:
+      strategy: "quantile"
+      output_column: "care_gap_closure_target"
+      source:
+        dataset: "laboratory_features"
+        column: "abnormal_lab_rate"
+      parameters:
+        quantile: 0.50
+        positive_direction: "less_than_or_equal"
+
+    score_column: "care_gap_closure_score"
+    prediction_column: "care_gap_closure_prediction"
+    risk_tier_column: "care_gap_closure_tier"
+    positive_label: 1
+
+
+###############################################################################
+# Risk Tiers
+###############################################################################
+
+risk_tiers:
+
+  very_high:
+    min_value: 0.85
+    max_value: 1.00
+    label: "Very High"
+    priority_rank: 1
+
+  high:
+    min_value: 0.70
+    max_value: 0.849999
+    label: "High"
+    priority_rank: 2
+
+  moderate:
+    min_value: 0.40
+    max_value: 0.699999
+    label: "Moderate"
+    priority_rank: 3
+
+  low:
+    min_value: 0.00
+    max_value: 0.399999
+    label: "Low"
+    priority_rank: 4
+
+
+###############################################################################
+# Scoring
+###############################################################################
+
+scoring:
+
+  enabled: true
+
+  score_full_population: true
+
+  include_probability: true
+
+  include_prediction: true
+
+  include_risk_tier: true
+
+  include_model_metadata: true
+
+  include_run_id: true
+
+  include_scoring_timestamp: true
+
+
+###############################################################################
+# Validation
+###############################################################################
+
+validation:
+
+  enabled: true
+
+  rules:
+
+    required_inputs_exist:
+      enabled: true
+      severity: "ERROR"
+
+    required_columns_exist:
+      enabled: true
+      severity: "ERROR"
+
+    datasets_not_empty:
+      enabled: true
+      severity: "ERROR"
+
+    member_key_not_null:
+      enabled: true
+      severity: "ERROR"
+
+    target_distribution_check:
+      enabled: true
+      severity: "WARNING"
+
+    target_leakage_check:
+      enabled: true
+      severity: "ERROR"
+
+    model_training_success_check:
+      enabled: true
+      severity: "ERROR"
+
+    scoring_output_row_count_check:
+      enabled: true
+      severity: "WARNING"
+
+    candidate_leaderboard_check:
+      enabled: true
+      severity: "WARNING"
+
+    champion_model_selected_check:
+      enabled: true
+      severity: "ERROR"
+
+
+###############################################################################
+# Metadata
+###############################################################################
+
+metadata:
+
+  enabled: true
+
+  include_column_statistics: true
+
+  include_dataset_inventory: true
+
+  include_feature_registry: true
+
+  include_model_registry: true
+
+  include_lineage: true
+
+  include_candidate_leaderboard: true
+
+  include_champion_summary: true
+
+  include_algorithm_parameters: true
+
+  include_training_sample_details: true
+
+
+###############################################################################
+# Audit
+###############################################################################
+
+audit:
+
+  enabled: true
+
+  include_step_audit: true
+
+  include_validation_results: true
+
+  include_execution_summary: true
+
+  include_training_timing: true
+
+  include_champion_selection_reason: true
+
+###############################################################################
+# Leakage Detection
+###############################################################################
+
+leakage_detection:
+
+  enabled: true
+
+  exclude_patterns:
+    - "*target*"
+    - "*signal*"
+    - "*high_cost_member_flag*"
+    - "*paid_amount*"
+    - "*allowed_amount*"
+
+  additional_columns:
+    - "high_cost_risk_signal"
+    - "high_cost_member_flag"
+    - "clinical_risk_signal"
+    - "sdoh_risk_signal"
+    - "total_paid_amount"
+    - "claims_features__total_paid_amount"
+    - "cost_features__total_paid_amount"
+    - "total_allowed_amount"
+    - "cost_features__total_allowed_amount"
+    - "total_pharmacy_paid_amount"
+    - "pharmacy_features__total_pharmacy_paid_amount"
+
+###############################################################################
+# End of File
+###############################################################################
+
+
+
+###############################################################################
+# FILE: src/modeling/__init__.py
+###############################################################################
+
+
+###############################################################################
+# FILE: src/modeling/build_modeling_layer.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/build_modeling_layer.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Lightweight orchestrator for the MedFabric Modeling layer.
+#
+#     This builder coordinates:
+#       - Feature Store input loading
+#       - Modeling feature matrix construction
+#       - Target generation
+#       - Multi-algorithm training
+#       - Champion model selection
+#       - Population scoring
+#       - Feature importance extraction
+#       - Model registry creation
+#       - Metadata and audit output writing
+#
+# Parallelism Scope:
+#     - Project-wide parallel configuration is read from config/pipeline.yaml.
+#     - Modeling currently uses parallelism only for candidate algorithm training.
+#     - Scoring remains sequential until Modeling is fully stabilized.
+#
+# Run:
+#     python -m src.modeling.build_modeling_layer
+#
+###############################################################################
+
+from __future__ import annotations
+
+import logging
+import os
+import pickle
+import sys
+import traceback
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+import yaml
+
+import fnmatch
+import time
+
+from src.common.parallel_utils import resolve_parallelism_config
+from src.common.pipeline_context import create_pipeline_context
+from src.modeling.evaluation.feature_importance import build_feature_importance_output
+from src.modeling.registry.model_registry import (
+    build_model_registry_dataframe,
+    build_model_registry_record,
+)
+from src.modeling.scoring.scorer import score_population
+from src.modeling.targets.leakage_detection import get_target_output_column
+from src.modeling.targets.target_builder import build_targets_for_enabled_models
+from src.modeling.training.trainer import train_model_candidates
+
+
+###############################################################################
+# Constants
+###############################################################################
+
+DEFAULT_CONFIG_PATH = "config/modeling/modeling.yaml"
+DEFAULT_PIPELINE_CONFIG_PATH = "config/pipeline.yaml"
+
+DEFAULT_LAYER_NAME = "Layer 2D - Enterprise Modeling Framework"
+DEFAULT_DOMAIN_NAME = "Modeling"
+DEFAULT_OUTPUT_FORMAT = "parquet"
+
+SUPPORTED_OUTPUT_FORMATS = {"parquet", "csv", "json"}
+
+STATUS_SUCCESS = "SUCCESS"
+STATUS_FAILED = "FAILED"
+STATUS_WARNING = "WARNING"
+STATUS_SKIPPED = "SKIPPED"
+
+
+###############################################################################
+# Runtime Objects
+###############################################################################
+
+@dataclass
+class ModelingRuntime:
+    """
+    Runtime context for one Modeling layer execution.
+    """
+
+    run_id: str
+    project_root: Path
+    config_path: Path
+    pipeline_config_path: Path
+    start_time_utc: datetime
+    event_timestamp_utc: str
+    config: Dict[str, Any]
+    pipeline_config: Dict[str, Any]
+    parallelism_config: Dict[str, Any]
+    logger: logging.Logger
+    layer_name: str
+    domain_name: str
+    audit_records: List[Dict[str, Any]] = field(default_factory=list)
+    validation_records: List[Dict[str, Any]] = field(default_factory=list)
+    dataset_records: List[Dict[str, Any]] = field(default_factory=list)
+    model_registry_records: List[Dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class BuildResult:
+    """
+    Standard result returned by the Modeling builder.
+    """
+
+    name: str
+    status: str
+    message: str
+    row_count: int = 0
+    column_count: int = 0
+
+
+###############################################################################
+# General Utilities
+###############################################################################
+
+def utc_now() -> datetime:
+    """
+    Return timezone-aware UTC timestamp.
+    """
+
+    return datetime.now(timezone.utc)
+
+
+def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
+    """
+    Resolve configured path relative to project root.
+    """
+
+    path = Path(raw_path)
+    return path if path.is_absolute() else project_root / path
+
+
+def ensure_directory(path: Path) -> None:
+    """
+    Create directory when missing.
+    """
+
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def output_path_with_format(path: Path, output_format: str) -> Path:
+    """
+    Ensure output path has the configured file suffix.
+    """
+
+    suffix = f".{output_format}"
+    return path.with_suffix(suffix) if path.suffix else Path(str(path) + suffix)
+
+
+###############################################################################
+# Logging
+###############################################################################
+
+def configure_logging(
+    project_root: Path,
+    config: Dict[str, Any],
+    run_id: str,
+) -> logging.Logger:
+    """
+    Configure Modeling Framework logging.
+    """
+
+    logging_config = config.get("logging", {})
+
+    log_level_name = logging_config.get("level", "INFO")
+    log_level = getattr(logging, str(log_level_name).upper(), logging.INFO)
+
+    log_dir = normalize_path(
+        project_root,
+        logging_config.get("module_log_dir", "logs/modules"),
+    )
+    ensure_directory(log_dir)
+
+    log_file_path = log_dir / logging_config.get(
+        "log_file_name",
+        "modeling_layer.log",
+    )
+
+    logger = logging.getLogger("medfabric.modeling")
+    logger.setLevel(log_level)
+    logger.handlers.clear()
+    logger.propagate = False
+
+    formatter = logging.Formatter(
+        fmt="[%(asctime)s] [RUN_ID=%(run_id)s] [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    class RunIdFilter(logging.Filter):
+        """
+        Inject global run_id into every log record.
+        """
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            record.run_id = run_id
+            return True
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(log_level)
+    stream_handler.setFormatter(formatter)
+    stream_handler.addFilter(RunIdFilter())
+
+    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(formatter)
+    file_handler.addFilter(RunIdFilter())
+
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
+
+    logger.info("=" * 80)
+    logger.info("MedFabric Modeling Framework started")
+    logger.info("=" * 80)
+    logger.info("Global Run ID: %s", run_id)
+    logger.info("Log file: %s", log_file_path)
+
+    return logger
+
+
+###############################################################################
+# Configuration
+###############################################################################
+
+def load_yaml_config(config_path: Path) -> Dict[str, Any]:
+    """
+    Load YAML configuration.
+    """
+
+    if not config_path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as file:
+        config = yaml.safe_load(file)
+
+    if not isinstance(config, dict):
+        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
+
+    return config
+
+
+def load_optional_yaml_config(config_path: Path) -> Dict[str, Any]:
+    """
+    Load optional YAML configuration.
+
+    Used for config/pipeline.yaml. If the file is missing, Modeling continues
+    with sequential fallback parallelism settings.
+    """
+
+    if not config_path.exists():
+        return {}
+
+    return load_yaml_config(config_path)
+
+
+def validate_config(config: Dict[str, Any]) -> None:
+    """
+    Validate required Modeling configuration sections.
+    """
+
+    required_sections = [
+        "modeling",
+        "logging",
+        "paths",
+        "join_keys",
+        "feature_matrix",
+        "modeling_defaults",
+        "training",
+        "models",
+        "risk_tiers",
+        "validation",
+        "metadata",
+        "audit",
+    ]
+
+    missing = [section for section in required_sections if section not in config]
+
+    if missing:
+        raise ValueError(f"Missing required Modeling config sections: {missing}")
+
+    output_format = config.get("modeling", {}).get(
+        "output_format",
+        DEFAULT_OUTPUT_FORMAT,
+    )
+
+    if output_format not in SUPPORTED_OUTPUT_FORMATS:
+        raise ValueError(
+            f"Unsupported output_format '{output_format}'. "
+            f"Supported: {sorted(SUPPORTED_OUTPUT_FORMATS)}"
+        )
+
+    paths = config.get("paths", {})
+
+    required_path_sections = [
+        "inputs",
+        "outputs",
+        "model_outputs",
+        "metadata_outputs",
+        "audit_outputs",
+    ]
+
+    missing_path_sections = [
+        section for section in required_path_sections if section not in paths
+    ]
+
+    if missing_path_sections:
+        raise ValueError(f"Missing required paths sections: {missing_path_sections}")
+
+
+def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRuntime:
+    """
+    Initialize Modeling runtime using global PipelineContext.
+    """
+
+    project_root = Path.cwd()
+    config_path = normalize_path(project_root, config_path_raw)
+    pipeline_config_path = normalize_path(project_root, DEFAULT_PIPELINE_CONFIG_PATH)
+
+    pipeline_context = create_pipeline_context(
+        pipeline_name="MedFabric Modeling Framework",
+    )
+
+    run_id = pipeline_context.run_id
+
+    config = load_yaml_config(config_path)
+    pipeline_config = load_optional_yaml_config(pipeline_config_path)
+
+    validate_config(config)
+
+    modeling_config = config.get("modeling", {})
+
+    layer_name = modeling_config.get("layer_name", DEFAULT_LAYER_NAME)
+    domain_name = modeling_config.get("domain_name", DEFAULT_DOMAIN_NAME)
+
+    logger = configure_logging(
+        project_root=project_root,
+        config=config,
+        run_id=run_id,
+    )
+
+    start_time_utc = utc_now()
+    event_timestamp_utc = start_time_utc.isoformat()
+
+    parallelism_config = resolve_parallelism_config(
+        pipeline_config=pipeline_config,
+    )
+
+    runtime = ModelingRuntime(
+        run_id=run_id,
+        project_root=project_root,
+        config_path=config_path,
+        pipeline_config_path=pipeline_config_path,
+        start_time_utc=start_time_utc,
+        event_timestamp_utc=event_timestamp_utc,
+        config=config,
+        pipeline_config=pipeline_config,
+        parallelism_config=parallelism_config,
+        logger=logger,
+        layer_name=layer_name,
+        domain_name=domain_name,
+    )
+
+    logger.info("Global pipeline run ID resolved from PipelineContext: %s", run_id)
+    logger.info("Runtime event timestamp UTC: %s", event_timestamp_utc)
+    logger.info("Pipeline config path: %s", pipeline_config_path)
+    logger.info("Parallelism config: %s", parallelism_config)
+
+    add_audit_record(
+        runtime=runtime,
+        step_name="initialize_runtime",
+        status=STATUS_SUCCESS,
+        message="Modeling runtime initialized successfully using PipelineContext.",
+    )
+
+    return runtime
+
+
+###############################################################################
+# Audit / Validation / Dataset Records
+###############################################################################
+
+def add_audit_record(
+    runtime: ModelingRuntime,
+    step_name: str,
+    status: str,
+    message: str,
+    row_count: Optional[int] = None,
+    output_path: Optional[str] = None,
+) -> None:
+    """
+    Add a Modeling audit record.
+    """
+
+    runtime.audit_records.append(
+        {
+            "run_id": runtime.run_id,
+            "layer_name": runtime.layer_name,
+            "domain_name": runtime.domain_name,
+            "step_name": step_name,
+            "status": status,
+            "message": message,
+            "row_count": row_count,
+            "output_path": output_path,
+            "event_timestamp_utc": runtime.event_timestamp_utc,
+        }
+    )
+
+
+def add_validation_record(
+    runtime: ModelingRuntime,
+    dataset_name: str,
+    rule_name: str,
+    status: str,
+    message: str,
+    failed_count: int = 0,
+) -> None:
+    """
+    Add a Modeling validation record.
+    """
+
+    runtime.validation_records.append(
+        {
+            "run_id": runtime.run_id,
+            "layer_name": runtime.layer_name,
+            "domain_name": runtime.domain_name,
+            "dataset_name": dataset_name,
+            "rule_name": rule_name,
+            "status": status,
+            "message": message,
+            "failed_count": failed_count,
+            "event_timestamp_utc": runtime.event_timestamp_utc,
+        }
+    )
+
+
+def add_dataset_record(
+    runtime: ModelingRuntime,
+    dataset_name: str,
+    dataset_type: str,
+    status: str,
+    path: Optional[str],
+    row_count: int,
+    column_count: int,
+    message: str,
+) -> None:
+    """
+    Add a Modeling dataset inventory record.
+    """
+
+    runtime.dataset_records.append(
+        {
+            "run_id": runtime.run_id,
+            "layer_name": runtime.layer_name,
+            "domain_name": runtime.domain_name,
+            "dataset_name": dataset_name,
+            "dataset_type": dataset_type,
+            "status": status,
+            "path": path,
+            "row_count": row_count,
+            "column_count": column_count,
+            "message": message,
+            "event_timestamp_utc": runtime.event_timestamp_utc,
+        }
+    )
+
+
+###############################################################################
+# IO Helpers
+###############################################################################
+
+def get_output_format(runtime: ModelingRuntime) -> str:
+    """
+    Return configured Modeling output format.
+    """
+
+    return runtime.config.get("modeling", {}).get(
+        "output_format",
+        DEFAULT_OUTPUT_FORMAT,
+    )
+
+
+def read_dataset(path: Path, file_format: str) -> pd.DataFrame:
+    """
+    Read dataset from disk.
+    """
+
+    if not path.exists():
+        raise FileNotFoundError(f"Input dataset not found: {path}")
+
+    if file_format == "parquet":
+        return pd.read_parquet(path)
+
+    if file_format == "csv":
+        return pd.read_csv(path)
+
+    if file_format == "json":
+        return pd.read_json(path)
+
+    raise ValueError(f"Unsupported input file format: {file_format}")
+
+
+def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None:
+    """
+    Write dataframe to disk.
+    """
+
+    ensure_directory(path.parent)
+
+    if file_format == "parquet":
+        dataframe.to_parquet(path, index=False)
+        return
+
+    if file_format == "csv":
+        dataframe.to_csv(path, index=False)
+        return
+
+    if file_format == "json":
+        dataframe.to_json(path, orient="records", indent=2)
+        return
+
+    raise ValueError(f"Unsupported output file format: {file_format}")
+
+
+def save_pickle_object(obj: Any, path: Path) -> None:
+    """
+    Save Python object as pickle.
+    """
+
+    ensure_directory(path.parent)
+
+    with path.open("wb") as file:
+        pickle.dump(obj, file)
+
+
+def get_output_path(
+    runtime: ModelingRuntime,
+    output_group: str,
+    output_name: str,
+) -> Path:
+    """
+    Resolve named output path from modeling.yaml.
+    """
+
+    output_config = runtime.config.get("paths", {}).get(output_group, {})
+    output_entry = output_config.get(output_name)
+
+    if isinstance(output_entry, dict):
+        raw_path = output_entry.get("path")
+    else:
+        raw_path = output_entry
+
+    if not raw_path:
+        raw_path = f"data/{output_group}/{output_name}"
+
+    return normalize_path(runtime.project_root, raw_path)
+
+
+def get_model_output_config(
+    runtime: ModelingRuntime,
+    model_key: str,
+) -> Dict[str, Any]:
+    """
+    Return artifact/scoring output paths for a model.
+    """
+
+    output_config = (
+        runtime.config
+        .get("paths", {})
+        .get("model_outputs", {})
+        .get(model_key, {})
+    )
+
+    if not output_config:
+        raise ValueError(f"Missing model output config for model: {model_key}")
+
+    required_keys = [
+        "model_path",
+        "metrics_path",
+        "feature_importance_path",
+        "scoring_path",
+    ]
+
+    missing = [key for key in required_keys if key not in output_config]
+
+    if missing:
+        raise ValueError(f"Model output config for {model_key} missing keys: {missing}")
+
+    return output_config
+
+
+def get_selection_metric(
+    modeling_defaults: Dict[str, Any],
+    training_config: Dict[str, Any],
+) -> str:
+    """
+    Resolve champion selection metric.
+    """
+
+    return (
+        training_config
+        .get("metrics", {})
+        .get(
+            "primary_metric",
+            modeling_defaults.get("selection_metric", "roc_auc"),
+        )
+    )
+
+
+###############################################################################
+# Input Loading
+###############################################################################
+
+def load_input_datasets(runtime: ModelingRuntime) -> Dict[str, pd.DataFrame]:
+    """
+    Load configured Feature Store inputs.
+    """
+
+    inputs_config = runtime.config.get("paths", {}).get("inputs", {})
+    datasets: Dict[str, pd.DataFrame] = {}
+
+    runtime.logger.info("START: Load Modeling Feature Store inputs")
+
+    for dataset_name, dataset_config in inputs_config.items():
+        raw_path = dataset_config.get("path")
+        file_format = dataset_config.get("format", "parquet")
+        required = bool(dataset_config.get("required", True))
+
+        if not raw_path:
+            message = f"No path configured for dataset: {dataset_name}"
+
+            if required:
+                raise ValueError(message)
+
+            add_audit_record(
+                runtime=runtime,
+                step_name=f"load_input:{dataset_name}",
+                status=STATUS_SKIPPED,
+                message=message,
+            )
+            continue
+
+        dataset_path = normalize_path(runtime.project_root, raw_path)
+
+        try:
+            dataframe = read_dataset(dataset_path, file_format)
+            datasets[dataset_name] = dataframe
+
+            add_dataset_record(
+                runtime=runtime,
+                dataset_name=dataset_name,
+                dataset_type="feature_store_input",
+                status=STATUS_SUCCESS,
+                path=str(dataset_path),
+                row_count=len(dataframe),
+                column_count=len(dataframe.columns),
+                message="Feature Store input loaded successfully.",
+            )
+
+            runtime.logger.info(
+                "Loaded %s | Rows: %s | Columns: %s | Path: %s",
+                dataset_name,
+                len(dataframe),
+                len(dataframe.columns),
+                dataset_path,
+            )
+
+        except Exception as exc:
+            if required:
+                add_audit_record(
+                    runtime=runtime,
+                    step_name=f"load_input:{dataset_name}",
+                    status=STATUS_FAILED,
+                    message=str(exc),
+                    output_path=str(dataset_path),
+                )
+                raise
+
+            add_audit_record(
+                runtime=runtime,
+                step_name=f"load_input:{dataset_name}",
+                status=STATUS_SKIPPED,
+                message=str(exc),
+                output_path=str(dataset_path),
+            )
+
+            runtime.logger.warning(
+                "Skipped optional dataset: %s | Reason: %s",
+                dataset_name,
+                exc,
+            )
+
+    runtime.logger.info("COMPLETE: Load inputs | Count: %s", len(datasets))
+
+    return datasets
+
+
+###############################################################################
+# Feature Matrix
+###############################################################################
+
+def clean_duplicate_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove duplicate column names after joins.
+    """
+
+    return dataframe.loc[:, ~dataframe.columns.duplicated()].copy()
+
+
+def prepare_dataset_for_join(
+    dataframe: pd.DataFrame,
+    dataset_name: str,
+    member_key: str,
+    exclude_columns: List[str],
+    existing_columns: List[str],
+) -> pd.DataFrame:
+    """
+    Prepare one Feature Store dataset for member-level joining.
+    """
+
+    if member_key not in dataframe.columns:
+        raise ValueError(f"Dataset {dataset_name} missing member key: {member_key}")
+
+    prepared = dataframe.drop_duplicates(subset=[member_key]).copy()
+
+    drop_columns = [column for column in exclude_columns if column in prepared.columns]
+
+    if drop_columns:
+        prepared = prepared.drop(columns=drop_columns)
+
+    rename_map: Dict[str, str] = {}
+
+    for column in prepared.columns:
+        if column == member_key:
+            continue
+
+        if column in existing_columns:
+            rename_map[column] = f"{dataset_name}__{column}"
+
+    if rename_map:
+        prepared = prepared.rename(columns=rename_map)
+
+    return prepared
+
+
+def build_feature_matrix(
+    runtime: ModelingRuntime,
+    datasets: Dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """
+    Build unified modeling feature matrix from Feature Store datasets.
+    """
+
+    config = runtime.config.get("feature_matrix", {})
+
+    if not bool(config.get("enabled", True)):
+        raise ValueError("feature_matrix.enabled must be true.")
+
+    member_key = config.get("member_key", "member_id")
+    base_dataset_name = config.get("base_dataset", "risk_features")
+    join_datasets = config.get("join_datasets", [])
+    exclude_columns = config.get("exclude_columns", [])
+
+    if base_dataset_name not in datasets:
+        raise ValueError(f"Feature matrix base dataset missing: {base_dataset_name}")
+
+    matrix = prepare_dataset_for_join(
+        dataframe=datasets[base_dataset_name],
+        dataset_name=base_dataset_name,
+        member_key=member_key,
+        exclude_columns=exclude_columns,
+        existing_columns=[],
+    )
+
+    runtime.logger.info(
+        "START: Build feature matrix | Base: %s | Rows: %s | Columns: %s",
+        base_dataset_name,
+        len(matrix),
+        len(matrix.columns),
+    )
+
+    for dataset_name in join_datasets:
+        if dataset_name not in datasets:
+            runtime.logger.warning("Skipping missing feature dataset: %s", dataset_name)
+            continue
+
+        join_df = prepare_dataset_for_join(
+            dataframe=datasets[dataset_name],
+            dataset_name=dataset_name,
+            member_key=member_key,
+            exclude_columns=exclude_columns,
+            existing_columns=list(matrix.columns),
+        )
+
+        matrix = matrix.merge(join_df, on=member_key, how="left")
+        matrix = clean_duplicate_columns(matrix)
+
+        runtime.logger.info(
+            "Joined %s | Rows: %s | Columns: %s",
+            dataset_name,
+            len(matrix),
+            len(matrix.columns),
+        )
+
+    matrix["modeling_layer_run_id"] = runtime.run_id
+    matrix["modeling_layer_built_at_utc"] = runtime.event_timestamp_utc
+
+    add_dataset_record(
+        runtime=runtime,
+        dataset_name="modeling_feature_matrix",
+        dataset_type="modeling_output",
+        status=STATUS_SUCCESS,
+        path=None,
+        row_count=len(matrix),
+        column_count=len(matrix.columns),
+        message="Modeling feature matrix built successfully.",
+    )
+
+    runtime.logger.info(
+        "COMPLETE: Build feature matrix | Rows: %s | Columns: %s",
+        len(matrix),
+        len(matrix.columns),
+    )
+
+    return matrix
+
+
+def get_feature_columns(
+    dataframe: pd.DataFrame,
+    member_key: str,
+    target_columns: List[str],
+    leakage_columns: List[str],
+    leakage_config: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """
+    Select safe training feature columns.
+    Excludes:
+
+      - member key
+      - generated target columns
+      - target source leakage columns
+      - Modeling runtime metadata columns
+      - YAML-configured leakage columns
+      - YAML-configured leakage patterns    
+    """
+
+    excluded = set(target_columns)
+    excluded.update(leakage_columns)
+    excluded.add(member_key)
+    excluded.add("modeling_layer_run_id")
+    excluded.add("modeling_layer_built_at_utc")
+
+    leakage_config = leakage_config or {}
+
+    if bool(leakage_config.get("enabled", False)):
+        additional_columns = leakage_config.get("additional_columns", [])
+        exclude_patterns = leakage_config.get("exclude_patterns", [])
+
+        excluded.update(additional_columns)
+
+        for column in dataframe.columns:
+            for pattern in exclude_patterns:
+                if fnmatch.fnmatch(column.lower(), str(pattern).lower()):
+                    excluded.add(column)   
+    return [column for column in dataframe.columns if column not in excluded]
+
+
+###############################################################################
+# Modeling Execution
+###############################################################################
+
+def get_algorithms_config(runtime: ModelingRuntime) -> Dict[str, Any]:
+    """
+    Return algorithm configuration from modeling.yaml.
+    """
+
+    training_config = runtime.config.get("training", {})
+    algorithms_config = training_config.get("algorithms")
+
+    if not isinstance(algorithms_config, dict):
+        raise ValueError("training.algorithms must be configured in modeling.yaml")
+
+    enabled_algorithms = [
+        key for key, value in algorithms_config.items()
+        if bool(value.get("enabled", True))
+    ]
+
+    if not enabled_algorithms:
+        raise ValueError("No enabled algorithms found in training.algorithms.")
+
+    runtime.logger.info("Enabled algorithms: %s", enabled_algorithms)
+
+    return algorithms_config
+
+
+def run_models(
+    runtime: ModelingRuntime,
+    feature_matrix: pd.DataFrame,
+) -> Dict[str, pd.DataFrame]:
+    """
+    Execute Target, Training, Scoring, Feature Importance, and Registry workflows.
+    """
+
+    models_config = runtime.config.get("models", {})
+    modeling_defaults = dict(runtime.config.get("modeling_defaults", {}))
+    training_config = runtime.config.get("training", {})
+    member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
+    risk_tiers_config = runtime.config.get("risk_tiers", {})
+    output_format = get_output_format(runtime)
+
+    selection_metric = get_selection_metric(
+        modeling_defaults=modeling_defaults,
+        training_config=training_config,
+    )
+
+    runtime.logger.info("START: Target Framework")
+
+    target_result = build_targets_for_enabled_models(
+        feature_matrix=feature_matrix,
+        models_config=models_config,
+        run_id=runtime.run_id,
+        layer_name=runtime.layer_name,
+        domain_name=runtime.domain_name,
+    )
+
+    modeling_frame = target_result.modeling_frame
+    target_columns = target_result.target_columns
+    leakage_columns = target_result.leakage_columns
+
+    target_summary_path = output_path_with_format(
+        get_output_path(runtime, "outputs", "modeling_target_summary"),
+        output_format,
+    )
+
+    write_dataset(target_result.target_summary, target_summary_path, output_format)
+
+    add_dataset_record(
+        runtime=runtime,
+        dataset_name="modeling_target_summary",
+        dataset_type="modeling_output",
+        status=STATUS_SUCCESS,
+        path=str(target_summary_path),
+        row_count=len(target_result.target_summary),
+        column_count=len(target_result.target_summary.columns),
+        message="Target summary written successfully.",
+    )
+
+    add_validation_record(
+        runtime=runtime,
+        dataset_name="modeling_feature_matrix",
+        rule_name="target_leakage_columns_excluded",
+        status=STATUS_SUCCESS,
+        message=f"Leakage columns excluded from training: {leakage_columns}",
+    )
+
+    feature_columns = get_feature_columns(
+        dataframe=modeling_frame,
+        member_key=member_key,
+        target_columns=target_columns,
+        leakage_columns=leakage_columns,
+        leakage_config=runtime.config.get("leakage_detection", {}),
+    )
+
+    if not feature_columns:
+        raise ValueError("No eligible training feature columns found.")
+
+    runtime.logger.info(
+        "Training feature count: %s",
+        len(feature_columns)
+        )
+
+    scoring_outputs: Dict[str, pd.DataFrame] = {}
+
+    get_algorithms_config(runtime)
+
+    for model_key, model_config in models_config.items():
+        if not bool(model_config.get("enabled", True)):
+            runtime.logger.info("SKIP disabled model: %s", model_key)
+            continue
+
+        model_name = model_config.get("model_name", model_key)
+        model_type = model_config.get("model_type", "classification")
+        target_column = get_target_output_column(model_config)
+
+        runtime.logger.info("=" * 80)
+        runtime.logger.info("START MODEL: %s", model_key)
+        runtime.logger.info("=" * 80)
+        model_start_time = time.perf_counter()
+
+        training_result = train_model_candidates(
+            dataframe=modeling_frame,
+            feature_columns=feature_columns,
+            target_column=target_column,
+            model_key=model_key,
+            model_name=model_name,
+            modeling_defaults=modeling_defaults,
+            training_config=training_config,
+            run_id=runtime.run_id,
+            event_timestamp_utc=runtime.event_timestamp_utc,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name,
+            parallelism_config=runtime.parallelism_config,
+            logger=runtime.logger,
+        )
+
+        runtime.logger.info(
+            "Champion selected | Model: %s | Algorithm: %s | Metrics: %s",
+            model_key,
+            training_result.champion_algorithm_key,
+            training_result.champion_metrics,
+        )
+        scoring_start_time = time.perf_counter()
+        runtime.logger.info("START Population Scoring | Model: %s", model_key)
+        
+        scoring_result = score_population(
+            dataframe=modeling_frame,
+            feature_columns=feature_columns,
+            member_key=member_key,
+            model_key=model_key,
+            model_name=model_name,
+            pipeline=training_result.champion_pipeline,
+            model_config=model_config,
+            risk_tiers_config=risk_tiers_config,
+            run_id=runtime.run_id,
+        )
+        runtime.logger.info(
+            "COMPLETE Population Scoring | Model: %s | %.2f sec | Rows: %s",
+            model_key,
+            time.perf_counter() - scoring_start_time,
+            scoring_result.row_count,
+        )
+        feature_importance_df = build_feature_importance_output(
+            pipeline=training_result.champion_pipeline,
+            feature_columns=feature_columns,
+            run_id=runtime.run_id,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name,
+            model_key=model_key,
+            model_name=model_name,
+            algorithm_key=training_result.champion_algorithm_key,
+            algorithm_name=training_result.champion_algorithm_name,
+        )
+
+        output_config = get_model_output_config(runtime, model_key)
+
+        model_path = normalize_path(
+            runtime.project_root,
+            output_config.get("model_path"),
+        )
+
+        metrics_path = output_path_with_format(
+            normalize_path(runtime.project_root, output_config.get("metrics_path")),
+            "parquet",
+        )
+
+        feature_importance_path = output_path_with_format(
+            normalize_path(
+                runtime.project_root,
+                output_config.get("feature_importance_path"),
+            ),
+            "parquet",
+        )
+
+        scoring_path = output_path_with_format(
+            normalize_path(runtime.project_root, output_config.get("scoring_path")),
+            output_format,
+        )
+
+        save_pickle_object(training_result.champion_pipeline, model_path)
+        write_dataset(training_result.metrics_dataframe, metrics_path, "parquet")
+        write_dataset(feature_importance_df, feature_importance_path, "parquet")
+        write_dataset(scoring_result.scoring_dataframe, scoring_path, output_format)
+
+        scoring_outputs[model_key] = scoring_result.scoring_dataframe
+
+        registry_record = build_model_registry_record(
+            run_id=runtime.run_id,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name,
+            model_key=model_key,
+            model_name=model_name,
+            model_type=model_type,
+            target_column=target_column,
+            champion_algorithm_key=training_result.champion_algorithm_key,
+            champion_algorithm_name=training_result.champion_algorithm_name,
+            selection_metric=selection_metric,
+            champion_metrics=training_result.champion_metrics,
+            model_path=str(model_path),
+            scoring_path=str(scoring_path),
+            metrics_path=str(metrics_path),
+            feature_importance_path=str(feature_importance_path),
+            scored_row_count=scoring_result.row_count,
+        )
+
+        runtime.model_registry_records.append(registry_record)
+
+        add_dataset_record(
+            runtime=runtime,
+            dataset_name=f"{model_key}_scores",
+            dataset_type="scoring_output",
+            status=STATUS_SUCCESS,
+            path=str(scoring_path),
+            row_count=scoring_result.row_count,
+            column_count=len(scoring_result.scoring_dataframe.columns),
+            message=f"Scoring output written successfully for {model_key}.",
+        )
+
+        add_audit_record(
+            runtime=runtime,
+            step_name=f"model_complete:{model_key}",
+            status=STATUS_SUCCESS,
+            message=f"Model completed. Champion={training_result.champion_algorithm_key}",
+            row_count=scoring_result.row_count,
+            output_path=str(scoring_path),
+        )
+
+        runtime.logger.info("COMPLETE MODEL: %s | Total Time: %.2f sec",
+                            model_key,
+                            time.perf_counter() - model_start_time,
+        )
+
+    return scoring_outputs
+
+
+###############################################################################
+# Core Output Writing
+###############################################################################
+
+def write_core_modeling_outputs(
+    runtime: ModelingRuntime,
+    feature_matrix: pd.DataFrame,
+) -> None:
+    """
+    Write core Modeling output datasets.
+    """
+
+    output_format = get_output_format(runtime)
+
+    feature_matrix_path = output_path_with_format(
+        get_output_path(runtime, "outputs", "modeling_feature_matrix"),
+        output_format,
+    )
+
+    write_dataset(feature_matrix, feature_matrix_path, output_format)
+
+    add_audit_record(
+        runtime=runtime,
+        step_name="write_modeling_feature_matrix",
+        status=STATUS_SUCCESS,
+        message="Modeling feature matrix written successfully.",
+        row_count=len(feature_matrix),
+        output_path=str(feature_matrix_path),
+    )
+
+
+def build_execution_summary(
+    runtime: ModelingRuntime,
+    scoring_outputs: Dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    """
+    Build Modeling execution summary.
+    """
+
+    end_time = utc_now()
+    duration_seconds = (end_time - runtime.start_time_utc).total_seconds()
+
+    failed_validation_count = sum(
+        1 for record in runtime.validation_records
+        if record.get("status") == STATUS_FAILED
+    )
+
+    return pd.DataFrame(
+        [
+            {
+                "run_id": runtime.run_id,
+                "layer_name": runtime.layer_name,
+                "domain_name": runtime.domain_name,
+                "config_path": str(runtime.config_path),
+                "pipeline_config_path": str(runtime.pipeline_config_path),
+                "start_time_utc": runtime.start_time_utc.isoformat(),
+                "end_time_utc": end_time.isoformat(),
+                "duration_seconds": duration_seconds,
+                "parallel_execution": runtime.parallelism_config.get(
+                    "parallel_execution"
+                ),
+                "max_parallel_workers": runtime.parallelism_config.get(
+                    "max_parallel_workers"
+                ),
+                "parallel_strategy": runtime.parallelism_config.get(
+                    "parallel_strategy"
+                ),
+                "model_count": len(scoring_outputs),
+                "scored_dataset_count": len(scoring_outputs),
+                "dataset_record_count": len(runtime.dataset_records),
+                "model_registry_record_count": len(runtime.model_registry_records),
+                "audit_record_count": len(runtime.audit_records),
+                "validation_record_count": len(runtime.validation_records),
+                "failed_validation_count": failed_validation_count,
+                "status": (
+                    STATUS_SUCCESS
+                    if failed_validation_count == 0
+                    else STATUS_WARNING
+                ),
+            }
+        ]
+    )
+
+
+def write_metadata_and_audit_outputs(
+    runtime: ModelingRuntime,
+    scoring_outputs: Dict[str, pd.DataFrame],
+) -> None:
+    """
+    Write Modeling metadata and audit outputs.
+    """
+
+    output_format = get_output_format(runtime)
+
+    metadata_assets = {
+        "modeling_dataset_inventory": pd.DataFrame(runtime.dataset_records),
+        "modeling_model_registry": build_model_registry_dataframe(
+            runtime.model_registry_records
+        ),
+    }
+
+    audit_assets = {
+        "modeling_audit_records": pd.DataFrame(runtime.audit_records),
+        "modeling_validation_results": pd.DataFrame(runtime.validation_records),
+        "modeling_execution_summary": build_execution_summary(
+            runtime,
+            scoring_outputs,
+        ),
+    }
+
+    for output_name, dataframe in metadata_assets.items():
+        output_path = output_path_with_format(
+            get_output_path(runtime, "metadata_outputs", output_name),
+            output_format,
+        )
+
+        write_dataset(dataframe, output_path, output_format)
+
+        runtime.logger.info(
+            "Wrote metadata output: %s | Rows: %s | Path: %s",
+            output_name,
+            len(dataframe),
+            output_path,
+        )
+
+    for output_name, dataframe in audit_assets.items():
+        output_path = output_path_with_format(
+            get_output_path(runtime, "audit_outputs", output_name),
+            output_format,
+        )
+
+        write_dataset(dataframe, output_path, output_format)
+
+        runtime.logger.info(
+            "Wrote audit output: %s | Rows: %s | Path: %s",
+            output_name,
+            len(dataframe),
+            output_path,
+        )
+
+
+###############################################################################
+# Main Orchestration
+###############################################################################
+
+def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
+    """
+    Build complete Modeling Framework.
+    """
+
+    runtime: Optional[ModelingRuntime] = None
+
+    try:
+        runtime = initialize_runtime(config_path)
+
+        runtime.logger.info("Configuration path: %s", runtime.config_path)
+        runtime.logger.info("Architectural check: Modeling consumes Feature Store only.")
+
+        datasets = load_input_datasets(runtime)
+
+        feature_matrix = build_feature_matrix(runtime, datasets)
+        write_core_modeling_outputs(runtime, feature_matrix)
+
+        scoring_outputs = run_models(runtime, feature_matrix)
+
+        add_audit_record(
+            runtime=runtime,
+            step_name="build_modeling_layer",
+            status=STATUS_SUCCESS,
+            message="Modeling Framework completed successfully.",
+        )
+
+        write_metadata_and_audit_outputs(runtime, scoring_outputs)
+
+        runtime.logger.info("=" * 80)
+        runtime.logger.info("MedFabric Modeling Framework completed successfully")
+        runtime.logger.info("Models trained and scored: %s", len(scoring_outputs))
+        runtime.logger.info("=" * 80)
+
+        return BuildResult(
+            name="modeling",
+            status=STATUS_SUCCESS,
+            message="Modeling Framework completed successfully.",
+            row_count=sum(len(df) for df in scoring_outputs.values()),
+            column_count=sum(len(df.columns) for df in scoring_outputs.values()),
+        )
+
+    except Exception as exc:
+        if runtime is not None:
+            runtime.logger.error("=" * 80)
+            runtime.logger.error("Modeling Framework failed")
+            runtime.logger.error("Error: %s", exc)
+            runtime.logger.error("Traceback:\n%s", traceback.format_exc())
+            runtime.logger.error("=" * 80)
+
+            add_audit_record(
+                runtime=runtime,
+                step_name="build_modeling_layer",
+                status=STATUS_FAILED,
+                message=str(exc),
+            )
+
+            try:
+                write_metadata_and_audit_outputs(runtime, {})
+            except Exception as audit_exc:
+                runtime.logger.error(
+                    "Failed to write metadata/audit outputs: %s",
+                    audit_exc,
+                )
+
+        return BuildResult(
+            name="modeling",
+            status=STATUS_FAILED,
+            message=str(exc),
+        )
+
+
+###############################################################################
+# CLI Entry Point
+###############################################################################
+
+def main() -> None:
+    """
+    Command-line entry point.
+    """
+
+    config_path = os.environ.get(
+        "MEDFABRIC_MODELING_CONFIG",
+        DEFAULT_CONFIG_PATH,
+    )
+
+    result = build_modeling_layer(config_path=config_path)
+
+    if result.status == STATUS_SUCCESS:
+        print(result.message)
+        return
+
+    print(f"Modeling Framework failed: {result.message}")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/common/__init__.py
+###############################################################################
+
+
+###############################################################################
+# FILE: src/modeling/evaluation/__init__.py
+###############################################################################
+
+
+###############################################################################
+# FILE: src/modeling/evaluation/feature_importance.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/evaluation/feature_importance.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Extracts feature importance outputs from trained champion model pipelines.
+#
+# Run:
+#     python -m src.modeling.evaluation.feature_importance
+#
+###############################################################################
+
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+import pandas as pd
+from sklearn.pipeline import Pipeline
+
+
+def get_transformed_feature_names(
+    pipeline: Pipeline,
+    fallback_feature_columns: List[str],
+) -> List[str]:
+    """
+    Return transformed feature names from a fitted preprocessing pipeline.
+    """
+
+    preprocessor = pipeline.named_steps.get("preprocessor")
+
+    if preprocessor is None:
+        return fallback_feature_columns
+
+    try:
+        return [str(name) for name in preprocessor.get_feature_names_out()]
+    except Exception:
+        return fallback_feature_columns
+
+
+def extract_feature_importance(
+    pipeline: Pipeline,
+    feature_columns: List[str],
+) -> pd.DataFrame:
+    """
+    Extract feature importance or coefficient values from trained pipeline.
+    """
+
+    model = pipeline.named_steps.get("model")
+
+    if model is None:
+        return pd.DataFrame(columns=["feature_name", "importance", "importance_type"])
+
+    feature_names = get_transformed_feature_names(
+        pipeline=pipeline,
+        fallback_feature_columns=feature_columns,
+    )
+
+    if hasattr(model, "feature_importances_"):
+        values = model.feature_importances_
+        importance_type = "feature_importance"
+    elif hasattr(model, "coef_"):
+        values = model.coef_[0]
+        importance_type = "coefficient"
+    else:
+        return pd.DataFrame(columns=["feature_name", "importance", "importance_type"])
+
+    length = min(len(feature_names), len(values))
+
+    return (
+        pd.DataFrame(
+            {
+                "feature_name": feature_names[:length],
+                "importance": values[:length],
+                "importance_type": importance_type,
+            }
+        )
+        .sort_values("importance", key=lambda s: s.abs(), ascending=False)
+        .reset_index(drop=True)
+    )
+
+
+def build_feature_importance_output(
+    pipeline: Pipeline,
+    feature_columns: List[str],
+    run_id: str,
+    layer_name: str,
+    domain_name: str,
+    model_key: str,
+    model_name: str,
+    algorithm_key: str,
+    algorithm_name: str,
+) -> pd.DataFrame:
+    """
+    Build standardized feature importance output.
+    """
+
+    importance_df = extract_feature_importance(
+        pipeline=pipeline,
+        feature_columns=feature_columns,
+    )
+
+    if importance_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "run_id",
+                "layer_name",
+                "domain_name",
+                "model_key",
+                "model_name",
+                "algorithm_key",
+                "algorithm_name",
+                "feature_name",
+                "importance",
+                "importance_type",
+            ]
+        )
+
+    importance_df.insert(0, "algorithm_name", algorithm_name)
+    importance_df.insert(0, "algorithm_key", algorithm_key)
+    importance_df.insert(0, "model_name", model_name)
+    importance_df.insert(0, "model_key", model_key)
+    importance_df.insert(0, "domain_name", domain_name)
+    importance_df.insert(0, "layer_name", layer_name)
+    importance_df.insert(0, "run_id", run_id)
+
+    return importance_df
+
+
+def main() -> None:
+    """
+    Lightweight module validation.
+    """
+
+    import pandas as pd
+
+    from src.modeling.training.algorithms import get_default_algorithms_config
+    from src.modeling.training.trainer import train_model_candidates
+
+    dataframe = pd.DataFrame(
+        {
+            "member_id": range(1, 101),
+            "age": list(range(20, 120)),
+            "cost": list(range(100, 10100, 100)),
+            "gender": ["M", "F"] * 50,
+        }
+    )
+
+    dataframe["target"] = (
+        dataframe["cost"] >= dataframe["cost"].quantile(0.80)
+    ).astype(int)
+
+    training_result = train_model_candidates(
+        dataframe=dataframe,
+        feature_columns=["age", "gender"],
+        target_column="target",
+        model_key="high_cost",
+        model_name="High Cost Model",
+        modeling_defaults={
+            "random_state": 42,
+            "test_size": 0.20,
+            "selection_metric": "roc_auc",
+            "preprocessing": {
+                "numeric_imputation_strategy": "median",
+                "categorical_imputation_strategy": "most_frequent",
+                "scale_numeric_features": False,
+                "one_hot_encode_categorical_features": True,
+            },
+        },
+        algorithms_config=get_default_algorithms_config(),
+        run_id="TEST_RUN",
+    )
+
+    output = build_feature_importance_output(
+        pipeline=training_result.champion_pipeline,
+        feature_columns=["age", "gender"],
+        run_id="TEST_RUN",
+        layer_name="Layer 2D - Enterprise Modeling Framework",
+        domain_name="Modeling",
+        model_key="high_cost",
+        model_name="High Cost Model",
+        algorithm_key=training_result.champion_algorithm_key,
+        algorithm_name=training_result.champion_algorithm_name,
+    )
+
+    print("Feature importance validation successful.")
+    print(output.head())
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/monitoring/__init__.py
+###############################################################################
+
+
+###############################################################################
+# FILE: src/modeling/registry/__init__.py
+###############################################################################
+
+
+###############################################################################
+# FILE: src/modeling/registry/model_registry.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/registry/model_registry.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Builds standardized model registry records for MedFabric champion models.
+#
+# Run:
+#     python -m src.modeling.registry.model_registry
+#
+###############################################################################
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+
+
+STATUS_SUCCESS = "SUCCESS"
+STATUS_FAILED = "FAILED"
+
+
+def utc_now_iso() -> str:
+    """
+    Return current UTC timestamp as ISO string.
+    """
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass
+class ModelRegistryRecord:
+    """
+    Standard champion model registry record.
+    """
+
+    run_id: str
+    layer_name: str
+    domain_name: str
+    model_key: str
+    model_name: str
+    model_type: str
+    target_column: str
+    champion_algorithm_key: str
+    champion_algorithm_name: str
+    selection_metric: str
+    selection_metric_value: Optional[float]
+    model_path: str
+    scoring_path: str
+    metrics_path: str
+    feature_importance_path: str
+    scored_row_count: int
+    status: str
+    metric_summary_json: str
+    event_timestamp_utc: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert registry record to dictionary.
+        """
+
+        return {
+            "run_id": self.run_id,
+            "layer_name": self.layer_name,
+            "domain_name": self.domain_name,
+            "model_key": self.model_key,
+            "model_name": self.model_name,
+            "model_type": self.model_type,
+            "target_column": self.target_column,
+            "champion_algorithm_key": self.champion_algorithm_key,
+            "champion_algorithm_name": self.champion_algorithm_name,
+            "selection_metric": self.selection_metric,
+            "selection_metric_value": self.selection_metric_value,
+            "model_path": self.model_path,
+            "scoring_path": self.scoring_path,
+            "metrics_path": self.metrics_path,
+            "feature_importance_path": self.feature_importance_path,
+            "scored_row_count": self.scored_row_count,
+            "status": self.status,
+            "metric_summary_json": self.metric_summary_json,
+            "event_timestamp_utc": self.event_timestamp_utc,
+        }
+
+
+def build_model_registry_record(
+    run_id: str,
+    layer_name: str,
+    domain_name: str,
+    model_key: str,
+    model_name: str,
+    model_type: str,
+    target_column: str,
+    champion_algorithm_key: str,
+    champion_algorithm_name: str,
+    selection_metric: str,
+    champion_metrics: Dict[str, Any],
+    model_path: str,
+    scoring_path: str,
+    metrics_path: str,
+    feature_importance_path: str,
+    scored_row_count: int,
+    status: str = STATUS_SUCCESS,
+) -> Dict[str, Any]:
+    """
+    Build one standardized model registry record.
+    """
+
+    selection_metric_value = champion_metrics.get(selection_metric)
+
+    record = ModelRegistryRecord(
+        run_id=run_id,
+        layer_name=layer_name,
+        domain_name=domain_name,
+        model_key=model_key,
+        model_name=model_name,
+        model_type=model_type,
+        target_column=target_column,
+        champion_algorithm_key=champion_algorithm_key,
+        champion_algorithm_name=champion_algorithm_name,
+        selection_metric=selection_metric,
+        selection_metric_value=selection_metric_value,
+        model_path=model_path,
+        scoring_path=scoring_path,
+        metrics_path=metrics_path,
+        feature_importance_path=feature_importance_path,
+        scored_row_count=scored_row_count,
+        status=status,
+        metric_summary_json=str(champion_metrics),
+        event_timestamp_utc=utc_now_iso(),
+    )
+
+    return record.to_dict()
+
+
+def build_model_registry_dataframe(records: List[Dict[str, Any]]) -> pd.DataFrame:
+    """
+    Build model registry dataframe from records.
+    """
+
+    return pd.DataFrame(records)
+
+
+def main() -> None:
+    """
+    Lightweight module validation.
+    """
+
+    record = build_model_registry_record(
+        run_id="TEST_RUN",
+        layer_name="Layer 2D - Enterprise Modeling Framework",
+        domain_name="Modeling",
+        model_key="high_cost",
+        model_name="High Cost Model",
+        model_type="classification",
+        target_column="high_cost_target",
+        champion_algorithm_key="random_forest",
+        champion_algorithm_name="Random Forest",
+        selection_metric="roc_auc",
+        champion_metrics={
+            "accuracy": 0.91,
+            "precision": 0.84,
+            "recall": 0.77,
+            "f1": 0.80,
+            "roc_auc": 0.93,
+        },
+        model_path="models/high_cost/high_cost_model.pkl",
+        scoring_path="data/scoring/high_cost_scores.parquet",
+        metrics_path="models/high_cost/high_cost_model_metrics.parquet",
+        feature_importance_path="models/high_cost/high_cost_feature_importance.parquet",
+        scored_row_count=100000,
+    )
+
+    df = build_model_registry_dataframe([record])
+
+    print("Model registry validation successful.")
+    print(df)
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/scoring/__init__.py
+###############################################################################
+
+
+###############################################################################
+# FILE: src/modeling/scoring/risk_tiers.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/scoring/risk_tiers.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Assigns configured risk tier labels to model probability scores.
+#
+# Run:
+#     python -m src.modeling.scoring.risk_tiers
+#
+###############################################################################
+
+from __future__ import annotations
+
+from typing import Any, Dict
+
+import pandas as pd
+
+
+def assign_risk_tiers(
+    scores: pd.Series,
+    risk_tiers_config: Dict[str, Any],
+) -> pd.Series:
+    """
+    Assign configured risk tier labels to probability scores.
+    """
+
+    output = pd.Series("Unassigned", index=scores.index)
+
+    for _, tier_config in risk_tiers_config.items():
+        min_value = float(tier_config.get("min_value", 0.0))
+        max_value = float(tier_config.get("max_value", 1.0))
+        label = tier_config.get("label", "Unassigned")
+
+        mask = (scores >= min_value) & (scores <= max_value)
+        output.loc[mask] = label
+
+    return output
+
+
+def main() -> None:
+    scores = pd.Series([0.10, 0.45, 0.75, 0.90])
+
+    risk_tiers_config = {
+        "very_high": {"min_value": 0.85, "max_value": 1.00, "label": "Very High"},
+        "high": {"min_value": 0.70, "max_value": 0.849999, "label": "High"},
+        "moderate": {"min_value": 0.40, "max_value": 0.699999, "label": "Moderate"},
+        "low": {"min_value": 0.00, "max_value": 0.399999, "label": "Low"},
+    }
+
+    tiers = assign_risk_tiers(scores, risk_tiers_config)
+
+    print("Risk tier validation successful.")
+    print(tiers.tolist())
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/scoring/scorer.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/scoring/scorer.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Scores the full modeling population using a trained champion model.
+#
+# Run:
+#     python -m src.modeling.scoring.scorer
+#
+###############################################################################
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+import numpy as np
+import pandas as pd
+
+from sklearn.pipeline import Pipeline
+
+from src.modeling.scoring.risk_tiers import assign_risk_tiers
+
+
+@dataclass
+class ScoringResult:
+    """
+    Standard scoring result returned by the Scoring Framework.
+    """
+
+    model_key: str
+    model_name: str
+    scoring_dataframe: pd.DataFrame
+    score_column: str
+    prediction_column: str
+    risk_tier_column: str
+    row_count: int
+    scored_at_utc: str
+
+
+def utc_now_iso() -> str:
+    """
+    Return current UTC timestamp as ISO string.
+    """
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def get_prediction_scores(
+    pipeline: Pipeline,
+    features: pd.DataFrame,
+) -> np.ndarray:
+    """
+    Return probability-like model scores.
+
+    Preferred:
+        predict_proba[:, 1]
+
+    Fallback:
+        decision_function converted using sigmoid
+
+    Final fallback:
+        predict output
+    """
+
+    if hasattr(pipeline, "predict_proba"):
+        return pipeline.predict_proba(features)[:, 1]
+
+    if hasattr(pipeline, "decision_function"):
+        raw_scores = pipeline.decision_function(features)
+        return 1 / (1 + np.exp(-raw_scores))
+
+    return pipeline.predict(features)
+
+
+def score_population(
+    dataframe: pd.DataFrame,
+    feature_columns: List[str],
+    member_key: str,
+    model_key: str,
+    model_name: str,
+    pipeline: Pipeline,
+    model_config: Dict[str, Any],
+    risk_tiers_config: Dict[str, Any],
+    run_id: str,
+) -> ScoringResult:
+    """
+    Score full population for one trained champion model.
+    """
+
+    if member_key not in dataframe.columns:
+        raise ValueError(f"Member key missing from scoring dataframe: {member_key}")
+
+    missing_features = [
+        column for column in feature_columns
+        if column not in dataframe.columns
+    ]
+
+    if missing_features:
+        raise ValueError(
+            f"Scoring dataframe missing required feature columns: {missing_features}"
+        )
+
+    features = dataframe[feature_columns].copy()
+
+    score_column = model_config.get("score_column", f"{model_key}_score")
+    prediction_column = model_config.get(
+        "prediction_column",
+        f"{model_key}_prediction",
+    )
+    risk_tier_column = model_config.get(
+        "risk_tier_column",
+        f"{model_key}_risk_tier",
+    )
+
+    scores = get_prediction_scores(
+        pipeline=pipeline,
+        features=features,
+    )
+
+    predictions = pipeline.predict(features)
+
+    scoring_dataframe = pd.DataFrame(
+        {
+            member_key: dataframe[member_key],
+            score_column: scores,
+            prediction_column: predictions,
+        }
+    )
+
+    scoring_dataframe[risk_tier_column] = assign_risk_tiers(
+        scores=pd.Series(scores),
+        risk_tiers_config=risk_tiers_config,
+    )
+
+    scoring_dataframe["model_key"] = model_key
+    scoring_dataframe["model_name"] = model_name
+    scoring_dataframe["modeling_layer_run_id"] = run_id
+    scoring_dataframe["scored_at_utc"] = utc_now_iso()
+
+    return ScoringResult(
+        model_key=model_key,
+        model_name=model_name,
+        scoring_dataframe=scoring_dataframe,
+        score_column=score_column,
+        prediction_column=prediction_column,
+        risk_tier_column=risk_tier_column,
+        row_count=len(scoring_dataframe),
+        scored_at_utc=scoring_dataframe["scored_at_utc"].iloc[0],
+    )
+
+
+def main() -> None:
+    """
+    Lightweight module validation.
+    """
+
+    from src.modeling.training.trainer import train_model_candidates
+    from src.modeling.training.algorithms import get_default_algorithms_config
+
+    dataframe = pd.DataFrame(
+        {
+            "member_id": range(1, 101),
+            "age": list(range(20, 120)),
+            "cost": list(range(100, 10100, 100)),
+            "gender": ["M", "F"] * 50,
+        }
+    )
+
+    dataframe["target"] = (
+        dataframe["cost"] >= dataframe["cost"].quantile(0.80)
+    ).astype(int)
+
+    training_result = train_model_candidates(
+        dataframe=dataframe,
+        feature_columns=["age", "gender"],
+        target_column="target",
+        model_key="high_cost",
+        model_name="High Cost Model",
+        modeling_defaults={
+            "random_state": 42,
+            "test_size": 0.20,
+            "selection_metric": "roc_auc",
+            "preprocessing": {
+                "numeric_imputation_strategy": "median",
+                "categorical_imputation_strategy": "most_frequent",
+                "scale_numeric_features": False,
+                "one_hot_encode_categorical_features": True,
+            },
+        },
+        algorithms_config=get_default_algorithms_config(),
+        run_id="TEST_RUN",
+    )
+
+    risk_tiers_config = {
+        "very_high": {"min_value": 0.85, "max_value": 1.00, "label": "Very High"},
+        "high": {"min_value": 0.70, "max_value": 0.849999, "label": "High"},
+        "moderate": {"min_value": 0.40, "max_value": 0.699999, "label": "Moderate"},
+        "low": {"min_value": 0.00, "max_value": 0.399999, "label": "Low"},
+    }
+
+    result = score_population(
+        dataframe=dataframe,
+        feature_columns=["age", "gender"],
+        member_key="member_id",
+        model_key="high_cost",
+        model_name="High Cost Model",
+        pipeline=training_result.champion_pipeline,
+        model_config={
+            "score_column": "high_cost_risk_score",
+            "prediction_column": "high_cost_prediction",
+            "risk_tier_column": "high_cost_risk_tier",
+        },
+        risk_tiers_config=risk_tiers_config,
+        run_id="TEST_RUN",
+    )
+
+    print("Scorer validation successful.")
+    print(f"Rows scored: {result.row_count}")
+    print(result.scoring_dataframe.head())
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/targets/__init__.py
+###############################################################################
+
+
+###############################################################################
+# FILE: src/modeling/targets/leakage_detection.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/targets/leakage_detection.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Identifies target leakage columns that must be excluded from model
+#     training features.
+#
+# Run:
+#     python -m src.modeling.targets.leakage_detection
+#
+###############################################################################
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+
+def normalize_target_config(model_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize legacy and framework-style target configuration.
+    """
+
+    if "target" in model_config and isinstance(model_config["target"], dict):
+        return model_config["target"]
+
+    return {
+        "strategy": "rule_based",
+        "output_column": model_config.get("target_column"),
+        "source": {
+            "dataset": model_config.get("target_rule", {}).get("source_dataset"),
+            "column": model_config.get("target_rule", {}).get("source_column"),
+        },
+        "parameters": {
+            "operator": model_config.get("target_rule", {}).get("operator"),
+            "value": model_config.get("target_rule", {}).get("value"),
+        },
+    }
+
+
+def get_target_output_column(model_config: Dict[str, Any]) -> str:
+    """
+    Return target output column for a model.
+    """
+
+    target_config = normalize_target_config(model_config)
+    target_column = target_config.get("output_column") or target_config.get("column")
+
+    if not target_column:
+        raise ValueError("Target output column is missing.")
+
+    return target_column
+
+
+def get_target_source_column_variants(target_config: Dict[str, Any]) -> List[str]:
+    """
+    Return unprefixed and dataset-prefixed target source column names.
+    """
+
+    strategy = target_config.get("strategy") or target_config.get("mode")
+
+    if strategy == "existing_column":
+        column = target_config.get("output_column") or target_config.get("column")
+        return [column] if column else []
+
+    source = target_config.get("source", {}) or {}
+
+    source_dataset: Optional[str] = (
+        source.get("dataset")
+        or target_config.get("source_dataset")
+        or target_config.get("dataset")
+    )
+
+    source_column: Optional[str] = (
+        source.get("column")
+        or target_config.get("source_column")
+    )
+
+    columns: List[str] = []
+
+    if source_column:
+        columns.append(source_column)
+
+    if source_dataset and source_column:
+        columns.append(f"{source_dataset}__{source_column}")
+
+    return columns
+
+
+def get_leakage_columns_for_models(models_config: Dict[str, Any]) -> List[str]:
+    """
+    Collect all target source columns that should be excluded from training.
+    """
+
+    leakage_columns: List[str] = []
+
+    for model_config in models_config.values():
+        if not bool(model_config.get("enabled", True)):
+            continue
+
+        target_config = normalize_target_config(model_config)
+        leakage_columns.extend(get_target_source_column_variants(target_config))
+
+    return sorted(set(column for column in leakage_columns if column))
+
+
+def main() -> None:
+    """
+    Lightweight module validation.
+    """
+
+    sample_models = {
+        "high_cost": {
+            "enabled": True,
+            "target": {
+                "strategy": "quantile",
+                "output_column": "high_cost_target",
+                "source": {
+                    "dataset": "cost_features",
+                    "column": "total_paid_amount",
+                },
+                "parameters": {
+                    "quantile": 0.90,
+                },
+            },
+        },
+        "legacy_readmission": {
+            "enabled": True,
+            "target_column": "readmission_target",
+            "target_rule": {
+                "source_dataset": "utilization_features",
+                "source_column": "total_claims",
+                "operator": "greater_than_or_equal",
+                "value": 13,
+            },
+        },
+    }
+
+    leakage_columns = get_leakage_columns_for_models(sample_models)
+
+    print("Leakage detection validation successful.")
+    print(f"Leakage columns: {leakage_columns}")
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/targets/target_builder.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/targets/target_builder.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Orchestrates target generation for MedFabric predictive models.
+#
+#     This module does not implement target strategies directly. It delegates
+#     strategy execution to:
+#
+#         src/modeling/targets/target_strategies.py
+#
+#     It also remains backward compatible with the current modeling.yaml style:
+#
+#         target_column:
+#         target_rule:
+#
+#     while supporting the new framework style:
+#
+#         target:
+#           strategy:
+#           output_column:
+#           source:
+#           parameters:
+#
+# Run:
+#     python -m src.modeling.targets.target_builder
+#
+###############################################################################
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+import pandas as pd
+
+from src.modeling.targets.leakage_detection import (
+    get_leakage_columns_for_models,
+    get_target_output_column,
+    normalize_target_config,
+)
+from src.modeling.targets.target_strategies import (
+    TargetStrategyResult,
+    build_target_from_config,
+)
+
+
+STATUS_SUCCESS = "SUCCESS"
+STATUS_WARNING = "WARNING"
+STATUS_FAILED = "FAILED"
+
+
+@dataclass
+class TargetBuildResult:
+    """
+    Standard Target Builder output.
+    """
+
+    modeling_frame: pd.DataFrame
+    target_columns: List[str]
+    target_summary: pd.DataFrame
+    leakage_columns: List[str]
+
+
+def utc_now_iso() -> str:
+    """
+    Return current UTC timestamp as ISO string.
+    """
+
+    return datetime.now(timezone.utc).isoformat()
+
+
+def build_target_summary_row(
+    run_id: str,
+    layer_name: str,
+    domain_name: str,
+    model_key: str,
+    model_name: str,
+    result: TargetStrategyResult,
+) -> Dict[str, Any]:
+    """
+    Build one target summary row from a strategy result.
+    """
+
+    status = (
+        STATUS_SUCCESS
+        if result.positive_count > 0 and result.negative_count > 0
+        else STATUS_WARNING
+    )
+
+    return {
+        "run_id": run_id,
+        "layer_name": layer_name,
+        "domain_name": domain_name,
+        "model_key": model_key,
+        "model_name": model_name,
+        "target_column": result.target_column,
+        "target_strategy": result.strategy,
+        "source_column": result.source_column,
+        "resolved_source_column": result.resolved_source_column,
+        "threshold_value": result.threshold_value,
+        "positive_count": result.positive_count,
+        "negative_count": result.negative_count,
+        "positive_rate": result.positive_rate,
+        "status": status,
+        "event_timestamp_utc": utc_now_iso(),
+    }
+
+
+def build_targets_for_enabled_models(
+    feature_matrix: pd.DataFrame,
+    models_config: Dict[str, Any],
+    run_id: str,
+    layer_name: str,
+    domain_name: str,
+) -> TargetBuildResult:
+    """
+    Generate targets for all enabled models.
+
+    Parameters
+    ----------
+    feature_matrix:
+        Unified modeling feature matrix.
+
+    models_config:
+        The `models` section from config/modeling/modeling.yaml.
+
+    run_id:
+        Current modeling run identifier.
+
+    layer_name:
+        Modeling layer name.
+
+    domain_name:
+        Modeling domain name.
+
+    Returns
+    -------
+    TargetBuildResult
+        Modeling frame with target columns, target column list, target summary,
+        and leakage columns to exclude from training.
+    """
+
+    modeling_frame = feature_matrix.copy()
+    target_columns: List[str] = []
+    summary_rows: List[Dict[str, Any]] = []
+
+    for model_key, model_config in models_config.items():
+        if not bool(model_config.get("enabled", True)):
+            continue
+
+        target_config = normalize_target_config(model_config)
+
+        result = build_target_from_config(
+            dataframe=modeling_frame,
+            model_key=model_key,
+            target_config=target_config,
+        )
+
+        modeling_frame[result.target_column] = result.target_series
+        target_columns.append(result.target_column)
+
+        summary_rows.append(
+            build_target_summary_row(
+                run_id=run_id,
+                layer_name=layer_name,
+                domain_name=domain_name,
+                model_key=model_key,
+                model_name=model_config.get("model_name", model_key),
+                result=result,
+            )
+        )
+
+    leakage_columns = get_leakage_columns_for_models(models_config)
+
+    target_summary = pd.DataFrame(summary_rows)
+
+    return TargetBuildResult(
+        modeling_frame=modeling_frame,
+        target_columns=target_columns,
+        target_summary=target_summary,
+        leakage_columns=leakage_columns,
+    )
+
+
+def get_enabled_model_target_columns(models_config: Dict[str, Any]) -> List[str]:
+    """
+    Return target output columns for enabled models.
+    """
+
+    target_columns: List[str] = []
+
+    for _, model_config in models_config.items():
+        if not bool(model_config.get("enabled", True)):
+            continue
+
+        target_columns.append(get_target_output_column(model_config))
+
+    return target_columns
+
+
+def main() -> None:
+    """
+    Lightweight module validation.
+    """
+
+    sample_feature_matrix = pd.DataFrame(
+        {
+            "member_id": [1, 2, 3, 4, 5],
+            "total_paid_amount": [100.0, 200.0, 300.0, 400.0, 500.0],
+            "total_claims": [1, 3, 5, 7, 9],
+        }
+    )
+
+    sample_models_config = {
+        "high_cost": {
+            "enabled": True,
+            "model_name": "High Cost Model",
+            "target": {
+                "strategy": "quantile",
+                "output_column": "high_cost_target",
+                "source": {
+                    "dataset": "cost_features",
+                    "column": "total_paid_amount",
+                },
+                "parameters": {
+                    "quantile": 0.80,
+                    "positive_direction": "greater_than_or_equal",
+                },
+            },
+        },
+        "readmission": {
+            "enabled": True,
+            "model_name": "Readmission Model",
+            "target_column": "readmission_target",
+            "target_rule": {
+                "source_dataset": "utilization_features",
+                "source_column": "total_claims",
+                "operator": "greater_than_or_equal",
+                "value": 7,
+            },
+        },
+    }
+
+    result = build_targets_for_enabled_models(
+        feature_matrix=sample_feature_matrix,
+        models_config=sample_models_config,
+        run_id="TEST_RUN",
+        layer_name="Layer 2D - Enterprise Modeling Framework",
+        domain_name="Modeling",
+    )
+
+    print("Target Builder validation successful.")
+    print(f"Target columns: {result.target_columns}")
+    print(f"Leakage columns: {result.leakage_columns}")
+    print(result.target_summary)
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/targets/target_metadata.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/targets/target_metadata.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Builds target metadata outputs for the MedFabric Modeling Target Framework.
+#
+# Run:
+#     python -m src.modeling.targets.target_metadata
+#
+###############################################################################
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@dataclass
+class TargetMetadataBuilder:
+    run_id: str
+    layer_name: str
+    domain_name: str
+    records: List[Dict[str, Any]] = field(default_factory=list)
+
+    def add_target_record(
+        self,
+        model_key: str,
+        model_name: str,
+        target_column: str,
+        strategy: str,
+        source_column: Optional[str],
+        resolved_source_column: Optional[str],
+        threshold_value: Optional[float],
+        positive_count: int,
+        negative_count: int,
+        positive_rate: float,
+        validation_status: str,
+    ) -> None:
+        self.records.append(
+            {
+                "run_id": self.run_id,
+                "layer_name": self.layer_name,
+                "domain_name": self.domain_name,
+                "model_key": model_key,
+                "model_name": model_name,
+                "target_column": target_column,
+                "target_strategy": strategy,
+                "source_column": source_column,
+                "resolved_source_column": resolved_source_column,
+                "threshold_value": threshold_value,
+                "positive_count": positive_count,
+                "negative_count": negative_count,
+                "positive_rate": positive_rate,
+                "validation_status": validation_status,
+                "event_timestamp_utc": utc_now_iso(),
+            }
+        )
+
+    def to_dataframe(self) -> pd.DataFrame:
+        return pd.DataFrame(self.records)
+
+
+def build_target_metadata_from_summary(target_summary: pd.DataFrame) -> pd.DataFrame:
+    required_columns = [
+        "run_id",
+        "layer_name",
+        "domain_name",
+        "model_key",
+        "model_name",
+        "target_column",
+        "target_strategy",
+        "source_column",
+        "resolved_source_column",
+        "threshold_value",
+        "positive_count",
+        "negative_count",
+        "positive_rate",
+        "status",
+        "event_timestamp_utc",
+    ]
+
+    if target_summary.empty:
+        return pd.DataFrame(columns=required_columns)
+
+    metadata = target_summary.copy()
+
+    for column in required_columns:
+        if column not in metadata.columns:
+            metadata[column] = None
+
+    return metadata[required_columns]
+
+
+def main() -> None:
+    builder = TargetMetadataBuilder(
+        run_id="TEST_RUN",
+        layer_name="Layer 2D - Enterprise Modeling Framework",
+        domain_name="Modeling",
+    )
+
+    builder.add_target_record(
+        model_key="high_cost",
+        model_name="High Cost Model",
+        target_column="high_cost_target",
+        strategy="quantile",
+        source_column="total_paid_amount",
+        resolved_source_column="total_paid_amount",
+        threshold_value=420.0,
+        positive_count=1,
+        negative_count=4,
+        positive_rate=0.20,
+        validation_status="SUCCESS",
+    )
+
+    df = builder.to_dataframe()
+
+    print("Target metadata module validation successful.")
+    print(df)
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/targets/target_strategies.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/targets/target_strategies.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Implements reusable target-generation strategies for MedFabric models.
+#
+#     This module is responsible only for converting configured target
+#     definitions into binary target labels.
+#
+# Supported Strategies:
+#     - threshold
+#     - rule_based
+#     - quantile
+#     - existing_column
+#
+# Run:
+#     python -m src.modeling.targets.target_strategies
+#
+###############################################################################
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+import pandas as pd
+
+
+SUPPORTED_TARGET_STRATEGIES = {
+    "threshold",
+    "rule_based",
+    "quantile",
+    "existing_column",
+}
+
+
+@dataclass
+class TargetStrategyResult:
+    """
+    Standard output returned by every target strategy.
+    """
+
+    target_column: str
+    target_series: pd.Series
+    strategy: str
+    source_column: Optional[str]
+    resolved_source_column: Optional[str]
+    threshold_value: Optional[float]
+    positive_count: int
+    negative_count: int
+    positive_rate: float
+
+
+def apply_operator(series: pd.Series, operator: str, value: Any) -> pd.Series:
+    """
+    Apply a configured comparison operator to a pandas Series.
+    """
+
+    if operator == "equals":
+        return series == value
+
+    if operator == "not_equals":
+        return series != value
+
+    if operator == "greater_than":
+        return series > value
+
+    if operator == "greater_than_or_equal":
+        return series >= value
+
+    if operator == "less_than":
+        return series < value
+
+    if operator == "less_than_or_equal":
+        return series <= value
+
+    if operator == "in":
+        return series.isin(value)
+
+    if operator == "not_in":
+        return ~series.isin(value)
+
+    if operator == "is_null":
+        return series.isna()
+
+    if operator == "is_not_null":
+        return series.notna()
+
+    raise ValueError(f"Unsupported target operator: {operator}")
+
+
+def resolve_source_column(
+    dataframe: pd.DataFrame,
+    source_dataset: Optional[str],
+    source_column: str,
+) -> str:
+    """
+    Resolve source column from the modeling feature matrix.
+
+    The feature matrix may contain either:
+        - original column name
+        - dataset-prefixed column name, such as cost_features__total_paid_amount
+    """
+
+    if source_column in dataframe.columns:
+        return source_column
+
+    if source_dataset:
+        prefixed_column = f"{source_dataset}__{source_column}"
+
+        if prefixed_column in dataframe.columns:
+            return prefixed_column
+
+    raise ValueError(
+        "Unable to resolve target source column. "
+        f"source_dataset={source_dataset}, source_column={source_column}"
+    )
+
+
+def build_result(
+    target_column: str,
+    target_series: pd.Series,
+    strategy: str,
+    source_column: Optional[str],
+    resolved_source_column: Optional[str],
+    threshold_value: Optional[float],
+) -> TargetStrategyResult:
+    """
+    Build standardized target strategy result.
+    """
+
+    clean_target = target_series.astype(int)
+
+    total_count = int(len(clean_target))
+    positive_count = int((clean_target == 1).sum())
+    negative_count = int((clean_target == 0).sum())
+    positive_rate = positive_count / total_count if total_count else 0.0
+
+    return TargetStrategyResult(
+        target_column=target_column,
+        target_series=clean_target,
+        strategy=strategy,
+        source_column=source_column,
+        resolved_source_column=resolved_source_column,
+        threshold_value=threshold_value,
+        positive_count=positive_count,
+        negative_count=negative_count,
+        positive_rate=positive_rate,
+    )
+
+
+def build_existing_column_target(
+    dataframe: pd.DataFrame,
+    target_column: str,
+) -> TargetStrategyResult:
+    """
+    Use an existing binary target column from the modeling feature matrix.
+    """
+
+    if target_column not in dataframe.columns:
+        raise ValueError(f"Existing target column not found: {target_column}")
+
+    return build_result(
+        target_column=target_column,
+        target_series=dataframe[target_column],
+        strategy="existing_column",
+        source_column=target_column,
+        resolved_source_column=target_column,
+        threshold_value=None,
+    )
+
+
+def build_threshold_target(
+    dataframe: pd.DataFrame,
+    target_column: str,
+    source_dataset: Optional[str],
+    source_column: str,
+    operator: str,
+    value: Any,
+) -> TargetStrategyResult:
+    """
+    Build binary target using a configured threshold or comparison rule.
+    """
+
+    resolved_column = resolve_source_column(
+        dataframe=dataframe,
+        source_dataset=source_dataset,
+        source_column=source_column,
+    )
+
+    mask = apply_operator(
+        series=dataframe[resolved_column],
+        operator=operator,
+        value=value,
+    )
+
+    return build_result(
+        target_column=target_column,
+        target_series=mask.astype(int),
+        strategy="threshold",
+        source_column=source_column,
+        resolved_source_column=resolved_column,
+        threshold_value=float(value) if isinstance(value, (int, float)) else None,
+    )
+
+
+def build_quantile_target(
+    dataframe: pd.DataFrame,
+    target_column: str,
+    source_dataset: Optional[str],
+    source_column: str,
+    quantile: float,
+    positive_direction: str = "greater_than_or_equal",
+) -> TargetStrategyResult:
+    """
+    Build binary target using a dynamic quantile threshold.
+
+    Example:
+        quantile = 0.90 means top 10 percent becomes target = 1.
+    """
+
+    resolved_column = resolve_source_column(
+        dataframe=dataframe,
+        source_dataset=source_dataset,
+        source_column=source_column,
+    )
+
+    threshold_value = float(dataframe[resolved_column].quantile(float(quantile)))
+
+    mask = apply_operator(
+        series=dataframe[resolved_column],
+        operator=positive_direction,
+        value=threshold_value,
+    )
+
+    return build_result(
+        target_column=target_column,
+        target_series=mask.astype(int),
+        strategy="quantile",
+        source_column=source_column,
+        resolved_source_column=resolved_column,
+        threshold_value=threshold_value,
+    )
+
+
+def build_target_from_config(
+    dataframe: pd.DataFrame,
+    model_key: str,
+    target_config: Dict[str, Any],
+) -> TargetStrategyResult:
+    """
+    Build target for one model using normalized target configuration.
+    """
+
+    strategy = target_config.get("strategy") or target_config.get("mode")
+    target_column = target_config.get("output_column") or target_config.get("column")
+
+    if not strategy:
+        raise ValueError(f"Target strategy missing for model: {model_key}")
+
+    if not target_column:
+        raise ValueError(f"Target output column missing for model: {model_key}")
+
+    if strategy not in SUPPORTED_TARGET_STRATEGIES:
+        raise ValueError(
+            f"Unsupported target strategy for model {model_key}: {strategy}. "
+            f"Supported: {sorted(SUPPORTED_TARGET_STRATEGIES)}"
+        )
+
+    if strategy == "existing_column":
+        return build_existing_column_target(
+            dataframe=dataframe,
+            target_column=target_column,
+        )
+
+    source = target_config.get("source", {})
+    parameters = target_config.get("parameters", {})
+
+    source_dataset = (
+        source.get("dataset")
+        or target_config.get("source_dataset")
+        or target_config.get("dataset")
+    )
+    source_column = (
+        source.get("column")
+        or target_config.get("source_column")
+    )
+
+    if not source_column:
+        raise ValueError(f"Target source column missing for model: {model_key}")
+
+    if strategy in {"threshold", "rule_based"}:
+        operator = parameters.get("operator") or target_config.get("operator")
+        value = parameters.get("value", target_config.get("value"))
+
+        if not operator:
+            raise ValueError(f"Target operator missing for model: {model_key}")
+
+        return build_threshold_target(
+            dataframe=dataframe,
+            target_column=target_column,
+            source_dataset=source_dataset,
+            source_column=source_column,
+            operator=operator,
+            value=value,
+        )
+
+    if strategy == "quantile":
+        quantile = parameters.get("quantile", target_config.get("quantile"))
+        positive_direction = parameters.get(
+            "positive_direction",
+            target_config.get("positive_direction", "greater_than_or_equal"),
+        )
+
+        if quantile is None:
+            raise ValueError(f"Target quantile missing for model: {model_key}")
+
+        return build_quantile_target(
+            dataframe=dataframe,
+            target_column=target_column,
+            source_dataset=source_dataset,
+            source_column=source_column,
+            quantile=float(quantile),
+            positive_direction=positive_direction,
+        )
+
+    raise ValueError(f"Unhandled target strategy: {strategy}")
+
+
+def main() -> None:
+    """
+    Lightweight module validation.
+    """
+
+    sample = pd.DataFrame(
+        {
+            "member_id": [1, 2, 3, 4, 5],
+            "total_paid_amount": [100.0, 200.0, 300.0, 400.0, 500.0],
+        }
+    )
+
+    config = {
+        "strategy": "quantile",
+        "output_column": "high_cost_target",
+        "source": {
+            "dataset": "cost_features",
+            "column": "total_paid_amount",
+        },
+        "parameters": {
+            "quantile": 0.80,
+            "positive_direction": "greater_than_or_equal",
+        },
+    }
+
+    result = build_target_from_config(
+        dataframe=sample,
+        model_key="high_cost",
+        target_config=config,
+    )
+
+    print("Target strategy validation successful.")
+    print(f"Target column: {result.target_column}")
+    print(f"Strategy: {result.strategy}")
+    print(f"Threshold: {result.threshold_value}")
+    print(f"Positive count: {result.positive_count}")
+    print(f"Negative count: {result.negative_count}")
+    print(f"Positive rate: {result.positive_rate:.4f}")
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/targets/target_validation.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/targets/target_validation.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Validates generated model targets for correctness, distribution quality,
+#     and modeling readiness.
+#
+# Run:
+#     python -m src.modeling.targets.target_validation
+#
+###############################################################################
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+
+
+STATUS_SUCCESS = "SUCCESS"
+STATUS_WARNING = "WARNING"
+STATUS_FAILED = "FAILED"
+
+
+@dataclass
+class TargetValidationResult:
+    """
+    Standard result produced by TargetValidator.
+    """
+
+    model_key: str
+    target_column: str
+    status: str
+    passed: bool
+    errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    statistics: Dict[str, Any] = field(default_factory=dict)
+
+    def to_record(self, run_id: str, layer_name: str, domain_name: str) -> Dict[str, Any]:
+        """
+        Convert validation result to metadata/audit record.
+        """
+
+        return {
+            "run_id": run_id,
+            "layer_name": layer_name,
+            "domain_name": domain_name,
+            "model_key": self.model_key,
+            "target_column": self.target_column,
+            "status": self.status,
+            "passed": self.passed,
+            "error_count": len(self.errors),
+            "warning_count": len(self.warnings),
+            "errors": str(self.errors),
+            "warnings": str(self.warnings),
+            "statistics": str(self.statistics),
+            "event_timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        }
+
+
+class TargetValidator:
+    """
+    Validates one generated target column.
+
+    Validation checks:
+        - Target exists
+        - Target is not empty
+        - Target has no nulls
+        - Target is binary
+        - Target has positive and negative examples
+        - Positive rate is not dangerously imbalanced
+    """
+
+    def __init__(
+        self,
+        model_key: str,
+        target_column: str,
+        target_series: pd.Series,
+        minimum_positive_count: int = 1,
+        minimum_negative_count: int = 1,
+        minimum_positive_rate: float = 0.01,
+        maximum_positive_rate: float = 0.99,
+    ) -> None:
+        self.model_key = model_key
+        self.target_column = target_column
+        self.target_series = target_series
+        self.minimum_positive_count = minimum_positive_count
+        self.minimum_negative_count = minimum_negative_count
+        self.minimum_positive_rate = minimum_positive_rate
+        self.maximum_positive_rate = maximum_positive_rate
+        self.errors: List[str] = []
+        self.warnings: List[str] = []
+        self.statistics: Dict[str, Any] = {}
+
+    def validate(self) -> TargetValidationResult:
+        """
+        Run all target validation checks.
+        """
+
+        self._validate_not_empty()
+        self._calculate_statistics()
+        self._validate_no_nulls()
+        self._validate_binary_values()
+        self._validate_class_presence()
+        self._validate_class_balance()
+
+        passed = len(self.errors) == 0
+        status = STATUS_FAILED if self.errors else STATUS_WARNING if self.warnings else STATUS_SUCCESS
+
+        return TargetValidationResult(
+            model_key=self.model_key,
+            target_column=self.target_column,
+            status=status,
+            passed=passed,
+            errors=self.errors,
+            warnings=self.warnings,
+            statistics=self.statistics,
+        )
+
+    def _validate_not_empty(self) -> None:
+        """
+        Validate target series is not empty.
+        """
+
+        if self.target_series is None or len(self.target_series) == 0:
+            self.errors.append("Target series is empty.")
+
+    def _calculate_statistics(self) -> None:
+        """
+        Calculate target distribution statistics.
+        """
+
+        if self.target_series is None or len(self.target_series) == 0:
+            self.statistics = {
+                "row_count": 0,
+                "null_count": None,
+                "positive_count": 0,
+                "negative_count": 0,
+                "positive_rate": 0.0,
+                "unique_values": [],
+            }
+            return
+
+        clean_series = self.target_series.dropna()
+
+        row_count = int(len(self.target_series))
+        null_count = int(self.target_series.isna().sum())
+        positive_count = int((clean_series == 1).sum())
+        negative_count = int((clean_series == 0).sum())
+        positive_rate = positive_count / row_count if row_count else 0.0
+
+        self.statistics = {
+            "row_count": row_count,
+            "null_count": null_count,
+            "positive_count": positive_count,
+            "negative_count": negative_count,
+            "positive_rate": positive_rate,
+            "unique_values": sorted([str(value) for value in clean_series.unique().tolist()]),
+        }
+
+    def _validate_no_nulls(self) -> None:
+        """
+        Validate target has no nulls.
+        """
+
+        null_count = int(self.statistics.get("null_count") or 0)
+
+        if null_count > 0:
+            self.errors.append(f"Target contains null values: {null_count}")
+
+    def _validate_binary_values(self) -> None:
+        """
+        Validate target contains only binary values 0 and 1.
+        """
+
+        if self.target_series is None or len(self.target_series) == 0:
+            return
+
+        allowed_values = {0, 1}
+        observed_values = set(self.target_series.dropna().astype(int).unique().tolist())
+
+        invalid_values = observed_values - allowed_values
+
+        if invalid_values:
+            self.errors.append(f"Target contains non-binary values: {sorted(invalid_values)}")
+
+    def _validate_class_presence(self) -> None:
+        """
+        Validate target has enough positive and negative examples.
+        """
+
+        positive_count = int(self.statistics.get("positive_count", 0))
+        negative_count = int(self.statistics.get("negative_count", 0))
+
+        if positive_count < self.minimum_positive_count:
+            self.errors.append(
+                f"Target has insufficient positive examples: {positive_count}"
+            )
+
+        if negative_count < self.minimum_negative_count:
+            self.errors.append(
+                f"Target has insufficient negative examples: {negative_count}"
+            )
+
+    def _validate_class_balance(self) -> None:
+        """
+        Warn when target class distribution is highly imbalanced.
+        """
+
+        positive_rate = float(self.statistics.get("positive_rate", 0.0))
+
+        if positive_rate < self.minimum_positive_rate:
+            self.warnings.append(
+                f"Target positive rate is very low: {positive_rate:.6f}"
+            )
+
+        if positive_rate > self.maximum_positive_rate:
+            self.warnings.append(
+                f"Target positive rate is very high: {positive_rate:.6f}"
+            )
+
+
+def validate_target(
+    model_key: str,
+    target_column: str,
+    target_series: pd.Series,
+) -> TargetValidationResult:
+    """
+    Convenience function for validating one target.
+    """
+
+    validator = TargetValidator(
+        model_key=model_key,
+        target_column=target_column,
+        target_series=target_series,
+    )
+
+    return validator.validate()
+
+
+def main() -> None:
+    """
+    Lightweight module validation.
+    """
+
+    sample_target = pd.Series([0, 0, 0, 1, 1], name="high_cost_target")
+
+    result = validate_target(
+        model_key="high_cost",
+        target_column="high_cost_target",
+        target_series=sample_target,
+    )
+
+    print("Target validation module validation successful.")
+    print(f"Status: {result.status}")
+    print(f"Passed: {result.passed}")
+    print(f"Statistics: {result.statistics}")
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/training/__init__.py
+###############################################################################
+
+
+###############################################################################
+# FILE: src/modeling/training/algorithms.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/training/algorithms.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Provides a centralized algorithm registry and factory for MedFabric
+#     classification models.
+#
+# Run:
+#     python -m src.modeling.training.algorithms
+#
+###############################################################################
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict
+
+from sklearn.ensemble import (
+    AdaBoostClassifier,
+    ExtraTreesClassifier,
+    GradientBoostingClassifier,
+    HistGradientBoostingClassifier,
+    RandomForestClassifier,
+)
+from sklearn.linear_model import LogisticRegression
+from sklearn.dummy import DummyClassifier
+
+
+SUPPORTED_CLASSIFIERS = {
+    "dummy_classifier",
+    "logistic_regression",
+    "random_forest",
+    "extra_trees",
+    "gradient_boosting",
+    "hist_gradient_boosting",
+    "adaboost",
+}
+
+
+@dataclass
+class AlgorithmDefinition:
+    algorithm_key: str
+    algorithm_name: str
+    model_type: str
+    enabled: bool
+    estimator: Any
+    parameters: Dict[str, Any]
+
+
+def build_classifier(
+    algorithm_key: str,
+    parameters: Dict[str, Any] | None = None,
+    random_state: int = 42,
+) -> Any:
+    """
+    Build a sklearn classifier from algorithm key and parameters.
+    """
+
+    params = parameters or {}
+
+    if algorithm_key == "dummy_classifier":
+        return DummyClassifier(
+            strategy=params.get("strategy", "most_frequent"),
+            random_state=random_state,
+        )
+
+    if algorithm_key == "logistic_regression":
+        return LogisticRegression(
+            penalty=params.get("penalty", "l2"),
+            C=float(params.get("C", 1.0)),
+            solver=params.get("solver", "lbfgs"),
+            max_iter=int(params.get("max_iter", 1000)),
+            class_weight=params.get("class_weight"),
+            random_state=random_state,
+        )
+
+    if algorithm_key == "random_forest":
+        return RandomForestClassifier(
+            n_estimators=int(params.get("n_estimators", 200)),
+            max_depth=params.get("max_depth"),
+            min_samples_split=int(params.get("min_samples_split", 2)),
+            min_samples_leaf=int(params.get("min_samples_leaf", 1)),
+            class_weight=params.get("class_weight"),
+            random_state=random_state,
+            n_jobs=int(params.get("n_jobs", -1)),
+        )
+
+    if algorithm_key == "extra_trees":
+        return ExtraTreesClassifier(
+            n_estimators=int(params.get("n_estimators", 200)),
+            max_depth=params.get("max_depth"),
+            min_samples_split=int(params.get("min_samples_split", 2)),
+            min_samples_leaf=int(params.get("min_samples_leaf", 1)),
+            class_weight=params.get("class_weight"),
+            random_state=random_state,
+            n_jobs=int(params.get("n_jobs", -1)),
+        )
+
+    if algorithm_key == "gradient_boosting":
+        return GradientBoostingClassifier(
+            n_estimators=int(params.get("n_estimators", 100)),
+            learning_rate=float(params.get("learning_rate", 0.1)),
+            max_depth=int(params.get("max_depth", 3)),
+            random_state=random_state,
+        )
+
+    if algorithm_key == "hist_gradient_boosting":
+        return HistGradientBoostingClassifier(
+            max_iter=int(params.get("max_iter", 100)),
+            learning_rate=float(params.get("learning_rate", 0.1)),
+            max_leaf_nodes=params.get("max_leaf_nodes", 31),
+            random_state=random_state,
+        )
+
+    if algorithm_key == "adaboost":
+        return AdaBoostClassifier(
+            n_estimators=int(params.get("n_estimators", 100)),
+            learning_rate=float(params.get("learning_rate", 1.0)),
+            random_state=random_state,
+        )
+
+    raise ValueError(
+        f"Unsupported classifier: {algorithm_key}. "
+        f"Supported classifiers: {sorted(SUPPORTED_CLASSIFIERS)}"
+    )
+
+
+def build_algorithm_definitions(
+    algorithms_config: Dict[str, Any],
+    random_state: int = 42,
+) -> Dict[str, AlgorithmDefinition]:
+    """
+    Build enabled algorithm definitions from configuration.
+    """
+
+    definitions: Dict[str, AlgorithmDefinition] = {}
+
+    for algorithm_key, config in algorithms_config.items():
+        enabled = bool(config.get("enabled", True))
+
+        if not enabled:
+            continue
+
+        parameters = config.get("parameters", {})
+
+        estimator = build_classifier(
+            algorithm_key=algorithm_key,
+            parameters=parameters,
+            random_state=random_state,
+        )
+
+        definitions[algorithm_key] = AlgorithmDefinition(
+            algorithm_key=algorithm_key,
+            algorithm_name=config.get("name", algorithm_key),
+            model_type=config.get("model_type", "classification"),
+            enabled=enabled,
+            estimator=estimator,
+            parameters=parameters,
+        )
+
+    return definitions
+
+
+def get_default_algorithms_config() -> Dict[str, Any]:
+    """
+    Return default algorithm configuration for local validation and fallback.
+    """
+
+    return {
+        "dummy_classifier": {
+            "enabled": true if False else True,
+            "name": "Dummy Classifier",
+            "parameters": {
+                "strategy": "most_frequent",
+            },
+        },
+        "logistic_regression": {
+            "enabled": True,
+            "name": "Logistic Regression",
+            "parameters": {
+                "max_iter": 1000,
+                "solver": "lbfgs",
+            },
+        },
+        "random_forest": {
+            "enabled": True,
+            "name": "Random Forest",
+            "parameters": {
+                "n_estimators": 100,
+                "max_depth": None,
+            },
+        },
+        "extra_trees": {
+            "enabled": True,
+            "name": "Extra Trees",
+            "parameters": {
+                "n_estimators": 100,
+                "max_depth": None,
+            },
+        },
+        "gradient_boosting": {
+            "enabled": True,
+            "name": "Gradient Boosting",
+            "parameters": {
+                "n_estimators": 100,
+                "learning_rate": 0.1,
+                "max_depth": 3,
+            },
+        },
+        "hist_gradient_boosting": {
+            "enabled": True,
+            "name": "Histogram Gradient Boosting",
+            "parameters": {
+                "max_iter": 100,
+                "learning_rate": 0.1,
+                "max_leaf_nodes": 31,
+            },
+        },
+        "adaboost": {
+            "enabled": True,
+            "name": "AdaBoost",
+            "parameters": {
+                "n_estimators": 100,
+                "learning_rate": 1.0,
+            },
+        },
+    }
+
+
+def main() -> None:
+    """
+    Lightweight module validation.
+    """
+
+    algorithms = build_algorithm_definitions(
+        algorithms_config=get_default_algorithms_config(),
+        random_state=42,
+    )
+
+    print("Algorithm registry validation successful.")
+    print(f"Algorithms built: {list(algorithms.keys())}")
+
+    for key, definition in algorithms.items():
+        print(f"{key}: {type(definition.estimator).__name__}")
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/training/preprocessing.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/training/preprocessing.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Builds reusable preprocessing pipelines for all MedFabric machine
+#     learning models.
+#
+# Architectural Notes:
+#     - Independent of any specific predictive model.
+#     - Independent of Analytics Platform.
+#     - Shared by every classifier and future regression model.
+#     - Configuration-driven preprocessing.
+#
+# Run:
+#     python -m src.modeling.training.preprocessing
+#
+###############################################################################
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import pandas as pd
+
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+
+###############################################################################
+# Column Discovery
+###############################################################################
+
+def discover_feature_types(
+    dataframe: pd.DataFrame,
+) -> Tuple[List[str], List[str]]:
+    """
+    Separate numeric and categorical feature columns.
+
+    Numeric columns include:
+        - integer
+        - float
+        - boolean
+
+    All remaining columns are treated as categorical.
+    """
+
+    numeric_columns = dataframe.select_dtypes(
+        include=[
+            "number",
+            "bool",
+        ]
+    ).columns.tolist()
+
+    categorical_columns = [
+        column
+        for column in dataframe.columns
+        if column not in numeric_columns
+    ]
+
+    return numeric_columns, categorical_columns
+
+
+###############################################################################
+# Missing Value Normalization
+###############################################################################
+
+def normalize_categorical_missing_values(
+    dataframe: pd.DataFrame,
+    categorical_columns: List[str],
+) -> pd.DataFrame:
+    """
+    Normalize categorical missing values before sklearn preprocessing.
+
+    Why this exists
+    ---------------
+    scikit-learn SimpleImputer can fail when categorical columns contain a mix
+    of Python None and string values because it may try to compare None with
+    strings while determining the most frequent value.
+
+    This function converts categorical columns to object/string-safe values and
+    replaces all missing values with np.nan so SimpleImputer can process them
+    consistently.
+    """
+
+    normalized = dataframe.copy()
+
+    for column in categorical_columns:
+        normalized[column] = normalized[column].replace({None: np.nan})
+
+    return normalized
+
+
+###############################################################################
+# Numeric Pipeline
+###############################################################################
+
+def build_numeric_pipeline(
+    preprocessing_config: Dict[str, Any],
+) -> Pipeline:
+    """
+    Build numeric preprocessing pipeline.
+    """
+
+    steps = [
+        (
+            "imputer",
+            SimpleImputer(
+                strategy=preprocessing_config.get(
+                    "numeric_imputation_strategy",
+                    "median",
+                ),
+            ),
+        )
+    ]
+
+    if bool(preprocessing_config.get("scale_numeric_features", False)):
+        steps.append(
+            (
+                "scaler",
+                StandardScaler(),
+            )
+        )
+
+    return Pipeline(steps)
+
+
+###############################################################################
+# Categorical Pipeline
+###############################################################################
+
+def build_categorical_pipeline(
+    preprocessing_config: Dict[str, Any],
+) -> Pipeline:
+    """
+    Build categorical preprocessing pipeline.
+    """
+
+    steps = [
+        (
+            "imputer",
+            SimpleImputer(
+                strategy=preprocessing_config.get(
+                    "categorical_imputation_strategy",
+                    "most_frequent",
+                ),
+                missing_values=np.nan,
+            ),
+        )
+    ]
+
+    if bool(preprocessing_config.get("one_hot_encode_categorical_features", True)):
+        steps.append(
+            (
+                "encoder",
+                OneHotEncoder(
+                    handle_unknown="ignore",
+                    sparse_output=False,
+                ),
+            )
+        )
+
+    return Pipeline(steps)
+
+
+###############################################################################
+# Column Transformer
+###############################################################################
+
+def build_preprocessor(
+    dataframe: pd.DataFrame,
+    preprocessing_config: Dict[str, Any],
+) -> ColumnTransformer:
+    """
+    Build complete preprocessing pipeline.
+    """
+
+    numeric_columns, categorical_columns = discover_feature_types(dataframe)
+
+    transformers = []
+
+    if numeric_columns:
+        transformers.append(
+            (
+                "numeric",
+                build_numeric_pipeline(preprocessing_config),
+                numeric_columns,
+            )
+        )
+
+    if categorical_columns:
+        transformers.append(
+            (
+                "categorical",
+                build_categorical_pipeline(preprocessing_config),
+                categorical_columns,
+            )
+        )
+
+    return ColumnTransformer(
+        transformers=transformers,
+        remainder="drop",
+    )
+
+
+def prepare_features_for_preprocessing(
+    dataframe: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Prepare feature dataframe before passing into sklearn pipeline.
+
+    This keeps the public preprocessing contract simple:
+        - caller passes raw feature dataframe
+        - this module normalizes missing categorical values
+        - sklearn handles imputation and encoding
+    """
+
+    numeric_columns, categorical_columns = discover_feature_types(dataframe)
+
+    return normalize_categorical_missing_values(
+        dataframe=dataframe,
+        categorical_columns=categorical_columns,
+    )
+
+
+###############################################################################
+# Validation
+###############################################################################
+
+def main() -> None:
+    """
+    Validate preprocessing framework.
+    """
+
+    dataframe = pd.DataFrame(
+        {
+            "age": [30, 40, None],
+            "gender": ["M", "F", None],
+            "paid": [100.5, 200.0, None],
+            "state": ["AZ", "CA", "AZ"],
+        }
+    )
+
+    preprocessing_config = {
+        "numeric_imputation_strategy": "median",
+        "categorical_imputation_strategy": "most_frequent",
+        "scale_numeric_features": False,
+        "one_hot_encode_categorical_features": True,
+    }
+
+    prepared_dataframe = prepare_features_for_preprocessing(dataframe)
+
+    preprocessor = build_preprocessor(
+        prepared_dataframe,
+        preprocessing_config,
+    )
+
+    transformed = preprocessor.fit_transform(prepared_dataframe)
+
+    print("Preprocessing validation successful.")
+    print(f"Input columns : {len(dataframe.columns)}")
+    print(f"Output shape  : {transformed.shape}")
+
+
+if __name__ == "__main__":
+    main()
+
+###############################################################################
+# FILE: src/modeling/training/trainer.py
+###############################################################################
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#     src/modeling/training/trainer.py
+#
+# Layer:
+#     Layer 2D - Enterprise Modeling Framework
+#
+# Purpose:
+#     Trains enabled candidate algorithms for one prediction objective, evaluates
+#     each candidate, and selects the champion model.
+#
+# Key Responsibilities:
+#     - Read YAML-driven modeling defaults.
+#     - Read YAML-driven training configuration.
+#     - Apply optional training-time sampling for performance.
+#     - Preserve class balance when stratified sampling is enabled.
+#     - Train all enabled candidate algorithms.
+#     - Support project-wide parallel candidate training.
+#     - Log algorithm-level START / COMPLETE / FAILED timing.
+#     - Calculate classification metrics.
+#     - Capture per-algorithm elapsed training time.
+#     - Select champion algorithm by configured metric.
+#     - Return candidate metrics output.
+#     - Return champion summary output.
+#
+# Architectural Rules:
+#     - Trainer must not generate run IDs.
+#     - Trainer must not generate runtime timestamps.
+#     - Run ID must come from PipelineContext.
+#     - Event timestamp must come from PipelineContext or the layer runtime.
+#     - Sampling affects training only.
+#     - Population scoring is handled later by src/modeling/scoring/scorer.py.
+#     - Parallelism must come from project-level performance configuration.
+#     - Trainer must not hardcode worker counts.
+#
+# Configuration Used:
+#     config/modeling/modeling.yaml
+#
+#       modeling_defaults:
+#         random_state
+#         test_size
+#         selection_metric
+#         preprocessing
+#
+#       training:
+#         performance
+#         metrics
+#         algorithms
+#
+#     config/pipeline.yaml
+#
+#       performance:
+#         parallel_execution
+#         max_parallel_workers
+#         parallel_strategy
+#
+# Run:
+#     python -m src.modeling.training.trainer
+#
+###############################################################################
+
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+
+from src.common.parallel_utils import (
+    raise_if_any_task_failed,
+    resolve_parallelism_config,
+    run_tasks,
+)
+from src.modeling.training.algorithms import (
+    AlgorithmDefinition,
+    build_algorithm_definitions,
+    get_default_algorithms_config,
+)
+from src.modeling.training.preprocessing import (
+    build_preprocessor,
+    prepare_features_for_preprocessing,
+)
+
+
+###############################################################################
+# Status Constants
+###############################################################################
+
+STATUS_SUCCESS = "SUCCESS"
+STATUS_FAILED = "FAILED"
+
+
+###############################################################################
+# Result Objects
+###############################################################################
+
+@dataclass
+class CandidateModelResult:
+    """
+    Result for one candidate algorithm.
+
+    One prediction objective may train multiple algorithms. Each algorithm
+    produces one CandidateModelResult.
+    """
+
+    model_key: str
+    algorithm_key: str
+    algorithm_name: str
+    status: str
+    pipeline: Optional[Pipeline]
+    metrics: Dict[str, Any]
+    error_message: Optional[str]
+    trained_at_utc: str
+    training_seconds: float
+    train_row_count: int
+    test_row_count: int
+
+
+@dataclass
+class TrainingResult:
+    """
+    Final training result for one prediction objective.
+
+    Contains the selected champion model plus all candidate results and output
+    dataframes needed by the Modeling builder.
+    """
+
+    model_key: str
+    target_column: str
+    champion_algorithm_key: str
+    champion_algorithm_name: str
+    champion_pipeline: Pipeline
+    champion_metrics: Dict[str, Any]
+    candidate_results: List[CandidateModelResult]
+    metrics_dataframe: pd.DataFrame
+    champion_summary_dataframe: pd.DataFrame
+    training_row_count: int
+    full_row_count: int
+    sampling_applied: bool
+
+
+###############################################################################
+# Configuration Helpers
+###############################################################################
+
+def get_training_performance_config(training_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return training.performance from modeling.yaml.
+    """
+
+    return training_config.get("performance", {}) or {}
+
+
+def get_training_metrics_config(training_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return training.metrics from modeling.yaml.
+    """
+
+    return training_config.get("metrics", {}) or {}
+
+
+def get_selection_metric(
+    modeling_defaults: Dict[str, Any],
+    training_config: Dict[str, Any],
+) -> str:
+    """
+    Resolve champion selection metric.
+
+    Priority:
+        1. training.metrics.primary_metric
+        2. modeling_defaults.selection_metric
+        3. roc_auc
+    """
+
+    metrics_config = get_training_metrics_config(training_config)
+
+    return (
+        metrics_config.get("primary_metric")
+        or modeling_defaults.get("selection_metric")
+        or "roc_auc"
+    )
+
+
+###############################################################################
+# Training Sampling
+###############################################################################
+
+def calculate_sample_size(
+    row_count: int,
+    performance_config: Dict[str, Any],
+) -> int:
+    """
+    Calculate training sample size using YAML controls.
+
+    Uses:
+        - train_sample_fraction
+        - min_train_rows
+        - max_train_rows
+    """
+
+    train_sample_fraction = float(
+        performance_config.get("train_sample_fraction", 1.0)
+    )
+    min_train_rows = int(performance_config.get("min_train_rows", 0))
+    max_train_rows = int(performance_config.get("max_train_rows", row_count))
+
+    requested_rows = int(row_count * train_sample_fraction)
+
+    sample_size = max(requested_rows, min_train_rows)
+    sample_size = min(sample_size, max_train_rows)
+    sample_size = min(sample_size, row_count)
+
+    return int(sample_size)
+
+
+def can_stratify(y: pd.Series) -> bool:
+    """
+    Determine whether stratified sampling is safe.
+
+    Stratification requires:
+        - at least two classes
+        - at least two records per class
+    """
+
+    class_counts = y.value_counts(dropna=True)
+
+    if len(class_counts) < 2:
+        return False
+
+    return bool((class_counts >= 2).all())
+
+
+def sample_training_data(
+    X: pd.DataFrame,
+    y: pd.Series,
+    performance_config: Dict[str, Any],
+    random_state: int,
+) -> Tuple[pd.DataFrame, pd.Series, bool]:
+    """
+    Apply optional training-time sampling.
+
+    Supported strategies:
+        - stratified
+        - random
+
+    Important:
+        Sampling affects training only. The champion model still scores the full
+        population later in scorer.py.
+    """
+
+    row_count = len(X)
+    sampling_enabled = bool(
+        performance_config.get("enable_training_sample", False)
+    )
+
+    if not sampling_enabled:
+        return X, y, False
+
+    sample_size = calculate_sample_size(
+        row_count=row_count,
+        performance_config=performance_config,
+    )
+
+    if sample_size >= row_count:
+        return X, y, False
+
+    sampling_strategy = str(
+        performance_config.get("sampling_strategy", "stratified")
+    ).lower()
+
+    if sampling_strategy == "stratified" and can_stratify(y):
+        sampled_X, _, sampled_y, _ = train_test_split(
+            X,
+            y,
+            train_size=sample_size,
+            random_state=random_state,
+            stratify=y,
+        )
+        return sampled_X, sampled_y, True
+
+    if sampling_strategy in {"random", "stratified"}:
+        sampled_index = X.sample(
+            n=sample_size,
+            random_state=random_state,
+        ).index
+
+        return X.loc[sampled_index], y.loc[sampled_index], True
+
+    raise ValueError(
+        f"Unsupported sampling_strategy: {sampling_strategy}. "
+        "Supported values: stratified, random"
+    )
+
+
+###############################################################################
+# Metrics
+###############################################################################
+
+def calculate_classification_metrics(
+    y_true: pd.Series,
+    y_pred: np.ndarray,
+    y_score: np.ndarray,
+) -> Dict[str, Any]:
+    """
+    Calculate standard binary classification metrics.
+    """
+
+    metrics: Dict[str, Any] = {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "precision": float(precision_score(y_true, y_pred, zero_division=0)),
+        "recall": float(recall_score(y_true, y_pred, zero_division=0)),
+        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
+        "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+    }
+
+    try:
+        metrics["roc_auc"] = float(roc_auc_score(y_true, y_score))
+    except Exception:
+        metrics["roc_auc"] = None
+
+    return metrics
+
+
+def get_prediction_scores(
+    pipeline: Pipeline,
+    X: pd.DataFrame,
+) -> np.ndarray:
+    """
+    Return probability-like scores for metric calculation.
+    """
+
+    if hasattr(pipeline, "predict_proba"):
+        return pipeline.predict_proba(X)[:, 1]
+
+    if hasattr(pipeline, "decision_function"):
+        raw_scores = pipeline.decision_function(X)
+        return 1 / (1 + np.exp(-raw_scores))
+
+    return pipeline.predict(X)
+
+
+###############################################################################
+# Candidate Training
+###############################################################################
+
+def train_candidate_algorithm(
+    model_key: str,
+    algorithm_definition: AlgorithmDefinition,
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+    y_train: pd.Series,
+    y_test: pd.Series,
+    preprocessing_config: Dict[str, Any],
+    event_timestamp_utc: str,
+    logger: Optional[logging.Logger] = None,
+) -> CandidateModelResult:
+    """
+    Train and evaluate one candidate algorithm.
+
+    This function:
+        - logs algorithm START when a logger is provided
+        - trains one sklearn pipeline
+        - evaluates metrics
+        - logs algorithm COMPLETE or FAILED with elapsed seconds
+        - returns a CandidateModelResult
+
+    This function is safe to execute sequentially or through parallel_utils.
+    """
+
+    start_time = time.perf_counter()
+
+    if logger is not None:
+        logger.info("START Algorithm: %s", algorithm_definition.algorithm_name)
+
+    try:
+        preprocessor = build_preprocessor(
+            dataframe=X_train,
+            preprocessing_config=preprocessing_config,
+        )
+
+        pipeline = Pipeline(
+            steps=[
+                ("preprocessor", preprocessor),
+                ("model", algorithm_definition.estimator),
+            ]
+        )
+
+        pipeline.fit(X_train, y_train)
+
+        y_pred = pipeline.predict(X_test)
+        y_score = get_prediction_scores(pipeline, X_test)
+
+        metrics = calculate_classification_metrics(
+            y_true=y_test,
+            y_pred=y_pred,
+            y_score=y_score,
+        )
+
+        training_seconds = float(time.perf_counter() - start_time)
+
+        if logger is not None:
+            logger.info(
+                "COMPLETE Algorithm: %s | %.2f sec",
+                algorithm_definition.algorithm_name,
+                training_seconds,
+            )
+
+        return CandidateModelResult(
+            model_key=model_key,
+            algorithm_key=algorithm_definition.algorithm_key,
+            algorithm_name=algorithm_definition.algorithm_name,
+            status=STATUS_SUCCESS,
+            pipeline=pipeline,
+            metrics=metrics,
+            error_message=None,
+            trained_at_utc=event_timestamp_utc,
+            training_seconds=training_seconds,
+            train_row_count=int(len(X_train)),
+            test_row_count=int(len(X_test)),
+        )
+
+    except Exception as exc:
+        training_seconds = float(time.perf_counter() - start_time)
+
+        if logger is not None:
+            logger.error(
+                "FAILED Algorithm: %s | %.2f sec | Error: %s",
+                algorithm_definition.algorithm_name,
+                training_seconds,
+                exc,
+            )
+
+        return CandidateModelResult(
+            model_key=model_key,
+            algorithm_key=algorithm_definition.algorithm_key,
+            algorithm_name=algorithm_definition.algorithm_name,
+            status=STATUS_FAILED,
+            pipeline=None,
+            metrics={},
+            error_message=str(exc),
+            trained_at_utc=event_timestamp_utc,
+            training_seconds=training_seconds,
+            train_row_count=int(len(X_train)),
+            test_row_count=int(len(X_test)),
+        )
+
+
+def train_candidate_algorithms(
+    model_key: str,
+    algorithm_definitions: Dict[str, AlgorithmDefinition],
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+    y_train: pd.Series,
+    y_test: pd.Series,
+    preprocessing_config: Dict[str, Any],
+    event_timestamp_utc: str,
+    parallelism_config: Optional[Dict[str, Any]],
+    logger: Optional[logging.Logger] = None,
+) -> List[CandidateModelResult]:
+    """
+    Train all enabled candidate algorithms.
+
+    Execution mode:
+        - Sequential when project parallelism is disabled.
+        - Thread-based parallel execution when project parallelism is enabled.
+
+    Notes:
+        - Parallelism is controlled by config/pipeline.yaml.
+        - Worker count is not hardcoded here.
+        - Algorithm START / COMPLETE logs may appear interleaved when multiple
+          workers run at the same time. That is expected for parallel execution.
+    """
+
+    if parallelism_config is None:
+        parallelism_config = resolve_parallelism_config()
+
+    if logger is not None:
+        logger.info(
+            "Candidate training execution mode | Parallel: %s | Workers: %s | Strategy: %s",
+            parallelism_config.get("parallel_execution"),
+            parallelism_config.get("max_parallel_workers"),
+            parallelism_config.get("parallel_strategy"),
+        )
+
+    tasks: List[Dict[str, Any]] = []
+
+    for algorithm_definition in algorithm_definitions.values():
+        tasks.append(
+            {
+                "task_name": f"{model_key}:{algorithm_definition.algorithm_key}",
+                "callable": lambda alg=algorithm_definition: train_candidate_algorithm(
+                    model_key=model_key,
+                    algorithm_definition=alg,
+                    X_train=X_train,
+                    X_test=X_test,
+                    y_train=y_train,
+                    y_test=y_test,
+                    preprocessing_config=preprocessing_config,
+                    event_timestamp_utc=event_timestamp_utc,
+                    logger=logger,
+                ),
+            }
+        )
+
+    task_results = run_tasks(
+        tasks=tasks,
+        parallelism_config=parallelism_config,
+    )
+
+    raise_if_any_task_failed(task_results)
+
+    return [task_result.result for task_result in task_results]
+
+
+###############################################################################
+# Champion Selection
+###############################################################################
+
+def select_champion_model(
+    candidate_results: List[CandidateModelResult],
+    selection_metric: str,
+    logger: Optional[logging.Logger] = None,
+) -> CandidateModelResult:
+    """
+    Select champion algorithm by configured metric.
+
+    The champion is the successful candidate with the highest configured
+    selection metric value.
+    """
+
+    start_time = time.perf_counter()
+
+    if logger is not None:
+        logger.info("START Champion Selection")
+
+    successful = [
+        result
+        for result in candidate_results
+        if result.status == STATUS_SUCCESS
+        and result.pipeline is not None
+        and result.metrics.get(selection_metric) is not None
+    ]
+
+    if not successful:
+        raise ValueError(
+            f"No successful candidate model available for metric: {selection_metric}"
+        )
+
+    champion = sorted(
+        successful,
+        key=lambda result: float(result.metrics.get(selection_metric, -1)),
+        reverse=True,
+    )[0]
+
+    selection_seconds = float(time.perf_counter() - start_time)
+
+    if logger is not None:
+        logger.info(
+            "COMPLETE Champion Selection | %.2f sec | Champion: %s | %s: %s",
+            selection_seconds,
+            champion.algorithm_key,
+            selection_metric,
+            champion.metrics.get(selection_metric),
+        )
+
+    return champion
+
+
+###############################################################################
+# Output DataFrames
+###############################################################################
+
+def build_candidate_metrics_dataframe(
+    run_id: str,
+    layer_name: str,
+    domain_name: str,
+    model_key: str,
+    model_name: str,
+    target_column: str,
+    champion_algorithm_key: str,
+    candidate_results: List[CandidateModelResult],
+    full_row_count: int,
+    training_row_count: int,
+    sampling_applied: bool,
+) -> pd.DataFrame:
+    """
+    Build one-row-per-metric candidate leaderboard dataframe.
+    """
+
+    rows: List[Dict[str, Any]] = []
+
+    for result in candidate_results:
+        base_record = {
+            "run_id": run_id,
+            "layer_name": layer_name,
+            "domain_name": domain_name,
+            "model_key": model_key,
+            "model_name": model_name,
+            "target_column": target_column,
+            "algorithm_key": result.algorithm_key,
+            "algorithm_name": result.algorithm_name,
+            "is_champion": result.algorithm_key == champion_algorithm_key,
+            "status": result.status,
+            "error_message": result.error_message,
+            "training_seconds": result.training_seconds,
+            "train_row_count": result.train_row_count,
+            "test_row_count": result.test_row_count,
+            "full_row_count": full_row_count,
+            "training_row_count": training_row_count,
+            "sampling_applied": sampling_applied,
+            "event_timestamp_utc": result.trained_at_utc,
+        }
+
+        if result.status == STATUS_SUCCESS:
+            for metric_name, metric_value in result.metrics.items():
+                row = dict(base_record)
+                row["metric_name"] = metric_name
+                row["metric_value"] = metric_value
+                rows.append(row)
+        else:
+            row = dict(base_record)
+            row["metric_name"] = None
+            row["metric_value"] = None
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def build_champion_summary_dataframe(
+    run_id: str,
+    layer_name: str,
+    domain_name: str,
+    model_key: str,
+    model_name: str,
+    target_column: str,
+    champion: CandidateModelResult,
+    selection_metric: str,
+    full_row_count: int,
+    training_row_count: int,
+    sampling_applied: bool,
+) -> pd.DataFrame:
+    """
+    Build one-row champion summary dataframe.
+    """
+
+    record: Dict[str, Any] = {
+        "run_id": run_id,
+        "layer_name": layer_name,
+        "domain_name": domain_name,
+        "model_key": model_key,
+        "model_name": model_name,
+        "target_column": target_column,
+        "champion_algorithm_key": champion.algorithm_key,
+        "champion_algorithm_name": champion.algorithm_name,
+        "selection_metric": selection_metric,
+        "selection_metric_value": champion.metrics.get(selection_metric),
+        "training_seconds": champion.training_seconds,
+        "train_row_count": champion.train_row_count,
+        "test_row_count": champion.test_row_count,
+        "full_row_count": full_row_count,
+        "training_row_count": training_row_count,
+        "sampling_applied": sampling_applied,
+        "event_timestamp_utc": champion.trained_at_utc,
+    }
+
+    for metric_name, metric_value in champion.metrics.items():
+        record[f"metric_{metric_name}"] = metric_value
+
+    return pd.DataFrame([record])
+
+
+###############################################################################
+# Main Training Entry Point
+###############################################################################
+
+def train_model_candidates(
+    dataframe: pd.DataFrame,
+    feature_columns: List[str],
+    target_column: str,
+    model_key: str,
+    model_name: str,
+    modeling_defaults: Dict[str, Any],
+    training_config: Dict[str, Any],
+    run_id: str,
+    event_timestamp_utc: str,
+    layer_name: str = "Layer 2D - Enterprise Modeling Framework",
+    domain_name: str = "Modeling",
+    parallelism_config: Optional[Dict[str, Any]] = None,
+    logger: Optional[logging.Logger] = None,
+) -> TrainingResult:
+    """
+    Train all enabled candidate algorithms and select champion model.
+
+    This is the main function called by build_modeling_layer.py.
+    """
+
+    if logger is not None:
+        logger.info("START Training Data Preparation | Model: %s", model_key)
+
+    preparation_start = time.perf_counter()
+
+    X_full = dataframe[feature_columns].copy()
+    y_full = dataframe[target_column].astype(int)
+
+    if y_full.nunique(dropna=True) < 2:
+        raise ValueError(
+            f"Target has fewer than two classes. "
+            f"model={model_key}, target={target_column}"
+        )
+
+    X_full = prepare_features_for_preprocessing(X_full)
+
+    random_state = int(modeling_defaults.get("random_state", 42))
+    test_size = float(modeling_defaults.get("test_size", 0.20))
+    preprocessing_config = modeling_defaults.get("preprocessing", {})
+
+    selection_metric = get_selection_metric(
+        modeling_defaults=modeling_defaults,
+        training_config=training_config,
+    )
+
+    performance_config = get_training_performance_config(training_config)
+
+    X_training_base, y_training_base, sampling_applied = sample_training_data(
+        X=X_full,
+        y=y_full,
+        performance_config=performance_config,
+        random_state=random_state,
+    )
+
+    algorithms_config = (
+        training_config.get("algorithms")
+        or get_default_algorithms_config()
+    )
+
+    algorithm_definitions = build_algorithm_definitions(
+        algorithms_config=algorithms_config,
+        random_state=random_state,
+    )
+
+    if not algorithm_definitions:
+        raise ValueError("No enabled algorithms found for training.")
+
+    stratify_target = y_training_base if can_stratify(y_training_base) else None
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_training_base,
+        y_training_base,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=stratify_target,
+    )
+
+    preparation_seconds = float(time.perf_counter() - preparation_start)
+
+    if logger is not None:
+        logger.info(
+            "COMPLETE Training Data Preparation | Model: %s | %.2f sec | Full Rows: %s | Training Rows: %s | Sampling Applied: %s",
+            model_key,
+            preparation_seconds,
+            len(X_full),
+            len(X_training_base),
+            sampling_applied,
+        )
+
+    candidate_results = train_candidate_algorithms(
+        model_key=model_key,
+        algorithm_definitions=algorithm_definitions,
+        X_train=X_train,
+        X_test=X_test,
+        y_train=y_train,
+        y_test=y_test,
+        preprocessing_config=preprocessing_config,
+        event_timestamp_utc=event_timestamp_utc,
+        parallelism_config=parallelism_config,
+        logger=logger,
+    )
+
+    champion = select_champion_model(
+        candidate_results=candidate_results,
+        selection_metric=selection_metric,
+        logger=logger,
+    )
+
+    metrics_dataframe = build_candidate_metrics_dataframe(
+        run_id=run_id,
+        layer_name=layer_name,
+        domain_name=domain_name,
+        model_key=model_key,
+        model_name=model_name,
+        target_column=target_column,
+        champion_algorithm_key=champion.algorithm_key,
+        candidate_results=candidate_results,
+        full_row_count=len(X_full),
+        training_row_count=len(X_training_base),
+        sampling_applied=sampling_applied,
+    )
+
+    champion_summary_dataframe = build_champion_summary_dataframe(
+        run_id=run_id,
+        layer_name=layer_name,
+        domain_name=domain_name,
+        model_key=model_key,
+        model_name=model_name,
+        target_column=target_column,
+        champion=champion,
+        selection_metric=selection_metric,
+        full_row_count=len(X_full),
+        training_row_count=len(X_training_base),
+        sampling_applied=sampling_applied,
+    )
+
+    return TrainingResult(
+        model_key=model_key,
+        target_column=target_column,
+        champion_algorithm_key=champion.algorithm_key,
+        champion_algorithm_name=champion.algorithm_name,
+        champion_pipeline=champion.pipeline,
+        champion_metrics=champion.metrics,
+        candidate_results=candidate_results,
+        metrics_dataframe=metrics_dataframe,
+        champion_summary_dataframe=champion_summary_dataframe,
+        training_row_count=len(X_training_base),
+        full_row_count=len(X_full),
+        sampling_applied=sampling_applied,
+    )
+
+
+###############################################################################
+# Standalone Validation
+###############################################################################
+
+def main() -> None:
+    """
+    Validate trainer module independently.
+    """
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(levelname)s] %(message)s",
+    )
+
+    logger = logging.getLogger("medfabric.trainer.validation")
+
+    dataframe = pd.DataFrame(
+        {
+            "member_id": range(1, 100001),
+            "age": list(range(20, 120)) * 1000,
+            "cost": list(range(100, 10000100, 100)),
+            "gender": ["M", "F"] * 50000,
+        }
+    )
+
+    dataframe["target"] = (
+        dataframe["cost"] >= dataframe["cost"].quantile(0.80)
+    ).astype(int)
+
+    parallelism_config = resolve_parallelism_config(
+        performance_config={
+            "parallel_execution": True,
+            "max_parallel_workers": 4,
+            "parallel_strategy": "thread",
+        }
+    )
+
+    result = train_model_candidates(
+        dataframe=dataframe,
+        feature_columns=["age", "gender"],
+        target_column="target",
+        model_key="high_cost",
+        model_name="High Cost Model",
+        modeling_defaults={
+            "random_state": 42,
+            "test_size": 0.20,
+            "selection_metric": "roc_auc",
+            "preprocessing": {
+                "numeric_imputation_strategy": "median",
+                "categorical_imputation_strategy": "most_frequent",
+                "scale_numeric_features": False,
+                "one_hot_encode_categorical_features": True,
+            },
+        },
+        training_config={
+            "performance": {
+                "enable_training_sample": True,
+                "train_sample_fraction": 0.05,
+                "min_train_rows": 2000,
+                "max_train_rows": 5000,
+                "sampling_strategy": "stratified",
+                "log_algorithm_timing": True,
+            },
+            "metrics": {
+                "primary_metric": "roc_auc",
+                "secondary_metrics": [
+                    "accuracy",
+                    "precision",
+                    "recall",
+                    "f1",
+                    "balanced_accuracy",
+                ],
+            },
+            "algorithms": {
+                "dummy_classifier": {
+                    "enabled": True,
+                    "name": "Dummy Classifier",
+                    "model_type": "classification",
+                    "parameters": {
+                        "strategy": "most_frequent",
+                    },
+                },
+                "logistic_regression": {
+                    "enabled": True,
+                    "name": "Logistic Regression",
+                    "model_type": "classification",
+                    "parameters": {
+                        "penalty": "l2",
+                        "C": 1.0,
+                        "solver": "lbfgs",
+                        "max_iter": 1000,
+                        "class_weight": None,
+                    },
+                },
+            },
+        },
+        run_id="TEST_RUN",
+        event_timestamp_utc="TEST_TIMESTAMP_UTC",
+        parallelism_config=parallelism_config,
+        logger=logger,
+    )
+
+    print("Trainer validation successful.")
+    print(f"Champion algorithm: {result.champion_algorithm_key}")
+    print(f"Champion metrics: {result.champion_metrics}")
+    print(f"Full rows: {result.full_row_count}")
+    print(f"Training rows: {result.training_row_count}")
+    print(f"Sampling applied: {result.sampling_applied}")
+    print(result.metrics_dataframe.head())
+    print(result.champion_summary_dataframe.head())
+
+
+if __name__ == "__main__":
+    main()

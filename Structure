@@ -84,3 +84,72 @@ MedFabric/
 ├── pyproject.toml
 ├── README.md
 └── .gitignore
+
+
+1. config/modeling/modeling.yaml — complete replacement with the new Target Builder configuration.
+2. src/modeling/build_modeling_layer.py — complete replacement implementing the Target Builder framework.
+3. After you verify it runs, we’ll move to Release 2:
+    * Multi-algorithm training
+    * Best model selection
+    * Enhanced model registry
+4. Then Release 3:
+    * Drift detection
+    * Model monitoring
+    * Champion/challenger support
+
+
+
+1. Refactor modeling.yaml to the new multi-algorithm schema.
+2. Update trainer.py to read only from YAML (no hardcoded defaults).
+3. Remove the last remnants of the legacy single-algorithm logic.
+4. Add parallel training (n_jobs) so all enabled algorithms can train concurrently where appropriate.
+
+
+ls -lh models/high_cost
+ls -lh data/scoring/high_cost_scores.parquet
+ls -lh data/modeling/modeling_target_summary.parquet
+ls -lh data/metadata/modeling_model_registry.parquet
+
+python scripts/doctor.py
+
+implelmented 
+
+Feature Store input loading
+Feature matrix build
+Dynamic targets
+Leakage exclusion
+Training sampling
+Algorithm timing
+Parallel candidate training
+Multi-algorithm champion selection
+Population scoring
+Risk tiers
+Model artifacts
+Metrics output
+Feature importance output
+Model registry
+Audit outputs
+Execution summary
+
+yet to 
+candidate_model_leaderboard
+champion_model_summary
+
+target_leakage_report
+feature_baseline_statistics
+modeling_column_dictionary
+modeling_feature_registry
+cross_validation
+hyperparameter_search
+imbalance handling
+threshold_optimization
+experiment tracking
+permutation importance
+SHAP
+partial dependence
+drift monitoring
+candidate_leaderboard_check
+champion_model_selected_check
+full scoring validation checks
+training timing audit dataset
+champion selection reason audit field
