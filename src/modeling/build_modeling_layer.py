@@ -83,6 +83,14 @@ from src.modeling.evaluation.build_model_drift_baseline import (
 from src.modeling.evaluation.confusion_matrix import build_confusion_matrix_output
 
 from src.modeling.evaluation.build_lift_gain_analysis import build_lift_gain_analysis
+
+from src.modeling.evaluation.build_permutation_importance import build_permutation_importance
+
+from src.modeling.evaluation.build_model_monitoring_summary import (
+    build_model_monitoring_summary,
+)
+
+from src.modeling.evaluation.build_shap_explainability import build_shap_explainability
 ###############################################################################
 # Constants
 ###############################################################################
@@ -141,6 +149,10 @@ class ModelingRuntime:
     step_timing_records: List[Dict[str, Any]] = field(default_factory=list)   
     confusion_matrix_frames: List[pd.DataFrame] = field(default_factory=list)
     lift_gain_frames: List[pd.DataFrame] = field(default_factory=list)
+    permutation_importance_frames: List[pd.DataFrame] = field(default_factory=list)
+    model_monitoring_summary_frames: List[pd.DataFrame] = field(default_factory=list)
+    scoring_results: List[Any] = field(default_factory=list)
+    shap_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
 
 
 @dataclass
@@ -1147,6 +1159,8 @@ def run_models(
             risk_tiers_config=risk_tiers_config,
             run_id=runtime.run_id,
         )
+
+        runtime.scoring_results.append(scoring_result)
         runtime.logger.info(
             "COMPLETE Population Scoring | Model: %s | %.2f sec | Rows: %s",
             model_key,
@@ -1196,7 +1210,56 @@ def run_models(
             algorithm_key=training_result.champion_algorithm_key,
             algorithm_name=training_result.champion_algorithm_name,
         )
+        
+        permutation_importance_df = build_permutation_importance(
+            dataframe=modeling_frame,
+            feature_columns=model_feature_columns,
+            target_column=target_column,
+            pipeline=training_result.champion_pipeline,
+            run_id=runtime.run_id,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name,
+            model_key=model_key,
+            model_name=model_name,
+            algorithm_key=training_result.champion_algorithm_key,
+            algorithm_name=training_result.champion_algorithm_name,
+            scoring_metric=runtime.config.get("explainability", {})
+                .get("permutation_importance", {})
+                .get("scoring_metric", "roc_auc"),
+            n_repeats=runtime.config.get("explainability", {})
+                .get("permutation_importance", {})
+                .get("n_repeats", 5),
+            max_rows=runtime.config.get("explainability", {})
+                .get("permutation_importance", {})
+                .get("sample_row_count", 300),
+            random_state=runtime.config.get("explainability", {})
+                .get("permutation_importance", {})
+                .get("random_state", 42),
+        )
+        runtime.permutation_importance_frames.append(permutation_importance_df)
 
+        shap_explainability_df = build_shap_explainability(
+            dataframe=modeling_frame,
+            feature_columns=model_feature_columns,
+            pipeline=training_result.champion_pipeline,
+            run_id=runtime.run_id,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name,
+            model_key=model_key,
+            model_name=model_name,
+            algorithm_key=training_result.champion_algorithm_key,
+            algorithm_name=training_result.champion_algorithm_name,
+            max_rows=runtime.config.get("explainability", {})
+                .get("shap_explainability", {})
+                .get("sample_row_count", 300),
+            background_rows=runtime.config.get("explainability", {})
+                .get("shap_explainability", {})
+                .get("background_row_count", 50),
+            random_state=runtime.config.get("explainability", {})
+                .get("shap_explainability", {})
+                .get("random_state", 42),
+    )
+        runtime.shap_explainability_frames.append(shap_explainability_df)
         explainability_df = build_model_explainability_summary(
             feature_importance_dataframe=feature_importance_df,
             run_id=runtime.run_id,
@@ -1303,7 +1366,13 @@ def run_models(
             model_key,
             model_duration_seconds,
             )
-
+    model_monitoring_summary_df = build_model_monitoring_summary(
+        scoring_results=runtime.scoring_results,
+        run_id=runtime.run_id,
+        layer_name=runtime.layer_name,
+        domain_name=runtime.domain_name,
+    )
+    runtime.model_monitoring_summary_frames.append(model_monitoring_summary_df)
     baseline_feature_columns = sorted(set(all_safe_feature_columns))
 
     feature_baseline_df = build_feature_baseline_statistics(
@@ -1544,6 +1613,23 @@ def write_metadata_and_audit_outputs(
         else pd.DataFrame()
     )
 
+    permutation_importance_summary_df = (
+        pd.concat(runtime.permutation_importance_frames, ignore_index=True)
+        if runtime.permutation_importance_frames
+        else pd.DataFrame()
+    )
+    
+    model_monitoring_summary_df = (
+       pd.concat(runtime.model_monitoring_summary_frames, ignore_index=True)
+   if runtime.model_monitoring_summary_frames
+       else pd.DataFrame()
+    )
+    shap_explainability_summary_df = (
+       pd.concat(runtime.shap_explainability_frames, ignore_index=True)
+       if runtime.shap_explainability_frames
+       else pd.DataFrame()
+    )
+
     metadata_assets = {
         "modeling_dataset_inventory": pd.DataFrame(runtime.dataset_records),
         "modeling_model_registry": build_model_registry_dataframe(
@@ -1574,6 +1660,9 @@ def write_metadata_and_audit_outputs(
         "model_explainability_executive_summary": model_executive_explainability_summary_df,
         "confusion_matrix_summary": confusion_matrix_summary_df,
         "lift_gain_decile_summary": lift_gain_decile_summary_df,
+        "permutation_importance_summary": permutation_importance_summary_df,
+        "model_monitoring_summary": model_monitoring_summary_df,
+        "shap_explainability_summary": shap_explainability_summary_df,
     }
     if not model_drift_baseline_df.empty:
         modeling_output_assets["model_drift_baseline"] = model_drift_baseline_df

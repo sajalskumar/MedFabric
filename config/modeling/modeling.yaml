@@ -9,121 +9,33 @@
 #   Layer 2D - Enterprise Modeling Framework
 #
 # Purpose:
-#   Defines all configuration for the MedFabric Modeling layer, including:
-#
-#     - Feature Store input datasets
-#     - Modeling feature matrix construction
-#     - Dynamic target generation
-#     - Target leakage prevention
-#     - Candidate algorithm training
-#     - Champion model selection
-#     - Population scoring
-#     - Risk tier assignment
-#     - Model artifacts
-#     - Model metrics
-#     - Feature importance outputs
-#     - Model registry metadata
-#     - Audit and validation outputs
-#     - Candidate model leaderboard outputs
-#     - Champion model summary outputs
-#     - Training sampling controls
-#     - Algorithm timing controls
-#     - Future experiment tracking controls
-#     - Future drift monitoring controls
-#
-# Architectural Rules:
-#   - Modeling consumes Feature Store outputs only.
-#   - Modeling must not read from data/analytics_platform/.
-#   - Modeling must not import from src.analytics_platform.
-#   - Targets must be generated from YAML-defined target configuration.
-#   - Target source columns must be excluded from training features.
-#   - Algorithms must be enabled, disabled, and parameterized in YAML.
-#   - Training optimization settings must affect training only.
-#   - Scoring must always run against the full modeling population.
-#   - Champion selection must be based on configured evaluation metrics.
-#   - Model outputs must be traceable to run ID and configuration.
-#
-# Current Release:
-#   Release 2D.1 - Modeling Framework Foundation
-#
-# Current Scope:
-#   - Target Builder Framework
-#   - Dynamic quantile-based targets
-#   - YAML-controlled algorithms
-#   - Global PipelineContext run ID
-#   - Clean modeling orchestrator
-#   - Training sample configuration
-#   - Algorithm timing configuration
-#   - Candidate leaderboard configuration
-#   - Champion model summary configuration
-#
-# Next Scope:
-#   - Full multi-algorithm champion selection
-#   - Cross-validation
-#   - Hyperparameter search
-#   - Threshold optimization
-#   - Experiment tracking
-#   - Model drift monitoring
+#   Defines all configuration for the MedFabric Modeling layer.
 #
 # Run:
 #   python -m src.modeling.build_modeling_layer
 #
 ###############################################################################
 
-
-###############################################################################
-# Modeling Layer Identity
-###############################################################################
-
 modeling:
-
   layer_name: "Layer 2D - Enterprise Modeling Framework"
-
   domain_name: "Modeling"
-
   output_format: "parquet"
-
   enabled: true
 
-
-###############################################################################
-# Framework Metadata
-###############################################################################
-
 framework:
-
   version: "2D.1"
-
   release_name: "Release 2D.1 - Modeling Framework Foundation"
-
   owner: "MedFabric"
-
   status: "active"
-
   configuration_type: "enterprise_modeling_framework"
 
-
-###############################################################################
-# Logging
-###############################################################################
-
 logging:
-
   level: "INFO"
-
   module_log_dir: "logs/modules"
-
   log_file_name: "modeling_layer.log"
 
-
-###############################################################################
-# Paths
-###############################################################################
-
 paths:
-
   inputs:
-
     demographic_features:
       path: "data/feature_store/demographic_features.parquet"
       format: "parquet"
@@ -174,9 +86,7 @@ paths:
       format: "parquet"
       required: true
 
-
   outputs:
-
     modeling_root:
       path: "data/modeling"
 
@@ -201,6 +111,15 @@ paths:
     champion_model_summary:
       path: "data/modeling/champion_model_summary"
 
+    cross_validation_fold_metrics:
+      path: "data/modeling/cross_validation_fold_metrics"
+
+    cross_validation_summary:
+      path: "data/modeling/cross_validation_summary"
+
+    hyperparameter_search_results:
+      path: "data/modeling/hyperparameter_search_results"
+
     target_leakage_report:
       path: "data/modeling/target_leakage_report"
 
@@ -209,22 +128,25 @@ paths:
 
     feature_baseline_statistics:
       path: "data/modeling/feature_baseline_statistics"
-    
-    cross_validation_fold_metrics:
-      path: "data/modeling/cross_validation_fold_metrics"
-
-    cross_validation_summary:
-      path: "data/modeling/cross_validation_summary"
-
-    hyperparameter_search_results:
-      path: "data/modeling/hyperparameter_search_results" 
 
     model_explainability_summary:
       path: "data/modeling/model_explainability_summary"
 
     model_explainability_executive_summary:
       path: "data/modeling/model_explainability_executive_summary"
-    
+
+    permutation_importance_summary:
+      path: "data/modeling/permutation_importance_summary"
+
+    shap_explainability_summary:
+      path: "data/modeling/shap_explainability_summary"
+
+    confusion_matrix_summary:
+      path: "data/modeling/confusion_matrix_summary"
+
+    lift_gain_decile_summary:
+      path: "data/modeling/lift_gain_decile_summary"
+
     model_drift_baseline:
       path: "data/modeling/model_drift_baseline"
 
@@ -232,17 +154,12 @@ paths:
       path: "data/modeling/modeling_step_timings"
 
     modeling_performance_summary:
-      path: "data/modeling/modeling_performance_summary"  
-    
-    confusion_matrix_summary:
-      path: "data/modeling/confusion_matrix_summary"
-    
-    lift_gain_decile_summary:
-      path: "data/modeling/lift_gain_decile_summary"
+      path: "data/modeling/modeling_performance_summary"
 
+    model_monitoring_summary:
+      path: "data/modeling/model_monitoring_summary"
 
   model_outputs:
-
     high_cost:
       model_path: "models/high_cost/high_cost_model.pkl"
       metrics_path: "models/high_cost/high_cost_model_metrics"
@@ -291,9 +208,7 @@ paths:
       feature_importance_path: "models/care_gap_closure/care_gap_closure_feature_importance"
       scoring_path: "data/scoring/care_gap_closure_scores"
 
-
   metadata_outputs:
-
     default_output_dir:
       path: "data/metadata"
 
@@ -309,9 +224,7 @@ paths:
     modeling_feature_registry:
       path: "data/metadata/modeling_feature_registry"
 
-
   audit_outputs:
-
     default_output_dir:
       path: "data/audit"
 
@@ -324,26 +237,12 @@ paths:
     modeling_execution_summary:
       path: "data/audit/modeling_execution_summary"
 
-
-###############################################################################
-# Join Keys
-###############################################################################
-
 join_keys:
-
   member_key: "member_id"
 
-
-###############################################################################
-# Feature Matrix
-###############################################################################
-
 feature_matrix:
-
   enabled: true
-
   base_dataset: "risk_features"
-
   member_key: "member_id"
 
   join_datasets:
@@ -362,96 +261,52 @@ feature_matrix:
     - "feature_store_load_timestamp"
     - "feature_store_record_status"
 
-
-###############################################################################
-# Modeling Defaults
-###############################################################################
-
 modeling_defaults:
-
   random_state: 42
-
   test_size: 0.20
-
   validation_size: 0.20
-
   max_iter: 1000
-
   scoring_output_format: "parquet"
-
   selection_metric: "roc_auc"
 
   preprocessing:
-
     numeric_imputation_strategy: "median"
-
     categorical_imputation_strategy: "most_frequent"
-
     scale_numeric_features: true
-
     one_hot_encode_categorical_features: true
 
-
-###############################################################################
-# Training
-###############################################################################
-
 training:
-
   enabled: true
-
   strategy: "best_model"
 
   performance:
-
     enable_training_sample: true
-
     train_sample_fraction: 0.20
-
     min_train_rows: 1000
-
     max_train_rows: 5000
-
     sampling_strategy: "stratified"
-
     log_algorithm_timing: true
 
   cross_validation:
-
     enabled: true
-
     strategy: "stratified_kfold"
-
     folds: 5
-
     shuffle: true
-
     random_state: 42
-
     save_fold_metrics: true
-
     save_fold_predictions: true
 
   hyperparameter_search:
-
     enabled: true
-
     method: "random_search"
-
     folds: 3
-
     iterations: 3
-
     scoring_metric: "roc_auc"
-
     random_state: 42
 
   imbalance:
-
     enabled: true
-
     strategy: "class_weight"
-
     supported_strategies:
       - "none"
       - "class_weight"
@@ -459,24 +314,18 @@ training:
       - "oversample"
 
   threshold_optimization:
-
     enabled: true
-
     strategy: "optimize"
-
     fixed_threshold: 0.50
-
     optimization_metric: "f1"
 
   probability_calibration:
     enabled: true
     method: "sigmoid"
-    cv: 3  
+    cv: 3
 
   metrics:
-
     primary_metric: "roc_auc"
-
     secondary_metrics:
       - "accuracy"
       - "precision"
@@ -485,7 +334,6 @@ training:
       - "balanced_accuracy"
 
   algorithms:
-
     dummy_classifier:
       enabled: true
       name: "Dummy Classifier"
@@ -553,84 +401,46 @@ training:
       parameters:
         n_estimators: 100
         learning_rate: 1.0
-    
-
-
-###############################################################################
-# Experiment Tracking
-###############################################################################
 
 experiments:
-
   enabled: false
-
   save_all_candidate_results: true
-
   retain_top_n_candidates: 10
-
   include_algorithm_parameters: true
-
   include_training_sample_details: true
-
   include_timing_details: true
 
-
-###############################################################################
-# Explainability
-###############################################################################
-
 explainability:
-
   enabled: true
 
   feature_importance:
-
     enabled: true
-
     method: "model_native"
 
   permutation_importance:
-
-    enabled: false
-
+    enabled: true
+    scoring_metric: "roc_auc"
     n_repeats: 5
-
+    sample_row_count: 300
     random_state: 42
 
   shap:
-
-    enabled: false
+    enabled: true
+    sample_row_count: 100
+    background_row_count: 25
+    random_state: 42
 
   partial_dependence:
-
     enabled: false
 
-
-###############################################################################
-# Drift Monitoring
-###############################################################################
-
 drift:
-
   enabled: true
-
   build_baseline: true
-
   baseline_strategy: "latest_champion_training_run"
-
   psi_threshold: 0.20
-
   ks_threshold: 0.10
 
-
-
-
-###############################################################################
-# Model Definitions
-###############################################################################
-
 models:
-
   high_cost:
     enabled: true
     model_name: "High Cost Model"
@@ -659,33 +469,27 @@ models:
     target:
       strategy: "weighted_score"
       output_column: "readmission_target"
-
       components:
         - dataset: "utilization_features"
           column: "total_claims"
           weight: 0.35
           direction: "positive"
-
         - dataset: "cost_features"
           column: "total_allowed_amount"
           weight: 0.20
           direction: "positive"
-
         - dataset: "cost_features"
           column: "total_paid_amount"
           weight: 0.20
           direction: "positive"
-
         - dataset: "pharmacy_features"
           column: "total_pharmacy_claims"
           weight: 0.10
           direction: "positive"
-
         - dataset: "sdoh_features"
           column: "latest_sdoh_risk_score"
           weight: 0.15
           direction: "positive"
-
       parameters:
         quantile: 0.85
         positive_direction: "greater_than_or_equal"
@@ -809,13 +613,7 @@ models:
     risk_tier_column: "care_gap_closure_tier"
     positive_label: 1
 
-
-###############################################################################
-# Risk Tiers
-###############################################################################
-
 risk_tiers:
-
   very_high:
     min_value: 0.85
     max_value: 1.00
@@ -840,40 +638,20 @@ risk_tiers:
     label: "Low"
     priority_rank: 4
 
-
-###############################################################################
-# Scoring
-###############################################################################
-
 scoring:
-
   enabled: true
-
   score_full_population: true
-
   include_probability: true
-
   include_prediction: true
-
   include_risk_tier: true
-
   include_model_metadata: true
-
   include_run_id: true
-
   include_scoring_timestamp: true
 
-
-###############################################################################
-# Validation
-###############################################################################
-
 validation:
-
   enabled: true
 
   rules:
-
     required_inputs_exist:
       enabled: true
       severity: "ERROR"
@@ -914,62 +692,29 @@ validation:
       enabled: true
       severity: "ERROR"
 
-
-###############################################################################
-# Metadata
-###############################################################################
-
 metadata:
-
   enabled: true
-
   include_column_statistics: true
-
   include_dataset_inventory: true
-
   include_feature_registry: true
-
   include_model_registry: true
-
   include_lineage: true
-
   include_candidate_leaderboard: true
-
   include_champion_summary: true
-
   include_algorithm_parameters: true
-
   include_training_sample_details: true
 
-
-###############################################################################
-# Audit
-###############################################################################
-
 audit:
-
   enabled: true
-
   include_step_audit: true
-
   include_validation_results: true
-
   include_execution_summary: true
-
   include_training_timing: true
-
   include_champion_selection_reason: true
 
-###############################################################################
-# Leakage Detection - Target Leakage Prevention/Hardening
-###############################################################################
-
 leakage_detection:
-
   enabled: true
-
   exclude_target_source_dataset: true
-
   correlation_check_enabled: true
   correlation_threshold: 0.995
 
@@ -994,7 +739,6 @@ leakage_detection:
     - "pharmacy_features__total_pharmacy_paid_amount"
 
   source_domain_proxy_patterns:
-
     cost_features:
       - "*paid_amount*"
       - "*allowed_amount*"
@@ -1037,8 +781,3 @@ leakage_detection:
       - "*lab*"
       - "*abnormal*"
       - "*clinical_risk*"
-
-###############################################################################
-# End of File
-###############################################################################
-
