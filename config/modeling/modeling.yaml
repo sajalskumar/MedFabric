@@ -5,8 +5,11 @@
 # File:
 #   config/modeling/modeling.yaml
 #
-# Layer:
-#   Layer 2D - Enterprise Modeling Framework
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Compatibility:
+#   layer_name is retained during Phase 1 for backward compatibility.
 #
 # Purpose:
 #   Defines all configuration for the MedFabric Modeling layer.
@@ -17,14 +20,15 @@
 ###############################################################################
 
 modeling:
+  capability_name: "Enterprise Modeling Framework"
   layer_name: "Layer 2D - Enterprise Modeling Framework"
   domain_name: "Modeling"
   output_format: "parquet"
   enabled: true
 
 framework:
-  version: "2D.1"
-  release_name: "Release 2D.1 - Modeling Framework Foundation"
+  version: "2.1"
+  release_name: "Enterprise Modeling Framework 2.1"
   owner: "MedFabric"
   status: "active"
   configuration_type: "enterprise_modeling_framework"

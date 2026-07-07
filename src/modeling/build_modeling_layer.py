@@ -5,8 +5,8 @@
 # File:
 #     src/modeling/build_modeling_layer.py
 #
-# Layer:
-#     Layer 2D - Enterprise Modeling Framework
+# Capability:
+#     Enterprise Modeling Framework
 #
 # Purpose:
 #     Lightweight orchestrator for the MedFabric Modeling layer.
@@ -97,7 +97,7 @@ from src.modeling.evaluation.build_shap_explainability import build_shap_explain
 
 DEFAULT_CONFIG_PATH = "config/modeling/modeling.yaml"
 DEFAULT_PIPELINE_CONFIG_PATH = "config/pipeline.yaml"
-
+DEFAULT_CAPABILITY_NAME = "Enterprise Modeling Framework"
 DEFAULT_LAYER_NAME = "Layer 2D - Enterprise Modeling Framework"
 DEFAULT_DOMAIN_NAME = "Modeling"
 DEFAULT_OUTPUT_FORMAT = "parquet"
@@ -130,6 +130,7 @@ class ModelingRuntime:
     pipeline_config: Dict[str, Any]
     parallelism_config: Dict[str, Any]
     logger: logging.Logger
+    capability_name: str
     layer_name: str
     domain_name: str
     audit_records: List[Dict[str, Any]] = field(default_factory=list)
@@ -387,7 +388,12 @@ def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRu
 
     modeling_config = config.get("modeling", {})
 
-    layer_name = modeling_config.get("layer_name", DEFAULT_LAYER_NAME)
+    capability_name = modeling_config.get(
+        "capability_name",
+        modeling_config.get("layer_name", DEFAULT_CAPABILITY_NAME),
+    )
+
+    layer_name = modeling_config.get("layer_name", capability_name)
     domain_name = modeling_config.get("domain_name", DEFAULT_DOMAIN_NAME)
 
     logger = configure_logging(
@@ -416,6 +422,7 @@ def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRu
         logger=logger,
         layer_name=layer_name,
         domain_name=domain_name,
+        capability_name=capability_name
     )
 
     logger.info("Global pipeline run ID resolved from PipelineContext: %s", run_id)
@@ -453,6 +460,7 @@ def add_audit_record(
         {
             "run_id": runtime.run_id,
             "layer_name": runtime.layer_name,
+            "capability_name": runtime.capability_name,
             "domain_name": runtime.domain_name,
             "step_name": step_name,
             "status": status,
@@ -480,6 +488,7 @@ def add_validation_record(
         {
             "run_id": runtime.run_id,
             "layer_name": runtime.layer_name,
+            "capability_name": runtime.capability_name,
             "domain_name": runtime.domain_name,
             "dataset_name": dataset_name,
             "rule_name": rule_name,
@@ -509,6 +518,7 @@ def add_dataset_record(
         {
             "run_id": runtime.run_id,
             "layer_name": runtime.layer_name,
+            "capability_name": runtime.capability_name,
             "domain_name": runtime.domain_name,
             "dataset_name": dataset_name,
             "dataset_type": dataset_type,
@@ -537,6 +547,7 @@ def add_step_timing_record(
         {
             "run_id": runtime.run_id,
             "layer_name": runtime.layer_name,
+            "capability_name": runtime.capability_name,
             "domain_name": runtime.domain_name,
             "model_key": model_key,
             "step_name": step_name,
@@ -1250,15 +1261,15 @@ def run_models(
             algorithm_key=training_result.champion_algorithm_key,
             algorithm_name=training_result.champion_algorithm_name,
             max_rows=runtime.config.get("explainability", {})
-                .get("shap_explainability", {})
+                .get("shap", {})
                 .get("sample_row_count", 300),
             background_rows=runtime.config.get("explainability", {})
-                .get("shap_explainability", {})
+                .get("shap", {})
                 .get("background_row_count", 50),
             random_state=runtime.config.get("explainability", {})
-                .get("shap_explainability", {})
+                .get("shap", {})
                 .get("random_state", 42),
-    )
+        )
         runtime.shap_explainability_frames.append(shap_explainability_df)
         explainability_df = build_model_explainability_summary(
             feature_importance_dataframe=feature_importance_df,
@@ -1500,6 +1511,7 @@ def build_execution_summary(
             {
                 "run_id": runtime.run_id,
                 "layer_name": runtime.layer_name,
+                "capability_name": runtime.capability_name,
                 "domain_name": runtime.domain_name,
                 "config_path": str(runtime.config_path),
                 "pipeline_config_path": str(runtime.pipeline_config_path),
@@ -1621,7 +1633,7 @@ def write_metadata_and_audit_outputs(
     
     model_monitoring_summary_df = (
        pd.concat(runtime.model_monitoring_summary_frames, ignore_index=True)
-   if runtime.model_monitoring_summary_frames
+       if runtime.model_monitoring_summary_frames
        else pd.DataFrame()
     )
     shap_explainability_summary_df = (
