@@ -75,6 +75,10 @@ from src.modeling.evaluation.build_model_explainability_summary import (
     build_model_explainability_summary,
     build_model_explainability_executive_summary,
 )
+
+from src.modeling.evaluation.build_model_drift_baseline import (
+    build_model_drift_baseline,
+)
 ###############################################################################
 # Constants
 ###############################################################################
@@ -128,7 +132,8 @@ class ModelingRuntime:
     target_quality_report_frames: List[pd.DataFrame] = field(default_factory=list)
     hyperparameter_search_frames: List[pd.DataFrame] = field(default_factory=list)
     model_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
-    model_executive_explainability_frames: List[pd.DataFrame] = field(default_factory=list)    
+    model_executive_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
+    model_drift_baseline_frames: List[pd.DataFrame] = field(default_factory=list)    
 
 
 @dataclass
@@ -899,7 +904,7 @@ def run_models(
 ) -> Dict[str, pd.DataFrame]:
     """
     Execute Target, Target Quality, Leakage, Training, Scoring, Feature Importance,
-    Feature Baseline, and Registry workflows.
+    Feature Baseline, Drift Baseline, and Registry workflows.
     """
 
     models_config = runtime.config.get("models", {})
@@ -908,6 +913,7 @@ def run_models(
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
     risk_tiers_config = runtime.config.get("risk_tiers", {})
     leakage_config = runtime.config.get("leakage_detection", {})
+    drift_config = runtime.config.get("drift", {})
     output_format = get_output_format(runtime)
 
     selection_metric = get_selection_metric(
@@ -1028,6 +1034,7 @@ def run_models(
         runtime.logger.info("=" * 80)
         runtime.logger.info("START MODEL: %s", model_key)
         runtime.logger.info("=" * 80)
+
         model_start_time = time.perf_counter()
 
         model_feature_columns = get_model_specific_safe_feature_columns(
@@ -1068,10 +1075,7 @@ def run_models(
             logger=runtime.logger,
         )
 
-        runtime.candidate_leaderboard_frames.append(
-            training_result.metrics_dataframe
-        )
-
+        runtime.candidate_leaderboard_frames.append(training_result.metrics_dataframe)
         runtime.champion_summary_frames.append(
             training_result.champion_summary_dataframe
         )
@@ -1080,10 +1084,11 @@ def run_models(
             runtime.cross_validation_fold_frames.append(
                 training_result.cross_validation_fold_metrics_dataframe
             )
+
         if getattr(training_result, "hyperparameter_search_results_dataframe", None) is not None:
             runtime.hyperparameter_search_frames.append(
                 training_result.hyperparameter_search_results_dataframe
-            )    
+            )
 
         if getattr(training_result, "cross_validation_summary_dataframe", None) is not None:
             runtime.cross_validation_summary_frames.append(
@@ -1139,16 +1144,17 @@ def run_models(
             domain_name=runtime.domain_name,
         )
 
-        executive_explainability_df = (build_model_explainability_executive_summary(
+        executive_explainability_df = build_model_explainability_executive_summary(
             explainability_summary_dataframe=explainability_df,
             run_id=runtime.run_id,
             layer_name=runtime.layer_name,
-            domain_name=runtime.domain_name, 
-            )
+            domain_name=runtime.domain_name,
         )
 
         runtime.model_explainability_frames.append(explainability_df)
-        runtime.model_executive_explainability_frames.append(executive_explainability_df)
+        runtime.model_executive_explainability_frames.append(
+            executive_explainability_df
+        )
 
         output_config = get_model_output_config(runtime, model_key)
 
@@ -1256,6 +1262,51 @@ def run_models(
         column_count=len(feature_baseline_df.columns),
         message="Feature baseline statistics written successfully.",
     )
+
+    if bool(drift_config.get("enabled", False)) and bool(
+        drift_config.get("build_baseline", True)
+    ):
+        model_drift_baseline_df = build_model_drift_baseline(
+            dataframe=modeling_frame,
+            run_id=runtime.run_id,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name,
+        )
+
+        runtime.model_drift_baseline_frames.append(model_drift_baseline_df)
+
+        model_drift_baseline_path = output_path_with_format(
+            get_output_path(runtime, "outputs", "model_drift_baseline"),
+            output_format,
+        )
+
+        write_dataset(
+            model_drift_baseline_df,
+            model_drift_baseline_path,
+            output_format,
+        )
+
+        add_dataset_record(
+            runtime=runtime,
+            dataset_name="model_drift_baseline",
+            dataset_type="modeling_output",
+            status=STATUS_SUCCESS,
+            path=str(model_drift_baseline_path),
+            row_count=len(model_drift_baseline_df),
+            column_count=len(model_drift_baseline_df.columns),
+            message="Model drift baseline written successfully.",
+        )
+
+        runtime.logger.info(
+            "COMPLETE: Model Drift Baseline | Rows: %s | Path: %s",
+            len(model_drift_baseline_df),
+            model_drift_baseline_path,
+        )
+
+    else:
+        runtime.logger.info(
+            "SKIP: Model Drift Baseline | drift.enabled=false or build_baseline=false"
+        )
 
     return scoring_outputs
 
@@ -1396,16 +1447,22 @@ def write_metadata_and_audit_outputs(
     )
 
     model_explainability_summary_df = (
-    pd.concat(runtime.model_explainability_frames, ignore_index=True)
-    if runtime.model_explainability_frames
-    else pd.DataFrame()
-)
+        pd.concat(runtime.model_explainability_frames, ignore_index=True)
+        if runtime.model_explainability_frames
+        else pd.DataFrame()
+    )
 
     model_executive_explainability_summary_df = (
-    pd.concat(runtime.model_executive_explainability_frames, ignore_index=True)
-    if runtime.model_executive_explainability_frames
-    else pd.DataFrame()
-)
+        pd.concat(runtime.model_executive_explainability_frames, ignore_index=True)
+        if runtime.model_executive_explainability_frames
+        else pd.DataFrame()
+    )
+
+    model_drift_baseline_df = (
+        pd.concat(runtime.model_drift_baseline_frames, ignore_index=True)
+        if runtime.model_drift_baseline_frames
+        else pd.DataFrame()
+    )
 
     metadata_assets = {
         "modeling_dataset_inventory": pd.DataFrame(runtime.dataset_records),
@@ -1434,6 +1491,8 @@ def write_metadata_and_audit_outputs(
         "model_explainability_summary": model_explainability_summary_df,
         "model_explainability_executive_summary": model_executive_explainability_summary_df,
     }
+    if not model_drift_baseline_df.empty:
+        modeling_output_assets["model_drift_baseline"] = model_drift_baseline_df
 
     for output_name, dataframe in metadata_assets.items():
         output_path = output_path_with_format(

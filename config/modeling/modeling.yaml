@@ -224,6 +224,9 @@ paths:
 
     model_explainability_executive_summary:
       path: "data/modeling/model_explainability_executive_summary"
+    
+    model_drift_baseline:
+      path: "data/modeling/model_drift_baseline"
 
 
   model_outputs:
@@ -593,13 +596,15 @@ drift:
 
   enabled: false
 
+  build_baseline: true
+
   baseline_strategy: "latest_champion_training_run"
 
   psi_threshold: 0.20
 
   ks_threshold: 0.10
 
-  output_path: "data/modeling/drift"
+
 
 
 ###############################################################################
