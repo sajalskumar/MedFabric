@@ -12,19 +12,42 @@
 #     Lightweight orchestrator for the MedFabric Modeling layer.
 #
 #     This builder coordinates:
+#       - Runtime initialization
 #       - Feature Store input loading
 #       - Modeling feature matrix construction
 #       - Target generation
+#       - Target quality validation
+#       - Target leakage detection
 #       - Multi-algorithm training
 #       - Champion model selection
 #       - Population scoring
 #       - Feature importance extraction
+#       - Permutation importance
+#       - SHAP explainability
+#       - Confusion matrix analysis
+#       - Lift/gain decile analysis
+#       - Drift baseline generation
+#       - Model monitoring summary
 #       - Model registry creation
+#       - Core output writing
 #       - Metadata and audit output writing
+#
+# Modularized Components:
+#     Runtime initialization:
+#         src/modeling/runtime/initializer.py
+#
+#     Feature Store input loading:
+#         src/modeling/inputs/loader.py
+#
+#     Feature matrix construction:
+#         src/modeling/feature_matrix/builder.py
+#
+#     Core/metadata/audit output writing:
+#         src/modeling/outputs/writer.py
 #
 # Parallelism Scope:
 #     - Project-wide parallel configuration is read from config/pipeline.yaml.
-#     - Modeling currently uses parallelism only for candidate algorithm training.
+#     - Modeling currently uses parallelism for candidate algorithm training.
 #     - Scoring remains sequential until Modeling is fully stabilized.
 #
 # Run:
@@ -36,21 +59,65 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import traceback
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-import time
-
-from src.common.parallel_utils import resolve_parallelism_config
-from src.common.pipeline_context import create_pipeline_context
-from src.modeling.evaluation.feature_importance import build_feature_importance_output
-from src.modeling.registry.model_registry import (
-    build_model_registry_dataframe,
-    build_model_registry_record,
+from src.modeling.common.audit import (
+    add_audit_record,
+    add_dataset_record,
+    add_validation_record,
 )
+from src.modeling.common.constants import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_OUTPUT_FORMAT,
+    STATUS_FAILED,
+    STATUS_SUCCESS,
+    STATUS_WARNING,
+)
+from src.modeling.common.io_utils import save_pickle_object, write_dataset
+from src.modeling.common.output_paths import (
+    get_model_output_config,
+    get_output_path,
+    normalize_path,
+    output_path_with_format,
+)
+from src.modeling.common.runtime import BuildResult, ModelingRuntime
+from src.modeling.common.timing import add_step_timing_record
+from src.modeling.evaluation.build_feature_baseline_statistics import (
+    build_feature_baseline_statistics,
+)
+from src.modeling.evaluation.build_lift_gain_analysis import build_lift_gain_analysis
+from src.modeling.evaluation.build_model_drift_baseline import (
+    build_model_drift_baseline,
+)
+from src.modeling.evaluation.build_model_explainability_summary import (
+    build_model_explainability_executive_summary,
+    build_model_explainability_summary,
+)
+from src.modeling.evaluation.build_model_monitoring_summary import (
+    build_model_monitoring_summary,
+)
+from src.modeling.evaluation.build_permutation_importance import (
+    build_permutation_importance,
+)
+from src.modeling.evaluation.build_shap_explainability import build_shap_explainability
+from src.modeling.evaluation.build_target_quality_report import (
+    build_target_quality_report,
+)
+from src.modeling.evaluation.confusion_matrix import build_confusion_matrix_output
+from src.modeling.evaluation.feature_importance import build_feature_importance_output
+from src.modeling.feature_matrix.builder import build_feature_matrix
+from src.modeling.inputs.loader import load_input_datasets
+from src.modeling.outputs.writer import (
+    get_output_format,
+    write_core_modeling_outputs,
+    write_metadata_and_audit_outputs,
+)
+from src.modeling.registry.model_registry import build_model_registry_record
+from src.modeling.runtime.initializer import initialize_runtime
 from src.modeling.scoring.scorer import score_population
 from src.modeling.targets.leakage_detection import (
     build_target_leakage_report_for_models,
@@ -59,146 +126,23 @@ from src.modeling.targets.leakage_detection import (
 )
 from src.modeling.targets.target_builder import build_targets_for_enabled_models
 from src.modeling.training.trainer import train_model_candidates
-from src.modeling.evaluation.build_feature_baseline_statistics import (
-    build_feature_baseline_statistics,
-)
-from src.modeling.evaluation.build_target_quality_report import (
-    build_target_quality_report,
-)
 
-from src.modeling.evaluation.build_model_explainability_summary import (
-    build_model_explainability_summary,
-    build_model_explainability_executive_summary,
-)
 
-from src.modeling.evaluation.build_model_drift_baseline import (
-    build_model_drift_baseline,
-)
-
-from src.modeling.evaluation.confusion_matrix import build_confusion_matrix_output
-
-from src.modeling.evaluation.build_lift_gain_analysis import build_lift_gain_analysis
-
-from src.modeling.evaluation.build_permutation_importance import build_permutation_importance
-
-from src.modeling.evaluation.build_model_monitoring_summary import (
-    build_model_monitoring_summary,
-)
-
-from src.modeling.evaluation.build_shap_explainability import build_shap_explainability
-
-from src.modeling.common.audit import add_audit_record, add_dataset_record, add_validation_record
-from src.modeling.common.configuration import load_optional_yaml_config, load_runtime_modeling_config, validate_config
-from src.modeling.common.io_utils import read_dataset, save_pickle_object, write_dataset
-from src.modeling.common.logging_utils import configure_logging
-from src.modeling.common.output_paths import get_model_output_config, get_output_path, normalize_path, output_path_with_format
-from src.modeling.common.runtime import BuildResult, ModelingRuntime
-from src.modeling.common.timing import add_step_timing_record, utc_now
-from src.modeling.common.constants import (
-    DEFAULT_CAPABILITY_NAME,
-    DEFAULT_CONFIG_PATH,
-    DEFAULT_DOMAIN_NAME,
-    DEFAULT_OUTPUT_FORMAT,
-    DEFAULT_PIPELINE_CONFIG_PATH,
-    STATUS_FAILED,
-    STATUS_SKIPPED,
-    STATUS_SUCCESS,
-    STATUS_WARNING,
-)
-
-from src.modeling.feature_matrix.builder import build_feature_matrix
-
-from src.modeling.inputs.loader import load_input_datasets
-
-from src.modeling.outputs.writer import (
-    get_output_format,
-    write_core_modeling_outputs,
-    write_metadata_and_audit_outputs,
-)
 ###############################################################################
-# Runtime Initialization
+# Selection Helpers
 ###############################################################################
-
-
-def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRuntime:
-    """
-    Initialize Modeling runtime using global PipelineContext.
-    """
-
-    project_root = Path.cwd()
-    config_path = normalize_path(project_root, config_path_raw)
-    pipeline_config_path = normalize_path(project_root, DEFAULT_PIPELINE_CONFIG_PATH)
-
-    pipeline_context = create_pipeline_context(
-        pipeline_name="MedFabric Modeling Framework",
-    )
-
-    run_id = pipeline_context.run_id
-
-    config = load_runtime_modeling_config(config_path)
-    pipeline_config = load_optional_yaml_config(pipeline_config_path)
-
-    validate_config(config)
-
-    modeling_config = config.get("modeling", {})
-
-    capability_name = modeling_config.get(
-        "capability_name",
-        modeling_config.get("layer_name", DEFAULT_CAPABILITY_NAME),
-    )
-
-    layer_name = modeling_config.get("layer_name", capability_name)
-    domain_name = modeling_config.get("domain_name", DEFAULT_DOMAIN_NAME)
-
-    logger = configure_logging(
-        project_root=project_root,
-        config=config,
-        run_id=run_id,
-    )
-
-    start_time_utc = utc_now()
-    event_timestamp_utc = start_time_utc.isoformat()
-
-    parallelism_config = resolve_parallelism_config(
-        pipeline_config=pipeline_config,
-    )
-
-    runtime = ModelingRuntime(
-        run_id=run_id,
-        project_root=project_root,
-        config_path=config_path,
-        pipeline_config_path=pipeline_config_path,
-        start_time_utc=start_time_utc,
-        event_timestamp_utc=event_timestamp_utc,
-        config=config,
-        pipeline_config=pipeline_config,
-        parallelism_config=parallelism_config,
-        logger=logger,
-        layer_name=layer_name,
-        domain_name=domain_name,
-        capability_name=capability_name
-    )
-
-    logger.info("Global pipeline run ID resolved from PipelineContext: %s", run_id)
-    logger.info("Runtime event timestamp UTC: %s", event_timestamp_utc)
-    logger.info("Pipeline config path: %s", pipeline_config_path)
-    logger.info("Parallelism config: %s", parallelism_config)
-
-    add_audit_record(
-        runtime=runtime,
-        step_name="initialize_runtime",
-        status=STATUS_SUCCESS,
-        message="Modeling runtime initialized successfully using PipelineContext.",
-    )
-
-    return runtime
 
 def get_selection_metric(
     modeling_defaults: Dict[str, Any],
     training_config: Dict[str, Any],
 ) -> str:
     """
-    Resolve champion selection metric.
+    Resolve the champion model selection metric.
+
+    Priority:
+        1. training.metrics.primary_metric
+        2. modeling_defaults.selection_metric
+        3. roc_auc fallback
     """
 
     return (
@@ -211,23 +155,24 @@ def get_selection_metric(
     )
 
 
-###############################################################################
-# Modeling Execution
-###############################################################################
-
 def get_algorithms_config(runtime: ModelingRuntime) -> Dict[str, Any]:
     """
-    Return algorithm configuration from modeling.yaml.
+    Return algorithm configuration from the resolved Modeling configuration.
+
+    The resolved runtime configuration is built from the modular YAML files
+    under config/modeling and remains backward-compatible with the older
+    monolithic modeling.yaml structure.
     """
 
     training_config = runtime.config.get("training", {})
     algorithms_config = training_config.get("algorithms")
 
     if not isinstance(algorithms_config, dict):
-        raise ValueError("training.algorithms must be configured in modeling.yaml")
+        raise ValueError("training.algorithms must be configured in Modeling YAML.")
 
     enabled_algorithms = [
-        key for key, value in algorithms_config.items()
+        key
+        for key, value in algorithms_config.items()
         if bool(value.get("enabled", True))
     ]
 
@@ -239,13 +184,48 @@ def get_algorithms_config(runtime: ModelingRuntime) -> Dict[str, Any]:
     return algorithms_config
 
 
+###############################################################################
+# Modeling Execution
+###############################################################################
+
 def run_models(
     runtime: ModelingRuntime,
     feature_matrix: pd.DataFrame,
 ) -> Dict[str, pd.DataFrame]:
     """
-    Execute Target, Target Quality, Leakage, Training, Scoring, Feature Importance,
-    Feature Baseline, Drift Baseline, and Registry workflows.
+    Execute model-level workflows for all enabled Modeling objectives.
+
+    This function performs:
+        - Target generation
+        - Target quality reporting
+        - Target leakage reporting
+        - Candidate algorithm training
+        - Champion model selection
+        - Population scoring
+        - Confusion matrix output
+        - Lift/gain output
+        - Feature importance output
+        - Permutation importance output
+        - SHAP explainability output
+        - Explainability summaries
+        - Model artifact persistence
+        - Model registry record creation
+        - Feature baseline statistics
+        - Drift baseline generation
+
+    Parameters
+    ----------
+    runtime:
+        ModelingRuntime containing configuration, logger, run metadata, and
+        in-memory audit/output collections.
+
+    feature_matrix:
+        Unified member-level Modeling feature matrix.
+
+    Returns
+    -------
+    Dict[str, pd.DataFrame]
+        Mapping of model_key to scoring output dataframe.
     """
 
     models_config = runtime.config.get("models", {})
@@ -293,7 +273,7 @@ def run_models(
         message="Target summary written successfully.",
     )
 
-    target_quality_targets = []
+    target_quality_targets: List[Dict[str, Any]] = []
 
     for model_key, model_config in models_config.items():
         if not bool(model_config.get("enabled", True)):
@@ -416,7 +396,10 @@ def run_models(
             logger=runtime.logger,
         )
 
-        runtime.candidate_leaderboard_frames.append(training_result.metrics_dataframe)
+        runtime.candidate_leaderboard_frames.append(
+            training_result.metrics_dataframe
+        )
+
         runtime.champion_summary_frames.append(
             training_result.champion_summary_dataframe
         )
@@ -459,12 +442,14 @@ def run_models(
         )
 
         runtime.scoring_results.append(scoring_result)
+
         runtime.logger.info(
             "COMPLETE Population Scoring | Model: %s | %.2f sec | Rows: %s",
             model_key,
             time.perf_counter() - scoring_start_time,
             scoring_result.row_count,
         )
+
         confusion_matrix_df = build_confusion_matrix_output(
             scoring_dataframe=scoring_result.scoring_dataframe,
             source_dataframe=modeling_frame,
@@ -478,6 +463,8 @@ def run_models(
             algorithm_key=training_result.champion_algorithm_key,
             algorithm_name=training_result.champion_algorithm_name,
         )
+
+        runtime.confusion_matrix_frames.append(confusion_matrix_df)
 
         lift_gain_df = build_lift_gain_analysis(
             scoring_dataframe=scoring_result.scoring_dataframe,
@@ -495,8 +482,6 @@ def run_models(
 
         runtime.lift_gain_frames.append(lift_gain_df)
 
-        runtime.confusion_matrix_frames.append(confusion_matrix_df)        
-
         feature_importance_df = build_feature_importance_output(
             pipeline=training_result.champion_pipeline,
             feature_columns=model_feature_columns,
@@ -508,7 +493,13 @@ def run_models(
             algorithm_key=training_result.champion_algorithm_key,
             algorithm_name=training_result.champion_algorithm_name,
         )
-        
+
+        permutation_importance_config = (
+            runtime.config
+            .get("explainability", {})
+            .get("permutation_importance", {})
+        )
+
         permutation_importance_df = build_permutation_importance(
             dataframe=modeling_frame,
             feature_columns=model_feature_columns,
@@ -521,20 +512,18 @@ def run_models(
             model_name=model_name,
             algorithm_key=training_result.champion_algorithm_key,
             algorithm_name=training_result.champion_algorithm_name,
-            scoring_metric=runtime.config.get("explainability", {})
-                .get("permutation_importance", {})
-                .get("scoring_metric", "roc_auc"),
-            n_repeats=runtime.config.get("explainability", {})
-                .get("permutation_importance", {})
-                .get("n_repeats", 5),
-            max_rows=runtime.config.get("explainability", {})
-                .get("permutation_importance", {})
-                .get("sample_row_count", 300),
-            random_state=runtime.config.get("explainability", {})
-                .get("permutation_importance", {})
-                .get("random_state", 42),
+            scoring_metric=permutation_importance_config.get(
+                "scoring_metric",
+                "roc_auc",
+            ),
+            n_repeats=permutation_importance_config.get("n_repeats", 5),
+            max_rows=permutation_importance_config.get("sample_row_count", 300),
+            random_state=permutation_importance_config.get("random_state", 42),
         )
+
         runtime.permutation_importance_frames.append(permutation_importance_df)
+
+        shap_config = runtime.config.get("explainability", {}).get("shap", {})
 
         shap_explainability_df = build_shap_explainability(
             dataframe=modeling_frame,
@@ -547,17 +536,13 @@ def run_models(
             model_name=model_name,
             algorithm_key=training_result.champion_algorithm_key,
             algorithm_name=training_result.champion_algorithm_name,
-            max_rows=runtime.config.get("explainability", {})
-                .get("shap", {})
-                .get("sample_row_count", 300),
-            background_rows=runtime.config.get("explainability", {})
-                .get("shap", {})
-                .get("background_row_count", 50),
-            random_state=runtime.config.get("explainability", {})
-                .get("shap", {})
-                .get("random_state", 42),
+            max_rows=shap_config.get("sample_row_count", 300),
+            background_rows=shap_config.get("background_row_count", 50),
+            random_state=shap_config.get("random_state", 42),
         )
+
         runtime.shap_explainability_frames.append(shap_explainability_df)
+
         explainability_df = build_model_explainability_summary(
             feature_importance_dataframe=feature_importance_df,
             run_id=runtime.run_id,
@@ -646,31 +631,38 @@ def run_models(
             runtime=runtime,
             step_name=f"model_complete:{model_key}",
             status=STATUS_SUCCESS,
-            message=f"Model completed. Champion={training_result.champion_algorithm_key}",
+            message=(
+                "Model completed. "
+                f"Champion={training_result.champion_algorithm_key}"
+            ),
             row_count=scoring_result.row_count,
             output_path=str(scoring_path),
         )
 
         model_duration_seconds = time.perf_counter() - model_start_time
+
         add_step_timing_record(
             runtime=runtime,
             step_name="model_complete",
             model_key=model_key,
             duration_seconds=model_duration_seconds,
         )
-        
+
         runtime.logger.info(
             "COMPLETE MODEL: %s | Total Time: %.2f sec",
             model_key,
             model_duration_seconds,
-            )
+        )
+
     model_monitoring_summary_df = build_model_monitoring_summary(
         scoring_results=runtime.scoring_results,
         run_id=runtime.run_id,
         layer_name=runtime.layer_name,
         domain_name=runtime.domain_name,
     )
+
     runtime.model_monitoring_summary_frames.append(model_monitoring_summary_df)
+
     baseline_feature_columns = sorted(set(all_safe_feature_columns))
 
     feature_baseline_df = build_feature_baseline_statistics(
@@ -745,13 +737,27 @@ def run_models(
         )
 
     return scoring_outputs
+
+
 ###############################################################################
 # Main Orchestration
 ###############################################################################
 
 def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
     """
-    Build complete Modeling Framework.
+    Build the complete MedFabric Modeling Framework.
+
+    Parameters
+    ----------
+    config_path:
+        Path to the root Modeling configuration file. By default, this points
+        to config/modeling/modeling.yaml. The runtime initializer loads the
+        modular configuration and returns one resolved ModelingRuntime object.
+
+    Returns
+    -------
+    BuildResult
+        Standard build result containing status, message, and output counts.
     """
 
     runtime: Optional[ModelingRuntime] = None
@@ -760,8 +766,9 @@ def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
         runtime = initialize_runtime(config_path)
 
         runtime.logger.info("Configuration path: %s", runtime.config_path)
-        runtime.logger.info("Architectural check: Modeling consumes Feature Store only.")
-
+        runtime.logger.info(
+            "Architectural check: Modeling consumes Feature Store only."
+        )
 
         step_start = time.perf_counter()
         datasets = load_input_datasets(runtime)
@@ -771,6 +778,7 @@ def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
             model_key=None,
             duration_seconds=time.perf_counter() - step_start,
         )
+
         step_start = time.perf_counter()
         feature_matrix = build_feature_matrix(runtime, datasets)
         add_step_timing_record(
@@ -779,6 +787,7 @@ def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
             model_key=None,
             duration_seconds=time.perf_counter() - step_start,
         )
+
         step_start = time.perf_counter()
         write_core_modeling_outputs(runtime, feature_matrix)
         add_step_timing_record(
@@ -787,6 +796,7 @@ def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
             model_key=None,
             duration_seconds=time.perf_counter() - step_start,
         )
+
         step_start = time.perf_counter()
         scoring_outputs = run_models(runtime, feature_matrix)
         add_step_timing_record(
@@ -802,15 +812,21 @@ def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
             status=STATUS_SUCCESS,
             message="Modeling Framework completed successfully.",
         )
+
         step_start = time.perf_counter()
         add_step_timing_record(
             runtime=runtime,
             step_name="write_metadata_and_audit_outputs",
             model_key=None,
             duration_seconds=0.0,
-            message="Timing record created before metadata write so it is included in the current output.",
+            message=(
+                "Timing record created before metadata write so it is included "
+                "in the current output."
+            ),
         )
+
         write_metadata_and_audit_outputs(runtime, scoring_outputs)
+
         runtime.step_timing_records[-1]["duration_seconds"] = float(
             time.perf_counter() - step_start
         )
@@ -865,6 +881,11 @@ def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
 def main() -> None:
     """
     Command-line entry point.
+
+    Environment Variables
+    ---------------------
+    MEDFABRIC_MODELING_CONFIG:
+        Optional override for the Modeling configuration path.
     """
 
     config_path = os.environ.get(
