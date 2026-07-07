@@ -228,6 +228,12 @@ paths:
     model_drift_baseline:
       path: "data/modeling/model_drift_baseline"
 
+    modeling_step_timings:
+      path: "data/modeling/modeling_step_timings"
+
+    modeling_performance_summary:
+      path: "data/modeling/modeling_performance_summary"  
+
 
   model_outputs:
 

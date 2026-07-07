@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import yaml
@@ -133,7 +134,8 @@ class ModelingRuntime:
     hyperparameter_search_frames: List[pd.DataFrame] = field(default_factory=list)
     model_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
     model_executive_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
-    model_drift_baseline_frames: List[pd.DataFrame] = field(default_factory=list)    
+    model_drift_baseline_frames: List[pd.DataFrame] = field(default_factory=list) 
+    step_timing_records: List[Dict[str, Any]] = field(default_factory=list)   
 
 
 @dataclass
@@ -502,7 +504,31 @@ def add_dataset_record(
         }
     )
 
+def add_step_timing_record(
+    runtime: ModelingRuntime,
+    step_name: str,
+    model_key: Optional[str],
+    duration_seconds: float,
+    status: str = STATUS_SUCCESS,
+    message: Optional[str] = None,
+) -> None:
+    """
+    Add a Modeling step timing record.
+    """
 
+    runtime.step_timing_records.append(
+        {
+            "run_id": runtime.run_id,
+            "layer_name": runtime.layer_name,
+            "domain_name": runtime.domain_name,
+            "model_key": model_key,
+            "step_name": step_name,
+            "duration_seconds": float(duration_seconds),
+            "status": status,
+            "message": message,
+            "event_timestamp_utc": runtime.event_timestamp_utc,
+        }
+    )
 ###############################################################################
 # IO Helpers
 ###############################################################################
@@ -1229,11 +1255,19 @@ def run_models(
             output_path=str(scoring_path),
         )
 
+        model_duration_seconds = time.perf_counter() - model_start_time
+        add_step_timing_record(
+            runtime=runtime,
+            step_name="model_complete",
+            model_key=model_key,
+            duration_seconds=model_duration_seconds,
+        )
+        
         runtime.logger.info(
             "COMPLETE MODEL: %s | Total Time: %.2f sec",
             model_key,
-            time.perf_counter() - model_start_time,
-        )
+            model_duration_seconds,
+            )
 
     baseline_feature_columns = sorted(set(all_safe_feature_columns))
 
@@ -1479,9 +1513,11 @@ def write_metadata_and_audit_outputs(
             scoring_outputs=scoring_outputs,
         ),
     }
+    modeling_step_timings_df = pd.DataFrame(runtime.step_timing_records)
 
     modeling_output_assets = {
         "candidate_model_leaderboard": candidate_leaderboard_df,
+        "modeling_step_timings": modeling_step_timings_df,
         "champion_model_summary": champion_summary_df,
         "cross_validation_fold_metrics": cross_validation_fold_metrics_df,
         "cross_validation_summary": cross_validation_summary_df,
@@ -1555,12 +1591,39 @@ def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
         runtime.logger.info("Configuration path: %s", runtime.config_path)
         runtime.logger.info("Architectural check: Modeling consumes Feature Store only.")
 
+
+        step_start = time.perf_counter()
         datasets = load_input_datasets(runtime)
-
+        add_step_timing_record(
+            runtime=runtime,
+            step_name="load_input_datasets",
+            model_key=None,
+            duration_seconds=time.perf_counter() - step_start,
+        )
+        step_start = time.perf_counter()
         feature_matrix = build_feature_matrix(runtime, datasets)
+        add_step_timing_record(
+            runtime=runtime,
+            step_name="build_feature_matrix",
+            model_key=None,
+            duration_seconds=time.perf_counter() - step_start,
+        )
+        step_start = time.perf_counter()
         write_core_modeling_outputs(runtime, feature_matrix)
-
+        add_step_timing_record(
+            runtime=runtime,
+            step_name="write_core_modeling_outputs",
+            model_key=None,
+            duration_seconds=time.perf_counter() - step_start,
+        )
+        step_start = time.perf_counter()
         scoring_outputs = run_models(runtime, feature_matrix)
+        add_step_timing_record(
+            runtime=runtime,
+            step_name="run_models",
+            model_key=None,
+            duration_seconds=time.perf_counter() - step_start,
+        )
 
         add_audit_record(
             runtime=runtime,
@@ -1568,8 +1631,18 @@ def build_modeling_layer(config_path: str = DEFAULT_CONFIG_PATH) -> BuildResult:
             status=STATUS_SUCCESS,
             message="Modeling Framework completed successfully.",
         )
-
+        step_start = time.perf_counter()
+        add_step_timing_record(
+            runtime=runtime,
+            step_name="write_metadata_and_audit_outputs",
+            model_key=None,
+            duration_seconds=0.0,
+            message="Timing record created before metadata write so it is included in the current output.",
+        )
         write_metadata_and_audit_outputs(runtime, scoring_outputs)
+        runtime.step_timing_records[-1]["duration_seconds"] = float(
+            time.perf_counter() - step_start
+        )
 
         runtime.logger.info("=" * 80)
         runtime.logger.info("MedFabric Modeling Framework completed successfully")
