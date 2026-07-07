@@ -408,7 +408,7 @@ training:
 
   imbalance:
 
-    enabled: false
+    enabled: true
 
     strategy: "class_weight"
 
@@ -420,9 +420,9 @@ training:
 
   threshold_optimization:
 
-    enabled: false
+    enabled: true
 
-    strategy: "fixed"
+    strategy: "optimize"
 
     fixed_threshold: 0.50
 

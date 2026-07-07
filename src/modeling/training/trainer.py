@@ -12,50 +12,11 @@
 #     Trains enabled candidate algorithms for one prediction objective, evaluates
 #     each candidate, and selects the champion model.
 #
-# Key Responsibilities:
-#     - Read YAML-driven modeling defaults.
-#     - Read YAML-driven training configuration.
-#     - Apply optional training-time sampling for performance.
-#     - Preserve class balance when stratified sampling is enabled.
-#     - Train all enabled candidate algorithms.
-#     - Support project-wide parallel candidate training.
-#     - Log algorithm-level START / COMPLETE / FAILED timing.
-#     - Calculate classification metrics.
-#     - Capture per-algorithm elapsed training time.
-#     - Select champion algorithm by configured metric.
-#     - Return candidate metrics output.
-#     - Return champion summary output.
-#
-# Architectural Rules:
-#     - Trainer must not generate run IDs.
-#     - Trainer must not generate runtime timestamps.
-#     - Run ID must come from PipelineContext.
-#     - Event timestamp must come from PipelineContext or the layer runtime.
-#     - Sampling affects training only.
-#     - Population scoring is handled later by src/modeling/scoring/scorer.py.
-#     - Parallelism must come from project-level performance configuration.
-#     - Trainer must not hardcode worker counts.
-#
-# Configuration Used:
-#     config/modeling/modeling.yaml
-#
-#       modeling_defaults:
-#         random_state
-#         test_size
-#         selection_metric
-#         preprocessing
-#
-#       training:
-#         performance
-#         metrics
-#         algorithms
-#
-#     config/pipeline.yaml
-#
-#       performance:
-#         parallel_execution
-#         max_parallel_workers
-#         parallel_strategy
+# Enhancements:
+#     - Supports YAML-driven class imbalance handling.
+#     - Supports YAML-driven threshold optimization.
+#     - Stores optimized threshold in candidate/champion metrics.
+#     - Attaches selected threshold to champion pipeline for scoring.
 #
 # Run:
 #     python -m src.modeling.training.trainer
@@ -64,6 +25,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import time
 from dataclasses import dataclass
@@ -99,25 +61,14 @@ from src.modeling.training.preprocessing import (
 )
 
 
-###############################################################################
-# Status Constants
-###############################################################################
-
 STATUS_SUCCESS = "SUCCESS"
 STATUS_FAILED = "FAILED"
 
-
-###############################################################################
-# Result Objects
-###############################################################################
 
 @dataclass
 class CandidateModelResult:
     """
     Result for one candidate algorithm.
-
-    One prediction objective may train multiple algorithms. Each algorithm
-    produces one CandidateModelResult.
     """
 
     model_key: str
@@ -137,9 +88,6 @@ class CandidateModelResult:
 class TrainingResult:
     """
     Final training result for one prediction objective.
-
-    Contains the selected champion model plus all candidate results and output
-    dataframes needed by the Modeling builder.
     """
 
     model_key: str
@@ -176,17 +124,28 @@ def get_training_metrics_config(training_config: Dict[str, Any]) -> Dict[str, An
     return training_config.get("metrics", {}) or {}
 
 
+def get_imbalance_config(training_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return training.imbalance from modeling.yaml.
+    """
+
+    return training_config.get("imbalance", {}) or {}
+
+
+def get_threshold_optimization_config(training_config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Return training.threshold_optimization from modeling.yaml.
+    """
+
+    return training_config.get("threshold_optimization", {}) or {}
+
+
 def get_selection_metric(
     modeling_defaults: Dict[str, Any],
     training_config: Dict[str, Any],
 ) -> str:
     """
     Resolve champion selection metric.
-
-    Priority:
-        1. training.metrics.primary_metric
-        2. modeling_defaults.selection_metric
-        3. roc_auc
     """
 
     metrics_config = get_training_metrics_config(training_config)
@@ -199,6 +158,67 @@ def get_selection_metric(
 
 
 ###############################################################################
+# Imbalance Handling
+###############################################################################
+
+def supports_class_weight(algorithm_key: str) -> bool:
+    """
+    Return whether an algorithm supports sklearn class_weight.
+    """
+
+    return algorithm_key in {
+        "logistic_regression",
+        "random_forest",
+        "extra_trees",
+    }
+
+
+def apply_imbalance_config_to_algorithms(
+    algorithms_config: Dict[str, Any],
+    imbalance_config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Apply YAML-driven imbalance handling to algorithm configs.
+
+    Current supported production-safe strategy:
+        - class_weight
+
+    This mutates a deep copy only. The original loaded YAML dictionary is not
+    modified.
+    """
+
+    updated_config = copy.deepcopy(algorithms_config)
+
+    if not bool(imbalance_config.get("enabled", False)):
+        return updated_config
+
+    strategy = str(imbalance_config.get("strategy", "none")).lower()
+
+    if strategy == "none":
+        return updated_config
+
+    if strategy != "class_weight":
+        raise ValueError(
+            f"Unsupported imbalance strategy currently implemented: {strategy}. "
+            "Supported implemented strategies: none, class_weight"
+        )
+
+    for algorithm_key, algorithm_config in updated_config.items():
+        if not bool(algorithm_config.get("enabled", True)):
+            continue
+
+        if not supports_class_weight(algorithm_key):
+            continue
+
+        parameters = algorithm_config.setdefault("parameters", {})
+
+        if parameters.get("class_weight") is None:
+            parameters["class_weight"] = "balanced"
+
+    return updated_config
+
+
+###############################################################################
 # Training Sampling
 ###############################################################################
 
@@ -208,11 +228,6 @@ def calculate_sample_size(
 ) -> int:
     """
     Calculate training sample size using YAML controls.
-
-    Uses:
-        - train_sample_fraction
-        - min_train_rows
-        - max_train_rows
     """
 
     train_sample_fraction = float(
@@ -233,10 +248,6 @@ def calculate_sample_size(
 def can_stratify(y: pd.Series) -> bool:
     """
     Determine whether stratified sampling is safe.
-
-    Stratification requires:
-        - at least two classes
-        - at least two records per class
     """
 
     class_counts = y.value_counts(dropna=True)
@@ -255,14 +266,6 @@ def sample_training_data(
 ) -> Tuple[pd.DataFrame, pd.Series, bool]:
     """
     Apply optional training-time sampling.
-
-    Supported strategies:
-        - stratified
-        - random
-
-    Important:
-        Sampling affects training only. The champion model still scores the full
-        population later in scorer.py.
     """
 
     row_count = len(X)
@@ -310,7 +313,7 @@ def sample_training_data(
 
 
 ###############################################################################
-# Metrics
+# Metrics and Threshold Optimization
 ###############################################################################
 
 def calculate_classification_metrics(
@@ -356,6 +359,91 @@ def get_prediction_scores(
     return pipeline.predict(X)
 
 
+def get_metric_value_for_threshold(
+    y_true: pd.Series,
+    y_score: np.ndarray,
+    threshold: float,
+    optimization_metric: str,
+) -> float:
+    """
+    Calculate one threshold optimization metric.
+    """
+
+    y_pred = (y_score >= threshold).astype(int)
+
+    metric = optimization_metric.lower()
+
+    if metric == "precision":
+        return float(precision_score(y_true, y_pred, zero_division=0))
+
+    if metric == "recall":
+        return float(recall_score(y_true, y_pred, zero_division=0))
+
+    if metric == "balanced_accuracy":
+        return float(balanced_accuracy_score(y_true, y_pred))
+
+    if metric == "accuracy":
+        return float(accuracy_score(y_true, y_pred))
+
+    return float(f1_score(y_true, y_pred, zero_division=0))
+
+
+def optimize_prediction_threshold(
+    y_true: pd.Series,
+    y_score: np.ndarray,
+    threshold_config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Select prediction threshold using YAML controls.
+
+    If disabled, returns fixed threshold.
+    If enabled, searches thresholds from 0.05 to 0.95.
+    """
+
+    fixed_threshold = float(threshold_config.get("fixed_threshold", 0.50))
+    enabled = bool(threshold_config.get("enabled", False))
+    strategy = str(threshold_config.get("strategy", "fixed")).lower()
+    optimization_metric = str(
+        threshold_config.get("optimization_metric", "f1")
+    ).lower()
+
+    if not enabled or strategy == "fixed":
+        return {
+            "prediction_threshold": fixed_threshold,
+            "threshold_optimization_enabled": False,
+            "threshold_optimization_metric": optimization_metric,
+            "threshold_optimization_score": None,
+        }
+
+    if strategy not in {"optimize", "search"}:
+        raise ValueError(
+            f"Unsupported threshold optimization strategy: {strategy}. "
+            "Supported: fixed, optimize, search"
+        )
+
+    best_threshold = fixed_threshold
+    best_score = -1.0
+
+    for threshold in np.round(np.arange(0.05, 0.951, 0.01), 2):
+        score = get_metric_value_for_threshold(
+            y_true=y_true,
+            y_score=y_score,
+            threshold=float(threshold),
+            optimization_metric=optimization_metric,
+        )
+
+        if score > best_score:
+            best_score = score
+            best_threshold = float(threshold)
+
+    return {
+        "prediction_threshold": best_threshold,
+        "threshold_optimization_enabled": True,
+        "threshold_optimization_metric": optimization_metric,
+        "threshold_optimization_score": float(best_score),
+    }
+
+
 ###############################################################################
 # Candidate Training
 ###############################################################################
@@ -368,20 +456,12 @@ def train_candidate_algorithm(
     y_train: pd.Series,
     y_test: pd.Series,
     preprocessing_config: Dict[str, Any],
+    threshold_config: Dict[str, Any],
     event_timestamp_utc: str,
     logger: Optional[logging.Logger] = None,
 ) -> CandidateModelResult:
     """
     Train and evaluate one candidate algorithm.
-
-    This function:
-        - logs algorithm START when a logger is provided
-        - trains one sklearn pipeline
-        - evaluates metrics
-        - logs algorithm COMPLETE or FAILED with elapsed seconds
-        - returns a CandidateModelResult
-
-    This function is safe to execute sequentially or through parallel_utils.
     """
 
     start_time = time.perf_counter()
@@ -404,8 +484,16 @@ def train_candidate_algorithm(
 
         pipeline.fit(X_train, y_train)
 
-        y_pred = pipeline.predict(X_test)
         y_score = get_prediction_scores(pipeline, X_test)
+
+        threshold_result = optimize_prediction_threshold(
+            y_true=y_test,
+            y_score=y_score,
+            threshold_config=threshold_config,
+        )
+
+        prediction_threshold = float(threshold_result["prediction_threshold"])
+        y_pred = (y_score >= prediction_threshold).astype(int)
 
         metrics = calculate_classification_metrics(
             y_true=y_test,
@@ -413,13 +501,22 @@ def train_candidate_algorithm(
             y_score=y_score,
         )
 
+        metrics.update(threshold_result)
+
+        setattr(
+            pipeline,
+            "medfabric_prediction_threshold",
+            prediction_threshold,
+        )
+
         training_seconds = float(time.perf_counter() - start_time)
 
         if logger is not None:
             logger.info(
-                "COMPLETE Algorithm: %s | %.2f sec",
+                "COMPLETE Algorithm: %s | %.2f sec | Threshold: %.2f",
                 algorithm_definition.algorithm_name,
                 training_seconds,
+                prediction_threshold,
             )
 
         return CandidateModelResult(
@@ -470,22 +567,13 @@ def train_candidate_algorithms(
     y_train: pd.Series,
     y_test: pd.Series,
     preprocessing_config: Dict[str, Any],
+    threshold_config: Dict[str, Any],
     event_timestamp_utc: str,
     parallelism_config: Optional[Dict[str, Any]],
     logger: Optional[logging.Logger] = None,
 ) -> List[CandidateModelResult]:
     """
     Train all enabled candidate algorithms.
-
-    Execution mode:
-        - Sequential when project parallelism is disabled.
-        - Thread-based parallel execution when project parallelism is enabled.
-
-    Notes:
-        - Parallelism is controlled by config/pipeline.yaml.
-        - Worker count is not hardcoded here.
-        - Algorithm START / COMPLETE logs may appear interleaved when multiple
-          workers run at the same time. That is expected for parallel execution.
     """
 
     if parallelism_config is None:
@@ -513,6 +601,7 @@ def train_candidate_algorithms(
                     y_train=y_train,
                     y_test=y_test,
                     preprocessing_config=preprocessing_config,
+                    threshold_config=threshold_config,
                     event_timestamp_utc=event_timestamp_utc,
                     logger=logger,
                 ),
@@ -540,9 +629,6 @@ def select_champion_model(
 ) -> CandidateModelResult:
     """
     Select champion algorithm by configured metric.
-
-    The champion is the successful candidate with the highest configured
-    selection metric value.
     """
 
     start_time = time.perf_counter()
@@ -573,11 +659,12 @@ def select_champion_model(
 
     if logger is not None:
         logger.info(
-            "COMPLETE Champion Selection | %.2f sec | Champion: %s | %s: %s",
+            "COMPLETE Champion Selection | %.2f sec | Champion: %s | %s: %s | Threshold: %s",
             selection_seconds,
             champion.algorithm_key,
             selection_metric,
             champion.metrics.get(selection_metric),
+            champion.metrics.get("prediction_threshold"),
         )
 
     return champion
@@ -632,12 +719,19 @@ def build_candidate_metrics_dataframe(
             for metric_name, metric_value in result.metrics.items():
                 row = dict(base_record)
                 row["metric_name"] = metric_name
-                row["metric_value"] = metric_value
+                if isinstance(metric_value, (int, float, np.integer, np.floating, bool)) or metric_value is None:
+                    row["metric_value"] = metric_value
+                    row["metric_value_text"] = None
+                else:
+                    row["metric_value"] = None
+                    row["metric_value_text"] = str(metric_value)    
+
                 rows.append(row)
         else:
             row = dict(base_record)
             row["metric_name"] = None
             row["metric_value"] = None
+            row["metric_value_text"] = None
             rows.append(row)
 
     return pd.DataFrame(rows)
@@ -671,6 +765,16 @@ def build_champion_summary_dataframe(
         "champion_algorithm_name": champion.algorithm_name,
         "selection_metric": selection_metric,
         "selection_metric_value": champion.metrics.get(selection_metric),
+        "prediction_threshold": champion.metrics.get("prediction_threshold"),
+        "threshold_optimization_enabled": champion.metrics.get(
+            "threshold_optimization_enabled"
+        ),
+        "threshold_optimization_metric": champion.metrics.get(
+            "threshold_optimization_metric"
+        ),
+        "threshold_optimization_score": champion.metrics.get(
+            "threshold_optimization_score"
+        ),
         "training_seconds": champion.training_seconds,
         "train_row_count": champion.train_row_count,
         "test_row_count": champion.test_row_count,
@@ -707,8 +811,6 @@ def train_model_candidates(
 ) -> TrainingResult:
     """
     Train all enabled candidate algorithms and select champion model.
-
-    This is the main function called by build_modeling_layer.py.
     """
 
     if logger is not None:
@@ -737,6 +839,8 @@ def train_model_candidates(
     )
 
     performance_config = get_training_performance_config(training_config)
+    imbalance_config = get_imbalance_config(training_config)
+    threshold_config = get_threshold_optimization_config(training_config)
 
     X_training_base, y_training_base, sampling_applied = sample_training_data(
         X=X_full,
@@ -748,6 +852,11 @@ def train_model_candidates(
     algorithms_config = (
         training_config.get("algorithms")
         or get_default_algorithms_config()
+    )
+
+    algorithms_config = apply_imbalance_config_to_algorithms(
+        algorithms_config=algorithms_config,
+        imbalance_config=imbalance_config,
     )
 
     algorithm_definitions = build_algorithm_definitions(
@@ -772,12 +881,14 @@ def train_model_candidates(
 
     if logger is not None:
         logger.info(
-            "COMPLETE Training Data Preparation | Model: %s | %.2f sec | Full Rows: %s | Training Rows: %s | Sampling Applied: %s",
+            "COMPLETE Training Data Preparation | Model: %s | %.2f sec | Full Rows: %s | Training Rows: %s | Sampling Applied: %s | Imbalance Enabled: %s | Threshold Optimization Enabled: %s",
             model_key,
             preparation_seconds,
             len(X_full),
             len(X_training_base),
             sampling_applied,
+            bool(imbalance_config.get("enabled", False)),
+            bool(threshold_config.get("enabled", False)),
         )
 
     candidate_results = train_candidate_algorithms(
@@ -788,6 +899,7 @@ def train_model_candidates(
         y_train=y_train,
         y_test=y_test,
         preprocessing_config=preprocessing_config,
+        threshold_config=threshold_config,
         event_timestamp_utc=event_timestamp_utc,
         parallelism_config=parallelism_config,
         logger=logger,
@@ -905,6 +1017,16 @@ def main() -> None:
                 "max_train_rows": 5000,
                 "sampling_strategy": "stratified",
                 "log_algorithm_timing": True,
+            },
+            "imbalance": {
+                "enabled": True,
+                "strategy": "class_weight",
+            },
+            "threshold_optimization": {
+                "enabled": True,
+                "strategy": "optimize",
+                "fixed_threshold": 0.50,
+                "optimization_metric": "f1",
             },
             "metrics": {
                 "primary_metric": "roc_auc",

@@ -11,6 +11,11 @@
 # Purpose:
 #     Scores the full modeling population using a trained champion model.
 #
+#     Enhanced behavior:
+#       - Uses model probability scores when available.
+#       - Uses optimized champion threshold when attached to the pipeline.
+#       - Falls back to model_config threshold or 0.50.
+#
 # Run:
 #     python -m src.modeling.scoring.scorer
 #
@@ -60,15 +65,6 @@ def get_prediction_scores(
 ) -> np.ndarray:
     """
     Return probability-like model scores.
-
-    Preferred:
-        predict_proba[:, 1]
-
-    Fallback:
-        decision_function converted using sigmoid
-
-    Final fallback:
-        predict output
     """
 
     if hasattr(pipeline, "predict_proba"):
@@ -79,6 +75,28 @@ def get_prediction_scores(
         return 1 / (1 + np.exp(-raw_scores))
 
     return pipeline.predict(features)
+
+
+def resolve_prediction_threshold(
+    pipeline: Pipeline,
+    model_config: Dict[str, Any],
+) -> float:
+    """
+    Resolve prediction threshold.
+
+    Priority:
+        1. Optimized threshold attached to champion pipeline by trainer.py
+        2. model_config.prediction_threshold
+        3. default 0.50
+    """
+
+    if hasattr(pipeline, "medfabric_prediction_threshold"):
+        return float(getattr(pipeline, "medfabric_prediction_threshold"))
+
+    if "prediction_threshold" in model_config:
+        return float(model_config.get("prediction_threshold"))
+
+    return 0.50
 
 
 def score_population(
@@ -126,7 +144,12 @@ def score_population(
         features=features,
     )
 
-    predictions = pipeline.predict(features)
+    prediction_threshold = resolve_prediction_threshold(
+        pipeline=pipeline,
+        model_config=model_config,
+    )
+
+    predictions = (scores >= prediction_threshold).astype(int)
 
     scoring_dataframe = pd.DataFrame(
         {
@@ -135,6 +158,8 @@ def score_population(
             prediction_column: predictions,
         }
     )
+
+    scoring_dataframe["prediction_threshold"] = prediction_threshold
 
     scoring_dataframe[risk_tier_column] = assign_risk_tiers(
         scores=pd.Series(scores),
@@ -198,15 +223,21 @@ def main() -> None:
         },
         training_config={
             "performance": {
-                "enalble_training_sample": False
+                "enable_training_sample": False,
             },
             "metrics": {
                 "primary_metric": "roc_auc",
             },
+            "threshold_optimization": {
+                "enabled": True,
+                "strategy": "optimize",
+                "fixed_threshold": 0.50,
+                "optimization_metric": "f1",
+            },
             "algorithms": get_default_algorithms_config(),
         },
         run_id="TEST_RUN",
-        event_timestamp_utc="TEST_TIMESTAMP_UTC"
+        event_timestamp_utc="TEST_TIMESTAMP_UTC",
     )
 
     risk_tiers_config = {
