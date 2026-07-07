@@ -81,6 +81,8 @@ from src.modeling.evaluation.build_model_drift_baseline import (
 )
 
 from src.modeling.evaluation.confusion_matrix import build_confusion_matrix_output
+
+from src.modeling.evaluation.build_lift_gain_analysis import build_lift_gain_analysis
 ###############################################################################
 # Constants
 ###############################################################################
@@ -138,6 +140,7 @@ class ModelingRuntime:
     model_drift_baseline_frames: List[pd.DataFrame] = field(default_factory=list) 
     step_timing_records: List[Dict[str, Any]] = field(default_factory=list)   
     confusion_matrix_frames: List[pd.DataFrame] = field(default_factory=list)
+    lift_gain_frames: List[pd.DataFrame] = field(default_factory=list)
 
 
 @dataclass
@@ -1164,6 +1167,22 @@ def run_models(
             algorithm_name=training_result.champion_algorithm_name,
         )
 
+        lift_gain_df = build_lift_gain_analysis(
+            scoring_dataframe=scoring_result.scoring_dataframe,
+            source_dataframe=modeling_frame,
+            target_column=target_column,
+            score_column=model_config.get("score_column"),
+            run_id=runtime.run_id,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name,
+            model_key=model_key,
+            model_name=model_name,
+            algorithm_key=training_result.champion_algorithm_key,
+            algorithm_name=training_result.champion_algorithm_name,
+        )
+
+        runtime.lift_gain_frames.append(lift_gain_df)
+
         runtime.confusion_matrix_frames.append(confusion_matrix_df)        
 
         feature_importance_df = build_feature_importance_output(
@@ -1519,6 +1538,12 @@ def write_metadata_and_audit_outputs(
         else pd.DataFrame()
     )
 
+    lift_gain_decile_summary_df = (
+        pd.concat(runtime.lift_gain_frames, ignore_index=True)
+        if runtime.lift_gain_frames
+        else pd.DataFrame()
+    )
+
     metadata_assets = {
         "modeling_dataset_inventory": pd.DataFrame(runtime.dataset_records),
         "modeling_model_registry": build_model_registry_dataframe(
@@ -1548,6 +1573,7 @@ def write_metadata_and_audit_outputs(
         "model_explainability_summary": model_explainability_summary_df,
         "model_explainability_executive_summary": model_executive_explainability_summary_df,
         "confusion_matrix_summary": confusion_matrix_summary_df,
+        "lift_gain_decile_summary": lift_gain_decile_summary_df,
     }
     if not model_drift_baseline_df.empty:
         modeling_output_assets["model_drift_baseline"] = model_drift_baseline_df

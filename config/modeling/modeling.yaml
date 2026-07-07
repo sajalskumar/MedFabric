@@ -236,6 +236,9 @@ paths:
     
     confusion_matrix_summary:
       path: "data/modeling/confusion_matrix_summary"
+    
+    lift_gain_decile_summary:
+      path: "data/modeling/lift_gain_decile_summary"
 
 
   model_outputs:
