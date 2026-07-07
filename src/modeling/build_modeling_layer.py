@@ -79,6 +79,8 @@ from src.modeling.evaluation.build_model_explainability_summary import (
 from src.modeling.evaluation.build_model_drift_baseline import (
     build_model_drift_baseline,
 )
+
+from src.modeling.evaluation.confusion_matrix import build_confusion_matrix_output
 ###############################################################################
 # Constants
 ###############################################################################
@@ -135,6 +137,7 @@ class ModelingRuntime:
     model_executive_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
     model_drift_baseline_frames: List[pd.DataFrame] = field(default_factory=list) 
     step_timing_records: List[Dict[str, Any]] = field(default_factory=list)   
+    confusion_matrix_frames: List[pd.DataFrame] = field(default_factory=list)
 
 
 @dataclass
@@ -1141,13 +1144,27 @@ def run_models(
             risk_tiers_config=risk_tiers_config,
             run_id=runtime.run_id,
         )
-
         runtime.logger.info(
             "COMPLETE Population Scoring | Model: %s | %.2f sec | Rows: %s",
             model_key,
             time.perf_counter() - scoring_start_time,
             scoring_result.row_count,
         )
+        confusion_matrix_df = build_confusion_matrix_output(
+            scoring_dataframe=scoring_result.scoring_dataframe,
+            source_dataframe=modeling_frame,
+            target_column=target_column,
+            prediction_column=model_config.get("prediction_column"),
+            run_id=runtime.run_id,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name,
+            model_key=model_key,
+            model_name=model_name,
+            algorithm_key=training_result.champion_algorithm_key,
+            algorithm_name=training_result.champion_algorithm_name,
+        )
+
+        runtime.confusion_matrix_frames.append(confusion_matrix_df)        
 
         feature_importance_df = build_feature_importance_output(
             pipeline=training_result.champion_pipeline,
@@ -1448,6 +1465,11 @@ def write_metadata_and_audit_outputs(
         if runtime.champion_summary_frames
         else pd.DataFrame()
     )
+    confusion_matrix_summary_df = (
+        pd.concat(runtime.confusion_matrix_frames, ignore_index=True)
+        if runtime.confusion_matrix_frames
+        else pd.DataFrame()
+    )
 
     cross_validation_fold_metrics_df = (
         pd.concat(runtime.cross_validation_fold_frames, ignore_index=True)
@@ -1525,6 +1547,7 @@ def write_metadata_and_audit_outputs(
         "target_quality_report": target_quality_report_df,
         "model_explainability_summary": model_explainability_summary_df,
         "model_explainability_executive_summary": model_executive_explainability_summary_df,
+        "confusion_matrix_summary": confusion_matrix_summary_df,
     }
     if not model_drift_baseline_df.empty:
         modeling_output_assets["model_drift_baseline"] = model_drift_baseline_df

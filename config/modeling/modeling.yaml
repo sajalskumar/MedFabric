@@ -233,6 +233,9 @@ paths:
 
     modeling_performance_summary:
       path: "data/modeling/modeling_performance_summary"  
+    
+    confusion_matrix_summary:
+      path: "data/modeling/confusion_matrix_summary"
 
 
   model_outputs:
