@@ -47,7 +47,6 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 import yaml
 
-import fnmatch
 import time
 
 from src.common.parallel_utils import resolve_parallelism_config
@@ -58,10 +57,19 @@ from src.modeling.registry.model_registry import (
     build_model_registry_record,
 )
 from src.modeling.scoring.scorer import score_population
-from src.modeling.targets.leakage_detection import get_target_output_column
+from src.modeling.targets.leakage_detection import (
+    build_target_leakage_report_for_models,
+    get_model_specific_safe_feature_columns,
+    get_target_output_column,
+)
 from src.modeling.targets.target_builder import build_targets_for_enabled_models
 from src.modeling.training.trainer import train_model_candidates
-
+from src.modeling.evaluation.build_feature_baseline_statistics import (
+    build_feature_baseline_statistics,
+)
+from src.modeling.evaluation.build_target_quality_report import (
+    build_target_quality_report,
+)
 
 ###############################################################################
 # Constants
@@ -110,6 +118,8 @@ class ModelingRuntime:
     model_registry_records: List[Dict[str, Any]] = field(default_factory=list)
     candidate_leaderboard_frames: List[pd.DataFrame] = field(default_factory=list)
     champion_summary_frames: List[pd.DataFrame] = field(default_factory=list)
+    target_leakage_report_frames: List[pd.DataFrame] = field(default_factory=list)
+    target_quality_report_frames: List[pd.DataFrame] = field(default_factory=list)
 
 
 @dataclass
@@ -839,46 +849,6 @@ def build_feature_matrix(
     return matrix
 
 
-def get_feature_columns(
-    dataframe: pd.DataFrame,
-    member_key: str,
-    target_columns: List[str],
-    leakage_columns: List[str],
-    leakage_config: Optional[Dict[str, Any]] = None,
-) -> List[str]:
-    """
-    Select safe training feature columns.
-    Excludes:
-
-      - member key
-      - generated target columns
-      - target source leakage columns
-      - Modeling runtime metadata columns
-      - YAML-configured leakage columns
-      - YAML-configured leakage patterns    
-    """
-
-    excluded = set(target_columns)
-    excluded.update(leakage_columns)
-    excluded.add(member_key)
-    excluded.add("modeling_layer_run_id")
-    excluded.add("modeling_layer_built_at_utc")
-
-    leakage_config = leakage_config or {}
-
-    if bool(leakage_config.get("enabled", False)):
-        additional_columns = leakage_config.get("additional_columns", [])
-        exclude_patterns = leakage_config.get("exclude_patterns", [])
-
-        excluded.update(additional_columns)
-
-        for column in dataframe.columns:
-            for pattern in exclude_patterns:
-                if fnmatch.fnmatch(column.lower(), str(pattern).lower()):
-                    excluded.add(column)   
-    return [column for column in dataframe.columns if column not in excluded]
-
-
 ###############################################################################
 # Modeling Execution
 ###############################################################################
@@ -912,7 +882,8 @@ def run_models(
     feature_matrix: pd.DataFrame,
 ) -> Dict[str, pd.DataFrame]:
     """
-    Execute Target, Training, Scoring, Feature Importance, and Registry workflows.
+    Execute Target, Target Quality, Leakage, Training, Scoring, Feature Importance,
+    Feature Baseline, and Registry workflows.
     """
 
     models_config = runtime.config.get("models", {})
@@ -920,6 +891,7 @@ def run_models(
     training_config = runtime.config.get("training", {})
     member_key = runtime.config.get("join_keys", {}).get("member_key", "member_id")
     risk_tiers_config = runtime.config.get("risk_tiers", {})
+    leakage_config = runtime.config.get("leakage_detection", {})
     output_format = get_output_format(runtime)
 
     selection_metric = get_selection_metric(
@@ -939,7 +911,6 @@ def run_models(
 
     modeling_frame = target_result.modeling_frame
     target_columns = target_result.target_columns
-    leakage_columns = target_result.leakage_columns
 
     target_summary_path = output_path_with_format(
         get_output_path(runtime, "outputs", "modeling_target_summary"),
@@ -959,33 +930,75 @@ def run_models(
         message="Target summary written successfully.",
     )
 
+    target_quality_targets = []
+
+    for model_key, model_config in models_config.items():
+        if not bool(model_config.get("enabled", True)):
+            continue
+
+        target_quality_targets.append(
+            {
+                "target_name": model_key,
+                "target_column": get_target_output_column(model_config),
+                "problem_type": model_config.get("model_type", "classification"),
+            }
+        )
+
+    target_quality_report_df = build_target_quality_report(
+        dataframe=modeling_frame,
+        targets=target_quality_targets,
+        run_id=runtime.run_id,
+        layer_name=runtime.layer_name,
+        domain_name=runtime.domain_name,
+    )
+
+    runtime.target_quality_report_frames.append(target_quality_report_df)
+
+    add_dataset_record(
+        runtime=runtime,
+        dataset_name="target_quality_report",
+        dataset_type="modeling_output",
+        status=STATUS_SUCCESS,
+        path=None,
+        row_count=len(target_quality_report_df),
+        column_count=len(target_quality_report_df.columns),
+        message="Target quality report built successfully.",
+    )
+
+    add_validation_record(
+        runtime=runtime,
+        dataset_name="modeling_targets",
+        rule_name="target_quality_report",
+        status=STATUS_SUCCESS,
+        message=f"Target quality report built for {len(target_quality_report_df)} targets.",
+    )
+
+    target_leakage_report_df = build_target_leakage_report_for_models(
+        dataframe=modeling_frame,
+        models_config=models_config,
+        member_key=member_key,
+        target_columns=target_columns,
+        leakage_config=leakage_config,
+    )
+
+    runtime.target_leakage_report_frames.append(target_leakage_report_df)
+
     add_validation_record(
         runtime=runtime,
         dataset_name="modeling_feature_matrix",
-        rule_name="target_leakage_columns_excluded",
+        rule_name="target_leakage_hardening",
         status=STATUS_SUCCESS,
-        message=f"Leakage columns excluded from training: {leakage_columns}",
+        message=(
+            "Model-specific target leakage report built. "
+            f"Excluded records: {len(target_leakage_report_df)}"
+        ),
     )
-
-    feature_columns = get_feature_columns(
-        dataframe=modeling_frame,
-        member_key=member_key,
-        target_columns=target_columns,
-        leakage_columns=leakage_columns,
-        leakage_config=runtime.config.get("leakage_detection", {}),
-    )
-
-    if not feature_columns:
-        raise ValueError("No eligible training feature columns found.")
-
-    runtime.logger.info(
-        "Training feature count: %s",
-        len(feature_columns)
-        )
 
     scoring_outputs: Dict[str, pd.DataFrame] = {}
 
     get_algorithms_config(runtime)
+
+    all_safe_feature_columns: List[str] = []
 
     for model_key, model_config in models_config.items():
         if not bool(model_config.get("enabled", True)):
@@ -1001,9 +1014,31 @@ def run_models(
         runtime.logger.info("=" * 80)
         model_start_time = time.perf_counter()
 
+        model_feature_columns = get_model_specific_safe_feature_columns(
+            dataframe=modeling_frame,
+            model_key=model_key,
+            model_config=model_config,
+            member_key=member_key,
+            target_columns=target_columns,
+            leakage_config=leakage_config,
+        )
+
+        if not model_feature_columns:
+            raise ValueError(
+                f"No eligible training feature columns found for model: {model_key}"
+            )
+
+        all_safe_feature_columns.extend(model_feature_columns)
+
+        runtime.logger.info(
+            "Model-specific training feature count | Model: %s | Features: %s",
+            model_key,
+            len(model_feature_columns),
+        )
+
         training_result = train_model_candidates(
             dataframe=modeling_frame,
-            feature_columns=feature_columns,
+            feature_columns=model_feature_columns,
             target_column=target_column,
             model_key=model_key,
             model_name=model_name,
@@ -1019,24 +1054,25 @@ def run_models(
 
         runtime.candidate_leaderboard_frames.append(
             training_result.metrics_dataframe
-            )
+        )
+
         runtime.champion_summary_frames.append(
             training_result.champion_summary_dataframe
-            )
+        )
 
-        
         runtime.logger.info(
             "Champion selected | Model: %s | Algorithm: %s | Metrics: %s",
             model_key,
             training_result.champion_algorithm_key,
             training_result.champion_metrics,
         )
+
         scoring_start_time = time.perf_counter()
         runtime.logger.info("START Population Scoring | Model: %s", model_key)
-        
+
         scoring_result = score_population(
             dataframe=modeling_frame,
-            feature_columns=feature_columns,
+            feature_columns=model_feature_columns,
             member_key=member_key,
             model_key=model_key,
             model_name=model_name,
@@ -1045,15 +1081,17 @@ def run_models(
             risk_tiers_config=risk_tiers_config,
             run_id=runtime.run_id,
         )
+
         runtime.logger.info(
             "COMPLETE Population Scoring | Model: %s | %.2f sec | Rows: %s",
             model_key,
             time.perf_counter() - scoring_start_time,
             scoring_result.row_count,
         )
+
         feature_importance_df = build_feature_importance_output(
             pipeline=training_result.champion_pipeline,
-            feature_columns=feature_columns,
+            feature_columns=model_feature_columns,
             run_id=runtime.run_id,
             layer_name=runtime.layer_name,
             domain_name=runtime.domain_name,
@@ -1136,13 +1174,41 @@ def run_models(
             output_path=str(scoring_path),
         )
 
-        runtime.logger.info("COMPLETE MODEL: %s | Total Time: %.2f sec",
-                            model_key,
-                            time.perf_counter() - model_start_time,
+        runtime.logger.info(
+            "COMPLETE MODEL: %s | Total Time: %.2f sec",
+            model_key,
+            time.perf_counter() - model_start_time,
         )
 
-    return scoring_outputs
+    baseline_feature_columns = sorted(set(all_safe_feature_columns))
 
+    feature_baseline_df = build_feature_baseline_statistics(
+        dataframe=modeling_frame,
+        feature_columns=baseline_feature_columns,
+        run_id=runtime.run_id,
+        layer_name=runtime.layer_name,
+        domain_name=runtime.domain_name,
+    )
+
+    feature_baseline_path = output_path_with_format(
+        get_output_path(runtime, "outputs", "feature_baseline_statistics"),
+        output_format,
+    )
+
+    write_dataset(feature_baseline_df, feature_baseline_path, output_format)
+
+    add_dataset_record(
+        runtime=runtime,
+        dataset_name="feature_baseline_statistics",
+        dataset_type="modeling_output",
+        status=STATUS_SUCCESS,
+        path=str(feature_baseline_path),
+        row_count=len(feature_baseline_df),
+        column_count=len(feature_baseline_df.columns),
+        message="Feature baseline statistics written successfully.",
+    )
+
+    return scoring_outputs
 
 ###############################################################################
 # Core Output Writing
@@ -1250,6 +1316,18 @@ def write_metadata_and_audit_outputs(
         else pd.DataFrame()
     )
 
+    target_leakage_report_df = (
+        pd.concat(runtime.target_leakage_report_frames, ignore_index=True)
+        if runtime.target_leakage_report_frames
+        else pd.DataFrame()
+    )
+
+    target_quality_report_df = (
+        pd.concat(runtime.target_quality_report_frames, ignore_index=True)
+        if runtime.target_quality_report_frames
+        else pd.DataFrame()
+    )
+
     metadata_assets = {
         "modeling_dataset_inventory": pd.DataFrame(runtime.dataset_records),
         "modeling_model_registry": build_model_registry_dataframe(
@@ -1269,6 +1347,8 @@ def write_metadata_and_audit_outputs(
     modeling_output_assets = {
         "candidate_model_leaderboard": candidate_leaderboard_df,
         "champion_model_summary": champion_summary_df,
+        "target_leakage_report": target_leakage_report_df,
+        "target_quality_report": target_quality_report_df,
     }
 
     for output_name, dataframe in metadata_assets.items():
@@ -1315,7 +1395,7 @@ def write_metadata_and_audit_outputs(
             len(dataframe),
             output_path,
         )
-
+    
 
 ###############################################################################
 # Main Orchestration

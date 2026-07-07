@@ -204,6 +204,9 @@ paths:
     target_leakage_report:
       path: "data/modeling/target_leakage_report"
 
+    target_quality_report:
+      path: "data/modeling/target_quality_report"
+
     feature_baseline_statistics:
       path: "data/modeling/feature_baseline_statistics"
 
@@ -375,9 +378,9 @@ training:
 
     train_sample_fraction: 0.20
 
-    min_train_rows: 5000
+    min_train_rows: 1000
 
-    max_train_rows: 20000
+    max_train_rows: 5000
 
     sampling_strategy: "stratified"
 
@@ -446,7 +449,7 @@ training:
         strategy: "most_frequent"
 
     logistic_regression:
-      enabled: false
+      enabled: true
       name: "Logistic Regression"
       model_type: "classification"
       parameters:
@@ -457,14 +460,14 @@ training:
         class_weight: null
 
     random_forest:
-      enabled: false
+      enabled: true
       name: "Random Forest"
       model_type: "classification"
       parameters:
-        n_estimators: 200
-        max_depth: null
-        min_samples_split: 2
-        min_samples_leaf: 1
+        n_estimators: 50
+        max_depth: 8
+        min_samples_split: 10
+        min_samples_leaf: 5
         class_weight: null
         n_jobs: -1
 
@@ -606,11 +609,35 @@ models:
     model_type: "classification"
 
     target:
-      strategy: "quantile"
+      strategy: "weighted_score"
       output_column: "readmission_target"
-      source:
-        dataset: "utilization_features"
-        column: "total_claims"
+
+      components:
+        - dataset: "utilization_features"
+          column: "total_claims"
+          weight: 0.35
+          direction: "positive"
+
+        - dataset: "cost_features"
+          column: "total_allowed_amount"
+          weight: 0.20
+          direction: "positive"
+
+        - dataset: "cost_features"
+          column: "total_paid_amount"
+          weight: 0.20
+          direction: "positive"
+
+        - dataset: "pharmacy_features"
+          column: "total_pharmacy_claims"
+          weight: 0.10
+          direction: "positive"
+
+        - dataset: "sdoh_features"
+          column: "latest_sdoh_risk_score"
+          weight: 0.15
+          direction: "positive"
+
       parameters:
         quantile: 0.85
         positive_direction: "greater_than_or_equal"
@@ -886,12 +913,17 @@ audit:
   include_champion_selection_reason: true
 
 ###############################################################################
-# Leakage Detection
+# Leakage Detection - Target Leakage Prevention/Hardening
 ###############################################################################
 
 leakage_detection:
 
   enabled: true
+
+  exclude_target_source_dataset: true
+
+  correlation_check_enabled: true
+  correlation_threshold: 0.995
 
   exclude_patterns:
     - "*target*"
@@ -912,6 +944,51 @@ leakage_detection:
     - "cost_features__total_allowed_amount"
     - "total_pharmacy_paid_amount"
     - "pharmacy_features__total_pharmacy_paid_amount"
+
+  source_domain_proxy_patterns:
+
+    cost_features:
+      - "*paid_amount*"
+      - "*allowed_amount*"
+      - "*cost*"
+      - "*high_cost*"
+
+    claims_features:
+      - "*claim*"
+      - "*paid_amount*"
+      - "*allowed_amount*"
+      - "*utilization*"
+      - "*high_cost*"
+
+    utilization_features:
+      - "*claim*"
+      - "*utilization*"
+      - "*paid_amount*"
+      - "*allowed_amount*"
+      - "*high_cost*"
+
+    risk_features:
+      - "*risk_score*"
+      - "*risk_signal*"
+      - "*sdoh*"
+      - "*high_sdoh*"
+
+    sdoh_features:
+      - "*sdoh*"
+      - "*social*"
+      - "*risk_score*"
+      - "*high_sdoh*"
+
+    pharmacy_features:
+      - "*pharmacy*"
+      - "*medication*"
+      - "*drug*"
+      - "*adherence*"
+
+    laboratory_features:
+      - "*lab*"
+      - "*abnormal*"
+      - "*clinical_risk*"
 
 ###############################################################################
 # End of File
