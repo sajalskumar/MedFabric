@@ -9,14 +9,23 @@
 #     Layer 2D - Enterprise Modeling Framework
 #
 # Purpose:
-#     Extracts standardized feature importance outputs from trained champion
-#     model pipelines.
+#     Extracts standardized native feature importance outputs from trained
+#     champion model pipelines.
 #
 # Supports:
 #     - Plain sklearn Pipeline objects
 #     - CalibratedClassifierCV wrapping a fitted Pipeline
 #     - Tree-based feature_importances_
 #     - Linear model coef_
+#
+# Outputs:
+#     - feature_name
+#     - importance
+#     - importance_abs
+#     - importance_rank
+#     - importance_direction
+#     - importance_type
+#     - native_importance_available
 #
 # Run:
 #     python -m src.modeling.evaluation.feature_importance
@@ -25,23 +34,25 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 import pandas as pd
-from sklearn.pipeline import Pipeline
 
 
-EMPTY_COLUMNS = ["feature_name", "importance", "importance_type"]
+EMPTY_COLUMNS = [
+    "feature_name",
+    "importance",
+    "importance_abs",
+    "importance_rank",
+    "importance_direction",
+    "importance_type",
+    "native_importance_available",
+]
 
 
 def unwrap_pipeline(model_object: Any) -> Any:
     """
     Return the underlying fitted pipeline/model from a possible calibrated model.
-
-    Probability calibration can wrap the original sklearn Pipeline inside
-    CalibratedClassifierCV. In that case, the object no longer has named_steps
-    directly, so feature importance extraction must first recover the original
-    fitted estimator.
     """
 
     if hasattr(model_object, "named_steps"):
@@ -114,12 +125,63 @@ def get_model_from_pipeline(pipeline: Any) -> Optional[Any]:
     return pipeline
 
 
+def build_importance_dataframe(
+    feature_names: List[str],
+    values: Any,
+    importance_type: str,
+) -> pd.DataFrame:
+    """
+    Build standardized native feature importance dataframe.
+    """
+
+    length = min(len(feature_names), len(values))
+
+    if length == 0:
+        return pd.DataFrame(columns=EMPTY_COLUMNS)
+
+    output_df = pd.DataFrame(
+        {
+            "feature_name": feature_names[:length],
+            "importance": values[:length],
+            "importance_type": importance_type,
+        }
+    )
+
+    output_df["importance"] = pd.to_numeric(
+        output_df["importance"],
+        errors="coerce",
+    ).fillna(0.0)
+
+    output_df["importance_abs"] = output_df["importance"].abs()
+
+    output_df = output_df.sort_values(
+        by="importance_abs",
+        ascending=False,
+    ).reset_index(drop=True)
+
+    output_df["importance_rank"] = range(1, len(output_df) + 1)
+
+    output_df["importance_direction"] = output_df["importance"].apply(
+        lambda value: (
+            "positive"
+            if value > 0
+            else "negative"
+            if value < 0
+            else "neutral"
+        )
+    )
+
+    output_df["native_importance_available"] = True
+
+    return output_df[EMPTY_COLUMNS]
+
+
 def extract_feature_importance(
     pipeline: Any,
     feature_columns: List[str],
 ) -> pd.DataFrame:
     """
-    Extract feature importance or coefficient values from a trained model.
+    Extract native feature importance or coefficient values from a trained model.
     """
 
     unwrapped_pipeline = unwrap_pipeline(pipeline)
@@ -134,32 +196,22 @@ def extract_feature_importance(
     )
 
     if hasattr(model, "feature_importances_"):
-        values = model.feature_importances_
-        importance_type = "feature_importance"
-
-    elif hasattr(model, "coef_"):
-        values = model.coef_[0]
-        importance_type = "coefficient"
-
-    else:
-        return pd.DataFrame(columns=EMPTY_COLUMNS)
-
-    length = min(len(feature_names), len(values))
-
-    if length == 0:
-        return pd.DataFrame(columns=EMPTY_COLUMNS)
-
-    return (
-        pd.DataFrame(
-            {
-                "feature_name": feature_names[:length],
-                "importance": values[:length],
-                "importance_type": importance_type,
-            }
+        return build_importance_dataframe(
+            feature_names=feature_names,
+            values=model.feature_importances_,
+            importance_type="feature_importance",
         )
-        .sort_values("importance", key=lambda s: s.abs(), ascending=False)
-        .reset_index(drop=True)
-    )
+
+    if hasattr(model, "coef_"):
+        coefficient_values = model.coef_[0]
+
+        return build_importance_dataframe(
+            feature_names=feature_names,
+            values=coefficient_values,
+            importance_type="coefficient",
+        )
+
+    return pd.DataFrame(columns=EMPTY_COLUMNS)
 
 
 def build_feature_importance_output(
@@ -174,7 +226,7 @@ def build_feature_importance_output(
     algorithm_name: str,
 ) -> pd.DataFrame:
     """
-    Build standardized feature importance output.
+    Build standardized feature importance output with enterprise metadata.
     """
 
     importance_df = extract_feature_importance(
@@ -192,7 +244,11 @@ def build_feature_importance_output(
         "algorithm_name",
         "feature_name",
         "importance",
+        "importance_abs",
+        "importance_rank",
+        "importance_direction",
         "importance_type",
+        "native_importance_available",
     ]
 
     if importance_df.empty:
@@ -272,7 +328,7 @@ def main() -> None:
         algorithm_name=training_result.champion_algorithm_name,
     )
 
-    print("Feature importance validation successful.")
+    print("Enhanced native feature importance validation successful.")
     print(output.head())
 
 
