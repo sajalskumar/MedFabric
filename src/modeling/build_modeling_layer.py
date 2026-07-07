@@ -118,6 +118,8 @@ class ModelingRuntime:
     model_registry_records: List[Dict[str, Any]] = field(default_factory=list)
     candidate_leaderboard_frames: List[pd.DataFrame] = field(default_factory=list)
     champion_summary_frames: List[pd.DataFrame] = field(default_factory=list)
+    cross_validation_fold_frames: List[pd.DataFrame] = field(default_factory=list)
+    cross_validation_summary_frames: List[pd.DataFrame] = field(default_factory=list)
     target_leakage_report_frames: List[pd.DataFrame] = field(default_factory=list)
     target_quality_report_frames: List[pd.DataFrame] = field(default_factory=list)
 
@@ -1060,6 +1062,16 @@ def run_models(
             training_result.champion_summary_dataframe
         )
 
+        if getattr(training_result, "cross_validation_fold_metrics_dataframe", None) is not None:
+            runtime.cross_validation_fold_frames.append(
+                training_result.cross_validation_fold_metrics_dataframe
+            )
+
+        if getattr(training_result, "cross_validation_summary_dataframe", None) is not None:
+            runtime.cross_validation_summary_frames.append(
+                training_result.cross_validation_summary_dataframe
+            )
+
         runtime.logger.info(
             "Champion selected | Model: %s | Algorithm: %s | Metrics: %s",
             model_key,
@@ -1316,6 +1328,18 @@ def write_metadata_and_audit_outputs(
         else pd.DataFrame()
     )
 
+    cross_validation_fold_metrics_df = (
+        pd.concat(runtime.cross_validation_fold_frames, ignore_index=True)
+        if runtime.cross_validation_fold_frames
+        else pd.DataFrame()
+    )
+
+    cross_validation_summary_df = (
+        pd.concat(runtime.cross_validation_summary_frames, ignore_index=True)
+        if runtime.cross_validation_summary_frames
+        else pd.DataFrame()
+    )
+
     target_leakage_report_df = (
         pd.concat(runtime.target_leakage_report_frames, ignore_index=True)
         if runtime.target_leakage_report_frames
@@ -1347,6 +1371,8 @@ def write_metadata_and_audit_outputs(
     modeling_output_assets = {
         "candidate_model_leaderboard": candidate_leaderboard_df,
         "champion_model_summary": champion_summary_df,
+        "cross_validation_fold_metrics": cross_validation_fold_metrics_df,
+        "cross_validation_summary": cross_validation_summary_df,
         "target_leakage_report": target_leakage_report_df,
         "target_quality_report": target_quality_report_df,
     }
@@ -1395,8 +1421,6 @@ def write_metadata_and_audit_outputs(
             len(dataframe),
             output_path,
         )
-    
-
 ###############################################################################
 # Main Orchestration
 ###############################################################################

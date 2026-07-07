@@ -209,6 +209,12 @@ paths:
 
     feature_baseline_statistics:
       path: "data/modeling/feature_baseline_statistics"
+    
+    cross_validation_fold_metrics:
+      path: "data/modeling/cross_validation_fold_metrics"
+
+    cross_validation_summary:
+      path: "data/modeling/cross_validation_summary"
 
 
   model_outputs:
@@ -388,11 +394,19 @@ training:
 
   cross_validation:
 
-    enabled: false
+    enabled: true
+
+    strategy: "stratified_kfold"
 
     folds: 5
 
     shuffle: true
+
+    random_state: 42
+
+    save_fold_metrics: true
+
+    save_fold_predictions: true
 
   hyperparameter_search:
 

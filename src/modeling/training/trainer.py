@@ -59,7 +59,10 @@ from src.modeling.training.preprocessing import (
     build_preprocessor,
     prepare_features_for_preprocessing,
 )
-
+from src.modeling.training.cross_validation import (
+    is_cross_validation_enabled,
+    run_cross_validation,
+)
 
 STATUS_SUCCESS = "SUCCESS"
 STATUS_FAILED = "FAILED"
@@ -102,6 +105,8 @@ class TrainingResult:
     training_row_count: int
     full_row_count: int
     sampling_applied: bool
+    cross_validation_fold_metrics_dataframe: pd.DataFrame
+    cross_validation_summary_dataframe: pd.DataFrame
 
 
 ###############################################################################
@@ -811,6 +816,16 @@ def train_model_candidates(
 ) -> TrainingResult:
     """
     Train all enabled candidate algorithms and select champion model.
+
+    This function now supports:
+      - Training-time sampling
+      - Class imbalance handling
+      - Threshold optimization
+      - Optional cross-validation
+      - Candidate metrics output
+      - Champion summary output
+      - Cross-validation fold metrics output
+      - Cross-validation summary output
     """
 
     if logger is not None:
@@ -867,6 +882,36 @@ def train_model_candidates(
     if not algorithm_definitions:
         raise ValueError("No enabled algorithms found for training.")
 
+    if is_cross_validation_enabled(training_config):
+        cv_dataframe = X_training_base.copy()
+        cv_dataframe[target_column] = y_training_base.values
+
+        cross_validation_result = run_cross_validation(
+            dataframe=cv_dataframe,
+            feature_columns=feature_columns,
+            target_column=target_column,
+            model_key=model_key,
+            model_name=model_name,
+            algorithm_definitions=algorithm_definitions,
+            modeling_defaults=modeling_defaults,
+            training_config=training_config,
+            run_id=run_id,
+            event_timestamp_utc=event_timestamp_utc,
+            layer_name=layer_name,
+            domain_name=domain_name,
+            logger=logger,
+        )
+
+        cross_validation_fold_metrics_dataframe = (
+            cross_validation_result.fold_metrics_dataframe
+        )
+        cross_validation_summary_dataframe = (
+            cross_validation_result.summary_dataframe
+        )
+    else:
+        cross_validation_fold_metrics_dataframe = pd.DataFrame()
+        cross_validation_summary_dataframe = pd.DataFrame()
+
     stratify_target = y_training_base if can_stratify(y_training_base) else None
 
     X_train, X_test, y_train, y_test = train_test_split(
@@ -881,7 +926,10 @@ def train_model_candidates(
 
     if logger is not None:
         logger.info(
-            "COMPLETE Training Data Preparation | Model: %s | %.2f sec | Full Rows: %s | Training Rows: %s | Sampling Applied: %s | Imbalance Enabled: %s | Threshold Optimization Enabled: %s",
+            "COMPLETE Training Data Preparation | Model: %s | %.2f sec | "
+            "Full Rows: %s | Training Rows: %s | Sampling Applied: %s | "
+            "Imbalance Enabled: %s | Threshold Optimization Enabled: %s | "
+            "Cross Validation Enabled: %s",
             model_key,
             preparation_seconds,
             len(X_full),
@@ -889,6 +937,7 @@ def train_model_candidates(
             sampling_applied,
             bool(imbalance_config.get("enabled", False)),
             bool(threshold_config.get("enabled", False)),
+            is_cross_validation_enabled(training_config),
         )
 
     candidate_results = train_candidate_algorithms(
@@ -952,6 +1001,8 @@ def train_model_candidates(
         training_row_count=len(X_training_base),
         full_row_count=len(X_full),
         sampling_applied=sampling_applied,
+        cross_validation_fold_metrics_dataframe=cross_validation_fold_metrics_dataframe,
+        cross_validation_summary_dataframe=cross_validation_summary_dataframe,
     )
 
 
