@@ -1,0 +1,70 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/algorithms/adaboost.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Algorithm:
+#   AdaBoost (Adaptive Boosting)
+#
+# Purpose:
+#   Defines the enterprise configuration for the AdaBoost classification
+#   algorithm.
+#
+# Business Context:
+#   AdaBoost is a boosting ensemble algorithm that sequentially trains weak
+#   learners, placing greater emphasis on observations that were previously
+#   misclassified. It is lightweight, interpretable, and can perform well on
+#   moderately sized structured healthcare datasets.
+#
+# Typical Use Cases:
+#     • Readmission Prediction
+#     • Care Gap Closure
+#     • Medication Non-Adherence
+#     • Quality Improvement Analytics
+#
+###############################################################################
+
+adaboost:
+
+  ###########################################################################
+  # General Settings
+  ###########################################################################
+
+  enabled: false
+
+  name: "AdaBoost"
+
+  model_type: "classification"
+
+
+  ###########################################################################
+  # Hyperparameters
+  ###########################################################################
+
+  parameters:
+
+    n_estimators: 100
+
+    learning_rate: 1.0
+
+    random_state: 42
+
+
+  ###########################################################################
+  # Future Extensions
+  #
+  # Reserved for algorithm-specific tuning overrides.
+  ###########################################################################
+
+  hyperparameter_search_overrides: {}
+
+  preprocessing_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

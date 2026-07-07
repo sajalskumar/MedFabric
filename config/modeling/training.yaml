@@ -1,0 +1,188 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/training.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Purpose:
+#   Defines enterprise-wide model training behavior.
+#
+# Scope:
+#   - Training strategy
+#   - Performance sampling
+#   - Cross validation
+#   - Hyperparameter search
+#   - Class imbalance handling
+#   - Threshold optimization
+#   - Probability calibration
+#   - Evaluation metrics
+#
+# Notes:
+#   Algorithm-specific parameters are NOT stored here.
+#   Those reside under:
+#
+#       config/modeling/algorithms/
+#
+###############################################################################
+
+training:
+
+  #########################################################################
+  # Master Switch
+  #########################################################################
+
+  enabled: true
+
+  #########################################################################
+  # Champion Selection Strategy
+  #########################################################################
+
+  strategy: "best_model"
+
+  #########################################################################
+  # Performance / Sampling
+  #########################################################################
+
+  performance:
+
+    enable_training_sample: true
+
+    train_sample_fraction: 0.20
+
+    min_train_rows: 1000
+
+    max_train_rows: 5000
+
+    sampling_strategy: "stratified"
+
+    log_algorithm_timing: true
+
+  #########################################################################
+  # Cross Validation
+  #########################################################################
+
+  cross_validation:
+
+    enabled: true
+
+    strategy: "stratified_kfold"
+
+    folds: 5
+
+    shuffle: true
+
+    random_state: 42
+
+    save_fold_metrics: true
+
+    save_fold_predictions: true
+
+  #########################################################################
+  # Hyperparameter Search
+  #########################################################################
+
+  hyperparameter_search:
+
+    enabled: true
+
+    method: "random_search"
+
+    folds: 3
+
+    iterations: 3
+
+    scoring_metric: "roc_auc"
+
+    random_state: 42
+
+  #########################################################################
+  # Class Imbalance Handling
+  #########################################################################
+
+  imbalance:
+
+    enabled: true
+
+    strategy: "class_weight"
+
+    supported_strategies:
+
+      - "none"
+
+      - "class_weight"
+
+      - "undersample"
+
+      - "oversample"
+
+  #########################################################################
+  # Threshold Optimization
+  #########################################################################
+
+  threshold_optimization:
+
+    enabled: true
+
+    strategy: "optimize"
+
+    fixed_threshold: 0.50
+
+    optimization_metric: "f1"
+
+  #########################################################################
+  # Probability Calibration
+  #########################################################################
+
+  probability_calibration:
+
+    enabled: true
+
+    method: "sigmoid"
+
+    cv: 3
+
+  #########################################################################
+  # Evaluation Metrics
+  #########################################################################
+
+  metrics:
+
+    primary_metric: "roc_auc"
+
+    secondary_metrics:
+
+      - "accuracy"
+
+      - "precision"
+
+      - "recall"
+
+      - "f1"
+
+      - "balanced_accuracy"
+
+###############################################################################
+# Experiment Tracking
+###############################################################################
+
+experiments:
+
+  enabled: false
+
+  save_all_candidate_results: true
+
+  retain_top_n_candidates: 10
+
+  include_algorithm_parameters: true
+
+  include_training_sample_details: true
+
+  include_timing_details: true
+
+###############################################################################
+# End of File
+###############################################################################

@@ -1,0 +1,85 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/algorithms/catboost.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Algorithm:
+#   CatBoost
+#
+# Purpose:
+#   Defines the enterprise configuration for the CatBoost classification
+#   algorithm.
+#
+# Business Context:
+#   CatBoost is a gradient boosting algorithm developed by Yandex that
+#   natively supports categorical variables with minimal preprocessing.
+#   It is well suited for structured healthcare datasets containing a mix
+#   of numeric and categorical features and often achieves state-of-the-art
+#   predictive performance.
+#
+# Typical Use Cases:
+#     • High Cost Prediction
+#     • Readmission Prediction
+#     • ER Utilization Prediction
+#     • Chronic Disease Progression
+#     • Population Health Risk Stratification
+#
+# Notes:
+#   - Disabled by default.
+#   - Requires the optional catboost package.
+#   - Can be enabled independently once trainer support is implemented.
+#
+###############################################################################
+
+catboost:
+
+  ###########################################################################
+  # General Settings
+  ###########################################################################
+
+  enabled: false
+
+  name: "CatBoost"
+
+  model_type: "classification"
+
+  package_required: "catboost"
+
+
+  ###########################################################################
+  # Hyperparameters
+  ###########################################################################
+
+  parameters:
+
+    iterations: 500
+
+    learning_rate: 0.05
+
+    depth: 6
+
+    loss_function: "Logloss"
+
+    eval_metric: "AUC"
+
+    random_seed: 42
+
+    verbose: false
+
+
+  ###########################################################################
+  # Future Extensions
+  ###########################################################################
+
+  hyperparameter_search_overrides: {}
+
+  preprocessing_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

@@ -1,0 +1,56 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/models/avoidable_admission.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Model:
+#   Avoidable Admission Prediction Model
+#
+# Purpose:
+#   Defines the complete configuration for the Avoidable Admission prediction
+#   model.
+#
+# Business Objective:
+#   Identify members at elevated risk for potentially avoidable inpatient
+#   admission so care teams can intervene earlier.
+#
+###############################################################################
+
+avoidable_admission:
+
+  enabled: true
+
+  model_name: "Avoidable Admission Model"
+
+  model_type: "classification"
+
+  target:
+    strategy: "existing_column"
+    output_column: "high_cost_risk_signal"
+
+  score_column: "avoidable_admission_risk_score"
+
+  prediction_column: "avoidable_admission_prediction"
+
+  risk_tier_column: "avoidable_admission_risk_tier"
+
+  positive_label: 1
+
+  training_overrides: {}
+
+  preprocessing_overrides: {}
+
+  explainability_overrides: {}
+
+  scoring_overrides: {}
+
+  drift_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

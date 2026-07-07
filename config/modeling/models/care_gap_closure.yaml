@@ -1,0 +1,63 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/models/care_gap_closure.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Model:
+#   Care Gap Closure Prediction Model
+#
+# Purpose:
+#   Defines the complete configuration for the Care Gap Closure prediction model.
+#
+# Business Objective:
+#   Identify members who may need intervention to close care gaps and improve
+#   quality outcomes.
+#
+###############################################################################
+
+care_gap_closure:
+
+  enabled: true
+
+  model_name: "Care Gap Closure Model"
+
+  model_type: "classification"
+
+  target:
+    strategy: "quantile"
+    output_column: "care_gap_closure_target"
+
+    source:
+      dataset: "laboratory_features"
+      column: "abnormal_lab_rate"
+
+    parameters:
+      quantile: 0.50
+      positive_direction: "less_than_or_equal"
+
+  score_column: "care_gap_closure_score"
+
+  prediction_column: "care_gap_closure_prediction"
+
+  risk_tier_column: "care_gap_closure_tier"
+
+  positive_label: 1
+
+  training_overrides: {}
+
+  preprocessing_overrides: {}
+
+  explainability_overrides: {}
+
+  scoring_overrides: {}
+
+  drift_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

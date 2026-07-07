@@ -1,0 +1,47 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/feature_matrix.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Purpose:
+#   Defines how the Modeling Framework builds the unified member-level feature
+#   matrix from Feature Store outputs.
+#
+# Notes:
+#   - The base dataset establishes the member population.
+#   - Join datasets are merged by member_id.
+#   - Operational Feature Store metadata columns are excluded before modeling.
+#
+###############################################################################
+
+feature_matrix:
+  enabled: true
+
+  base_dataset: "risk_features"
+
+  member_key: "member_id"
+
+  join_datasets:
+    - "demographic_features"
+    - "enrollment_features"
+    - "claims_features"
+    - "cost_features"
+    - "utilization_features"
+    - "laboratory_features"
+    - "pharmacy_features"
+    - "sdoh_features"
+    - "temporal_features"
+
+  exclude_columns:
+    - "feature_store_run_id"
+    - "feature_store_load_timestamp"
+    - "feature_store_record_status"
+
+###############################################################################
+# End of File
+###############################################################################

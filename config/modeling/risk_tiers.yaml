@@ -1,0 +1,71 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/risk_tiers.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Purpose:
+#   Defines standardized probability-to-risk-tier mappings used by all
+#   prediction models during population scoring.
+#
+# Business Rules:
+#   - Risk tiers are assigned from the predicted probability.
+#   - Every model uses the same enterprise thresholds unless a model
+#     explicitly overrides them.
+#   - priority_rank controls display order in reports and dashboards.
+#
+# Notes:
+#   Thresholds are inclusive of min_value and exclusive of max_value,
+#   except for the highest tier.
+#
+###############################################################################
+
+risk_tiers:
+
+  very_high:
+
+    min_value: 0.85
+
+    max_value: 1.00
+
+    label: "Very High"
+
+    priority_rank: 1
+
+  high:
+
+    min_value: 0.70
+
+    max_value: 0.849999
+
+    label: "High"
+
+    priority_rank: 2
+
+  moderate:
+
+    min_value: 0.40
+
+    max_value: 0.699999
+
+    label: "Moderate"
+
+    priority_rank: 3
+
+  low:
+
+    min_value: 0.00
+
+    max_value: 0.399999
+
+    label: "Low"
+
+    priority_rank: 4
+
+###############################################################################
+# End of File
+###############################################################################

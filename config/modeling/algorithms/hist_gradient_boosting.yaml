@@ -1,0 +1,74 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/algorithms/hist_gradient_boosting.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Algorithm:
+#   Histogram Gradient Boosting
+#
+# Purpose:
+#   Defines the enterprise configuration for the Histogram Gradient Boosting
+#   classification algorithm.
+#
+# Business Context:
+#   Histogram Gradient Boosting is a highly optimized implementation of
+#   Gradient Boosting that bins continuous features into histograms before
+#   training. This significantly reduces training time while maintaining
+#   excellent predictive performance, making it well suited for large
+#   healthcare datasets.
+#
+# Typical Use Cases:
+#     • High Cost Prediction
+#     • Readmission Prediction
+#     • ER Utilization Prediction
+#     • Chronic Disease Progression
+#     • Population Health Risk Stratification
+#
+###############################################################################
+
+hist_gradient_boosting:
+
+  ###########################################################################
+  # General Settings
+  ###########################################################################
+
+  enabled: false
+
+  name: "Histogram Gradient Boosting"
+
+  model_type: "classification"
+
+
+  ###########################################################################
+  # Hyperparameters
+  ###########################################################################
+
+  parameters:
+
+    max_iter: 100
+
+    learning_rate: 0.10
+
+    max_leaf_nodes: 31
+
+    random_state: 42
+
+
+  ###########################################################################
+  # Future Extensions
+  #
+  # Reserved for algorithm-specific tuning overrides.
+  ###########################################################################
+
+  hyperparameter_search_overrides: {}
+
+  preprocessing_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

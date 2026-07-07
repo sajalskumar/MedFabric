@@ -1,0 +1,213 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/leakage_detection.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Purpose:
+#   Defines enterprise rules for automatic target leakage detection.
+#
+# Description:
+#   Before every model is trained, the Modeling Framework evaluates all
+#   candidate features and automatically removes columns that could leak
+#   future information into the model.
+#
+# Leakage protection is performed using multiple strategies:
+#
+#   • Target column removal
+#   • Explicit column exclusion
+#   • Pattern-based exclusion
+#   • Source-domain exclusion
+#   • Correlation-based leakage detection
+#
+# These rules are applied independently for every prediction model.
+#
+###############################################################################
+
+leakage_detection:
+
+  #########################################################################
+  # Global Controls
+  #########################################################################
+
+  enabled: true
+
+  exclude_target_source_dataset: true
+
+  correlation_check_enabled: true
+
+  correlation_threshold: 0.995
+
+
+  #########################################################################
+  # Generic Pattern Matching
+  #
+  # Any feature matching these wildcard patterns is automatically removed.
+  #########################################################################
+
+  exclude_patterns:
+
+    - "*target*"
+
+    - "*signal*"
+
+    - "*high_cost_member_flag*"
+
+    - "*paid_amount*"
+
+    - "*allowed_amount*"
+
+
+  #########################################################################
+  # Explicit Column Exclusions
+  #
+  # These columns are never allowed into model training.
+  #########################################################################
+
+  additional_columns:
+
+    - "high_cost_risk_signal"
+
+    - "high_cost_member_flag"
+
+    - "clinical_risk_signal"
+
+    - "sdoh_risk_signal"
+
+    - "total_paid_amount"
+
+    - "claims_features__total_paid_amount"
+
+    - "cost_features__total_paid_amount"
+
+    - "total_allowed_amount"
+
+    - "cost_features__total_allowed_amount"
+
+    - "total_pharmacy_paid_amount"
+
+    - "pharmacy_features__total_pharmacy_paid_amount"
+
+
+  #########################################################################
+  # Dataset-Specific Leakage Rules
+  #
+  # Each source dataset defines patterns that are considered future
+  # information for models whose targets originate from that domain.
+  #########################################################################
+
+  source_domain_proxy_patterns:
+
+    #######################################################################
+    # Cost Features
+    #######################################################################
+
+    cost_features:
+
+      - "*paid_amount*"
+
+      - "*allowed_amount*"
+
+      - "*cost*"
+
+      - "*high_cost*"
+
+
+    #######################################################################
+    # Claims Features
+    #######################################################################
+
+    claims_features:
+
+      - "*claim*"
+
+      - "*paid_amount*"
+
+      - "*allowed_amount*"
+
+      - "*utilization*"
+
+      - "*high_cost*"
+
+
+    #######################################################################
+    # Utilization Features
+    #######################################################################
+
+    utilization_features:
+
+      - "*claim*"
+
+      - "*utilization*"
+
+      - "*paid_amount*"
+
+      - "*allowed_amount*"
+
+      - "*high_cost*"
+
+
+    #######################################################################
+    # Risk Features
+    #######################################################################
+
+    risk_features:
+
+      - "*risk_score*"
+
+      - "*risk_signal*"
+
+      - "*sdoh*"
+
+      - "*high_sdoh*"
+
+
+    #######################################################################
+    # SDOH Features
+    #######################################################################
+
+    sdoh_features:
+
+      - "*sdoh*"
+
+      - "*social*"
+
+      - "*risk_score*"
+
+      - "*high_sdoh*"
+
+
+    #######################################################################
+    # Pharmacy Features
+    #######################################################################
+
+    pharmacy_features:
+
+      - "*pharmacy*"
+
+      - "*medication*"
+
+      - "*drug*"
+
+      - "*adherence*"
+
+
+    #######################################################################
+    # Laboratory Features
+    #######################################################################
+
+    laboratory_features:
+
+      - "*lab*"
+
+      - "*abnormal*"
+
+      - "*clinical_risk*"
+
+###############################################################################
+# End of File
+###############################################################################

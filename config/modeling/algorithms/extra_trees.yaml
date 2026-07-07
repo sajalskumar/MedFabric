@@ -1,0 +1,76 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/algorithms/extra_trees.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Algorithm:
+#   Extra Trees (Extremely Randomized Trees)
+#
+# Purpose:
+#   Defines the enterprise configuration for the Extra Trees classification
+#   algorithm.
+#
+# Business Context:
+#   Extra Trees is an ensemble tree algorithm similar to Random Forest but
+#   introduces additional randomness during split selection. It is often
+#   faster to train and can reduce variance while maintaining excellent
+#   predictive performance on structured healthcare datasets.
+#
+# Typical Use Cases:
+#     • Population Health Risk Prediction
+#     • High Cost Prediction
+#     • Readmission Prediction
+#     • Chronic Disease Progression
+#
+###############################################################################
+
+extra_trees:
+
+  ###########################################################################
+  # General Settings
+  ###########################################################################
+
+  enabled: false
+
+  name: "Extra Trees"
+
+  model_type: "classification"
+
+
+  ###########################################################################
+  # Hyperparameters
+  ###########################################################################
+
+  parameters:
+
+    n_estimators: 200
+
+    max_depth: null
+
+    min_samples_split: 2
+
+    min_samples_leaf: 1
+
+    class_weight: null
+
+    n_jobs: -1
+
+    random_state: 42
+
+
+  ###########################################################################
+  # Future Extensions
+  ###########################################################################
+
+  hyperparameter_search_overrides: {}
+
+  preprocessing_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

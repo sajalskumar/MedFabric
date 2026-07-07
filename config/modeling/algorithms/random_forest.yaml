@@ -1,0 +1,79 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/algorithms/random_forest.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Algorithm:
+#   Random Forest
+#
+# Purpose:
+#   Defines the enterprise configuration for the Random Forest classification
+#   algorithm.
+#
+# Business Context:
+#   Random Forest is a robust ensemble learning algorithm that combines many
+#   decision trees to improve predictive performance while reducing overfitting.
+#   It performs well on mixed healthcare datasets containing numeric and
+#   categorical features and provides native feature importance estimates.
+#
+# Typical Use Cases:
+#     • High Cost Prediction
+#     • Readmission Prediction
+#     • ER Utilization Prediction
+#     • Chronic Disease Progression
+#     • Population Health Risk Stratification
+#
+###############################################################################
+
+random_forest:
+
+  ###########################################################################
+  # General Settings
+  ###########################################################################
+
+  enabled: true
+
+  name: "Random Forest"
+
+  model_type: "classification"
+
+
+  ###########################################################################
+  # Hyperparameters
+  ###########################################################################
+
+  parameters:
+
+    n_estimators: 50
+
+    max_depth: 8
+
+    min_samples_split: 10
+
+    min_samples_leaf: 5
+
+    class_weight: null
+
+    n_jobs: -1
+
+    random_state: 42
+
+
+  ###########################################################################
+  # Future Extensions
+  #
+  # Reserved for algorithm-specific tuning overrides.
+  ###########################################################################
+
+  hyperparameter_search_overrides: {}
+
+  preprocessing_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

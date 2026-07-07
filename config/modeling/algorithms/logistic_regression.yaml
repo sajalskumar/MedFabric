@@ -1,0 +1,76 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/algorithms/logistic_regression.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Algorithm:
+#   Logistic Regression
+#
+# Purpose:
+#   Defines the enterprise configuration for the Logistic Regression
+#   classification algorithm.
+#
+# Business Context:
+#   Logistic Regression serves as the primary interpretable baseline model.
+#   It is computationally efficient, produces calibrated probabilities,
+#   and provides coefficients that are easy to explain to business users,
+#   clinicians, and auditors.
+#
+# Typical Use Cases:
+#     • High Cost Prediction
+#     • Readmission Prediction
+#     • Care Gap Closure
+#     • Population Health Risk Stratification
+#
+###############################################################################
+
+logistic_regression:
+
+  ###########################################################################
+  # General Settings
+  ###########################################################################
+
+  enabled: true
+
+  name: "Logistic Regression"
+
+  model_type: "classification"
+
+
+  ###########################################################################
+  # Hyperparameters
+  ###########################################################################
+
+  parameters:
+
+    penalty: "l2"
+
+    C: 1.0
+
+    solver: "lbfgs"
+
+    max_iter: 500
+
+    class_weight: null
+
+    random_state: 42
+
+
+  ###########################################################################
+  # Future Extensions
+  #
+  # Reserved for model-specific overrides during future releases.
+  ###########################################################################
+
+  hyperparameter_search_overrides: {}
+
+  preprocessing_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

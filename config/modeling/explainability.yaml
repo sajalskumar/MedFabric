@@ -1,0 +1,84 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/explainability.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Purpose:
+#   Defines all explainability configuration used by the Modeling Framework.
+#
+# Scope:
+#   - Native feature importance
+#   - Permutation importance
+#   - SHAP explainability
+#   - Partial dependence (future)
+#
+# Notes:
+#   This configuration is consumed after champion model selection and controls
+#   the generation of explainability artifacts written to data/modeling.
+#
+###############################################################################
+
+explainability:
+
+  ###########################################################################
+  # Master Switch
+  ###########################################################################
+
+  enabled: true
+
+  ###########################################################################
+  # Native Model Feature Importance
+  ###########################################################################
+
+  feature_importance:
+
+    enabled: true
+
+    method: "model_native"
+
+  ###########################################################################
+  # Permutation Importance
+  ###########################################################################
+
+  permutation_importance:
+
+    enabled: true
+
+    scoring_metric: "roc_auc"
+
+    n_repeats: 5
+
+    sample_row_count: 300
+
+    random_state: 42
+
+  ###########################################################################
+  # SHAP Explainability
+  ###########################################################################
+
+  shap:
+
+    enabled: true
+
+    sample_row_count: 100
+
+    background_row_count: 25
+
+    random_state: 42
+
+  ###########################################################################
+  # Partial Dependence (Future Enhancement)
+  ###########################################################################
+
+  partial_dependence:
+
+    enabled: false
+
+###############################################################################
+# End of File
+###############################################################################

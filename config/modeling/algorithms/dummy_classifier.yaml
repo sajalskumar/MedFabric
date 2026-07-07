@@ -1,0 +1,32 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/algorithms/dummy_classifier.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Algorithm:
+#   Dummy Classifier
+#
+# Purpose:
+#   Defines the baseline classifier used as a simple benchmark.
+#
+###############################################################################
+
+dummy_classifier:
+
+  enabled: true
+
+  name: "Dummy Classifier"
+
+  model_type: "classification"
+
+  parameters:
+    strategy: "most_frequent"
+
+###############################################################################
+# End of File
+###############################################################################

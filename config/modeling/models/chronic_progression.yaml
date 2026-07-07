@@ -1,0 +1,109 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/models/chronic_progression.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Model:
+#   Chronic Disease Progression Prediction Model
+#
+# Purpose:
+#   Defines the complete configuration for the Chronic Disease Progression
+#   prediction model.
+#
+# Business Objective:
+#   Identify members at increased risk of progression of one or more chronic
+#   conditions so that proactive interventions can slow disease progression,
+#   improve outcomes, and reduce downstream healthcare costs.
+#
+# This model supports:
+#
+#     • Population Health Management
+#     • Chronic Disease Management
+#     • Care Management
+#     • Risk Stratification
+#     • Preventive Intervention Programs
+#
+# Target Strategy:
+#   Members whose configured chronic progression indicator falls within the
+#   upper quantile are labeled as positive examples.
+#
+# NOTE:
+#   The current implementation uses the SDOH risk score as a temporary proxy.
+#   During the Modeling Refactor this should be replaced with a true chronic
+#   progression target derived from longitudinal clinical data.
+#
+###############################################################################
+
+chronic_progression:
+
+  ###########################################################################
+  # Model Controls
+  ###########################################################################
+
+  enabled: true
+
+  model_name: "Chronic Progression Model"
+
+  model_type: "classification"
+
+
+  ###########################################################################
+  # Target Definition
+  ###########################################################################
+
+  target:
+
+    strategy: "quantile"
+
+    output_column: "chronic_progression_target"
+
+    source:
+
+      dataset: "risk_features"
+
+      column: "latest_sdoh_risk_score"
+
+    parameters:
+
+      quantile: 0.85
+
+      positive_direction: "greater_than_or_equal"
+
+
+  ###########################################################################
+  # Scoring Output Columns
+  ###########################################################################
+
+  score_column: "chronic_progression_risk_score"
+
+  prediction_column: "chronic_progression_prediction"
+
+  risk_tier_column: "chronic_progression_risk_tier"
+
+  positive_label: 1
+
+
+  ###########################################################################
+  # Optional Model-Specific Overrides
+  #
+  # These inherit the global framework defaults unless explicitly populated.
+  ###########################################################################
+
+  training_overrides: {}
+
+  preprocessing_overrides: {}
+
+  explainability_overrides: {}
+
+  scoring_overrides: {}
+
+  drift_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

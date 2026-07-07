@@ -1,0 +1,81 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/algorithms/lightgbm.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Algorithm:
+#   LightGBM
+#
+# Purpose:
+#   Defines the enterprise configuration for the LightGBM classification
+#   algorithm.
+#
+# Business Context:
+#   LightGBM is Microsoft's gradient boosting framework optimized for speed,
+#   memory efficiency, and high predictive performance on large structured
+#   datasets. It is widely used in healthcare, finance, and machine learning
+#   competitions.
+#
+# Notes:
+#   - Disabled by default.
+#   - Requires the optional lightgbm package.
+#   - Trainer support can be enabled independently.
+#
+###############################################################################
+
+lightgbm:
+
+  ###########################################################################
+  # General Settings
+  ###########################################################################
+
+  enabled: false
+
+  name: "LightGBM"
+
+  model_type: "classification"
+
+  package_required: "lightgbm"
+
+
+  ###########################################################################
+  # Hyperparameters
+  ###########################################################################
+
+  parameters:
+
+    n_estimators: 200
+
+    learning_rate: 0.05
+
+    num_leaves: 31
+
+    max_depth: -1
+
+    subsample: 0.80
+
+    colsample_bytree: 0.80
+
+    objective: "binary"
+
+    random_state: 42
+
+    n_jobs: -1
+
+
+  ###########################################################################
+  # Future Extensions
+  ###########################################################################
+
+  hyperparameter_search_overrides: {}
+
+  preprocessing_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

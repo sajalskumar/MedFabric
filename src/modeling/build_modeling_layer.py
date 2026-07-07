@@ -34,18 +34,13 @@
 
 from __future__ import annotations
 
-import logging
 import os
-import pickle
 import sys
 import traceback
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-import yaml
 
 import time
 
@@ -91,279 +86,28 @@ from src.modeling.evaluation.build_model_monitoring_summary import (
 )
 
 from src.modeling.evaluation.build_shap_explainability import build_shap_explainability
+
+from src.modeling.common.audit import add_audit_record, add_dataset_record, add_validation_record
+from src.modeling.common.configuration import load_optional_yaml_config, load_runtime_modeling_config, validate_config
+from src.modeling.common.io_utils import read_dataset, save_pickle_object, write_dataset
+from src.modeling.common.logging_utils import configure_logging
+from src.modeling.common.output_paths import get_model_output_config, get_output_path, normalize_path, output_path_with_format
+from src.modeling.common.runtime import BuildResult, ModelingRuntime
+from src.modeling.common.timing import add_step_timing_record, utc_now
+from src.modeling.common.constants import (
+    DEFAULT_CAPABILITY_NAME,
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_DOMAIN_NAME,
+    DEFAULT_OUTPUT_FORMAT,
+    DEFAULT_PIPELINE_CONFIG_PATH,
+    STATUS_FAILED,
+    STATUS_SKIPPED,
+    STATUS_SUCCESS,
+    STATUS_WARNING,
+)
 ###############################################################################
-# Constants
+# Runtime Initialization
 ###############################################################################
-
-DEFAULT_CONFIG_PATH = "config/modeling/modeling.yaml"
-DEFAULT_PIPELINE_CONFIG_PATH = "config/pipeline.yaml"
-DEFAULT_CAPABILITY_NAME = "Enterprise Modeling Framework"
-DEFAULT_LAYER_NAME = "Layer 2D - Enterprise Modeling Framework"
-DEFAULT_DOMAIN_NAME = "Modeling"
-DEFAULT_OUTPUT_FORMAT = "parquet"
-
-SUPPORTED_OUTPUT_FORMATS = {"parquet", "csv", "json"}
-
-STATUS_SUCCESS = "SUCCESS"
-STATUS_FAILED = "FAILED"
-STATUS_WARNING = "WARNING"
-STATUS_SKIPPED = "SKIPPED"
-
-
-###############################################################################
-# Runtime Objects
-###############################################################################
-
-@dataclass
-class ModelingRuntime:
-    """
-    Runtime context for one Modeling layer execution.
-    """
-
-    run_id: str
-    project_root: Path
-    config_path: Path
-    pipeline_config_path: Path
-    start_time_utc: datetime
-    event_timestamp_utc: str
-    config: Dict[str, Any]
-    pipeline_config: Dict[str, Any]
-    parallelism_config: Dict[str, Any]
-    logger: logging.Logger
-    capability_name: str
-    layer_name: str
-    domain_name: str
-    audit_records: List[Dict[str, Any]] = field(default_factory=list)
-    validation_records: List[Dict[str, Any]] = field(default_factory=list)
-    dataset_records: List[Dict[str, Any]] = field(default_factory=list)
-    model_registry_records: List[Dict[str, Any]] = field(default_factory=list)
-    candidate_leaderboard_frames: List[pd.DataFrame] = field(default_factory=list)
-    champion_summary_frames: List[pd.DataFrame] = field(default_factory=list)
-    cross_validation_fold_frames: List[pd.DataFrame] = field(default_factory=list)
-    cross_validation_summary_frames: List[pd.DataFrame] = field(default_factory=list)
-    target_leakage_report_frames: List[pd.DataFrame] = field(default_factory=list)
-    target_quality_report_frames: List[pd.DataFrame] = field(default_factory=list)
-    hyperparameter_search_frames: List[pd.DataFrame] = field(default_factory=list)
-    model_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
-    model_executive_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
-    model_drift_baseline_frames: List[pd.DataFrame] = field(default_factory=list) 
-    step_timing_records: List[Dict[str, Any]] = field(default_factory=list)   
-    confusion_matrix_frames: List[pd.DataFrame] = field(default_factory=list)
-    lift_gain_frames: List[pd.DataFrame] = field(default_factory=list)
-    permutation_importance_frames: List[pd.DataFrame] = field(default_factory=list)
-    model_monitoring_summary_frames: List[pd.DataFrame] = field(default_factory=list)
-    scoring_results: List[Any] = field(default_factory=list)
-    shap_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
-
-
-@dataclass
-class BuildResult:
-    """
-    Standard result returned by the Modeling builder.
-    """
-
-    name: str
-    status: str
-    message: str
-    row_count: int = 0
-    column_count: int = 0
-
-
-###############################################################################
-# General Utilities
-###############################################################################
-
-def utc_now() -> datetime:
-    """
-    Return timezone-aware UTC timestamp.
-    """
-
-    return datetime.now(timezone.utc)
-
-
-def normalize_path(project_root: Path, raw_path: str | Path) -> Path:
-    """
-    Resolve configured path relative to project root.
-    """
-
-    path = Path(raw_path)
-    return path if path.is_absolute() else project_root / path
-
-
-def ensure_directory(path: Path) -> None:
-    """
-    Create directory when missing.
-    """
-
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def output_path_with_format(path: Path, output_format: str) -> Path:
-    """
-    Ensure output path has the configured file suffix.
-    """
-
-    suffix = f".{output_format}"
-    return path.with_suffix(suffix) if path.suffix else Path(str(path) + suffix)
-
-
-###############################################################################
-# Logging
-###############################################################################
-
-def configure_logging(
-    project_root: Path,
-    config: Dict[str, Any],
-    run_id: str,
-) -> logging.Logger:
-    """
-    Configure Modeling Framework logging.
-    """
-
-    logging_config = config.get("logging", {})
-
-    log_level_name = logging_config.get("level", "INFO")
-    log_level = getattr(logging, str(log_level_name).upper(), logging.INFO)
-
-    log_dir = normalize_path(
-        project_root,
-        logging_config.get("module_log_dir", "logs/modules"),
-    )
-    ensure_directory(log_dir)
-
-    log_file_path = log_dir / logging_config.get(
-        "log_file_name",
-        "modeling_layer.log",
-    )
-
-    logger = logging.getLogger("medfabric.modeling")
-    logger.setLevel(log_level)
-    logger.handlers.clear()
-    logger.propagate = False
-
-    formatter = logging.Formatter(
-        fmt="[%(asctime)s] [RUN_ID=%(run_id)s] [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    class RunIdFilter(logging.Filter):
-        """
-        Inject global run_id into every log record.
-        """
-
-        def filter(self, record: logging.LogRecord) -> bool:
-            record.run_id = run_id
-            return True
-
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(log_level)
-    stream_handler.setFormatter(formatter)
-    stream_handler.addFilter(RunIdFilter())
-
-    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(RunIdFilter())
-
-    logger.addHandler(stream_handler)
-    logger.addHandler(file_handler)
-
-    logger.info("=" * 80)
-    logger.info("MedFabric Modeling Framework started")
-    logger.info("=" * 80)
-    logger.info("Global Run ID: %s", run_id)
-    logger.info("Log file: %s", log_file_path)
-
-    return logger
-
-
-###############################################################################
-# Configuration
-###############################################################################
-
-def load_yaml_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load YAML configuration.
-    """
-
-    if not config_path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
-
-    with config_path.open("r", encoding="utf-8") as file:
-        config = yaml.safe_load(file)
-
-    if not isinstance(config, dict):
-        raise ValueError(f"Configuration must be a YAML mapping: {config_path}")
-
-    return config
-
-
-def load_optional_yaml_config(config_path: Path) -> Dict[str, Any]:
-    """
-    Load optional YAML configuration.
-
-    Used for config/pipeline.yaml. If the file is missing, Modeling continues
-    with sequential fallback parallelism settings.
-    """
-
-    if not config_path.exists():
-        return {}
-
-    return load_yaml_config(config_path)
-
-
-def validate_config(config: Dict[str, Any]) -> None:
-    """
-    Validate required Modeling configuration sections.
-    """
-
-    required_sections = [
-        "modeling",
-        "logging",
-        "paths",
-        "join_keys",
-        "feature_matrix",
-        "modeling_defaults",
-        "training",
-        "models",
-        "risk_tiers",
-        "validation",
-        "metadata",
-        "audit",
-    ]
-
-    missing = [section for section in required_sections if section not in config]
-
-    if missing:
-        raise ValueError(f"Missing required Modeling config sections: {missing}")
-
-    output_format = config.get("modeling", {}).get(
-        "output_format",
-        DEFAULT_OUTPUT_FORMAT,
-    )
-
-    if output_format not in SUPPORTED_OUTPUT_FORMATS:
-        raise ValueError(
-            f"Unsupported output_format '{output_format}'. "
-            f"Supported: {sorted(SUPPORTED_OUTPUT_FORMATS)}"
-        )
-
-    paths = config.get("paths", {})
-
-    required_path_sections = [
-        "inputs",
-        "outputs",
-        "model_outputs",
-        "metadata_outputs",
-        "audit_outputs",
-    ]
-
-    missing_path_sections = [
-        section for section in required_path_sections if section not in paths
-    ]
-
-    if missing_path_sections:
-        raise ValueError(f"Missing required paths sections: {missing_path_sections}")
 
 
 def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRuntime:
@@ -381,7 +125,7 @@ def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRu
 
     run_id = pipeline_context.run_id
 
-    config = load_yaml_config(config_path)
+    config = load_runtime_modeling_config(config_path)
     pipeline_config = load_optional_yaml_config(pipeline_config_path)
 
     validate_config(config)
@@ -440,126 +184,6 @@ def initialize_runtime(config_path_raw: str = DEFAULT_CONFIG_PATH) -> ModelingRu
     return runtime
 
 
-###############################################################################
-# Audit / Validation / Dataset Records
-###############################################################################
-
-def add_audit_record(
-    runtime: ModelingRuntime,
-    step_name: str,
-    status: str,
-    message: str,
-    row_count: Optional[int] = None,
-    output_path: Optional[str] = None,
-) -> None:
-    """
-    Add a Modeling audit record.
-    """
-
-    runtime.audit_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "capability_name": runtime.capability_name,
-            "domain_name": runtime.domain_name,
-            "step_name": step_name,
-            "status": status,
-            "message": message,
-            "row_count": row_count,
-            "output_path": output_path,
-            "event_timestamp_utc": runtime.event_timestamp_utc,
-        }
-    )
-
-
-def add_validation_record(
-    runtime: ModelingRuntime,
-    dataset_name: str,
-    rule_name: str,
-    status: str,
-    message: str,
-    failed_count: int = 0,
-) -> None:
-    """
-    Add a Modeling validation record.
-    """
-
-    runtime.validation_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "capability_name": runtime.capability_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "rule_name": rule_name,
-            "status": status,
-            "message": message,
-            "failed_count": failed_count,
-            "event_timestamp_utc": runtime.event_timestamp_utc,
-        }
-    )
-
-
-def add_dataset_record(
-    runtime: ModelingRuntime,
-    dataset_name: str,
-    dataset_type: str,
-    status: str,
-    path: Optional[str],
-    row_count: int,
-    column_count: int,
-    message: str,
-) -> None:
-    """
-    Add a Modeling dataset inventory record.
-    """
-
-    runtime.dataset_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "capability_name": runtime.capability_name,
-            "domain_name": runtime.domain_name,
-            "dataset_name": dataset_name,
-            "dataset_type": dataset_type,
-            "status": status,
-            "path": path,
-            "row_count": row_count,
-            "column_count": column_count,
-            "message": message,
-            "event_timestamp_utc": runtime.event_timestamp_utc,
-        }
-    )
-
-def add_step_timing_record(
-    runtime: ModelingRuntime,
-    step_name: str,
-    model_key: Optional[str],
-    duration_seconds: float,
-    status: str = STATUS_SUCCESS,
-    message: Optional[str] = None,
-) -> None:
-    """
-    Add a Modeling step timing record.
-    """
-
-    runtime.step_timing_records.append(
-        {
-            "run_id": runtime.run_id,
-            "layer_name": runtime.layer_name,
-            "capability_name": runtime.capability_name,
-            "domain_name": runtime.domain_name,
-            "model_key": model_key,
-            "step_name": step_name,
-            "duration_seconds": float(duration_seconds),
-            "status": status,
-            "message": message,
-            "event_timestamp_utc": runtime.event_timestamp_utc,
-        }
-    )
-###############################################################################
-# IO Helpers
-###############################################################################
 
 def get_output_format(runtime: ModelingRuntime) -> str:
     """
@@ -572,120 +196,9 @@ def get_output_format(runtime: ModelingRuntime) -> str:
     )
 
 
-def read_dataset(path: Path, file_format: str) -> pd.DataFrame:
-    """
-    Read dataset from disk.
-    """
-
-    if not path.exists():
-        raise FileNotFoundError(f"Input dataset not found: {path}")
-
-    if file_format == "parquet":
-        return pd.read_parquet(path)
-
-    if file_format == "csv":
-        return pd.read_csv(path)
-
-    if file_format == "json":
-        return pd.read_json(path)
-
-    raise ValueError(f"Unsupported input file format: {file_format}")
 
 
-def write_dataset(dataframe: pd.DataFrame, path: Path, file_format: str) -> None:
-    """
-    Write dataframe to disk.
-    """
 
-    ensure_directory(path.parent)
-
-    if file_format == "parquet":
-        dataframe.to_parquet(path, index=False)
-        return
-
-    if file_format == "csv":
-        dataframe.to_csv(path, index=False)
-        return
-
-    if file_format == "json":
-        dataframe.to_json(path, orient="records", indent=2)
-        return
-
-    raise ValueError(f"Unsupported output file format: {file_format}")
-
-
-def save_pickle_object(obj: Any, path: Path) -> None:
-    """
-    Save Python object as pickle.
-    """
-
-    ensure_directory(path.parent)
-
-    with path.open("wb") as file:
-        pickle.dump(obj, file)
-
-
-def get_output_path(
-    runtime: ModelingRuntime,
-    output_group: str,
-    output_name: str,
-) -> Path:
-    """
-    Resolve named output path from modeling.yaml.
-    """
-
-    output_config = runtime.config.get("paths", {}).get(output_group, {})
-    output_entry = output_config.get(output_name)
-
-    if isinstance(output_entry, dict):
-        raw_path = output_entry.get("path")
-    else:
-        raw_path = output_entry
-
-    if not raw_path:
-        if output_group == "outputs":
-            raw_path = f"data/modeling/{output_name}"
-        elif output_group=="metadata_outputs":
-            raw_path = f"data/metadata/{output_name}"
-        elif output_group=="audit_outputs":
-            raw_path = f"data/audit/{output_name}"  
-        else:
-            raw_path = f"data/{output_group}/{output_name}"
-
-    return normalize_path(runtime.project_root, raw_path)
-
-
-def get_model_output_config(
-    runtime: ModelingRuntime,
-    model_key: str,
-) -> Dict[str, Any]:
-    """
-    Return artifact/scoring output paths for a model.
-    """
-
-    output_config = (
-        runtime.config
-        .get("paths", {})
-        .get("model_outputs", {})
-        .get(model_key, {})
-    )
-
-    if not output_config:
-        raise ValueError(f"Missing model output config for model: {model_key}")
-
-    required_keys = [
-        "model_path",
-        "metrics_path",
-        "feature_importance_path",
-        "scoring_path",
-    ]
-
-    missing = [key for key in required_keys if key not in output_config]
-
-    if missing:
-        raise ValueError(f"Model output config for {model_key} missing keys: {missing}")
-
-    return output_config
 
 
 def get_selection_metric(

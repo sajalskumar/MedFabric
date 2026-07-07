@@ -1,0 +1,59 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/scoring.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Purpose:
+#   Defines population scoring behavior for champion models.
+#
+# Scope:
+#   - Full population scoring
+#   - Probability generation
+#   - Binary prediction generation
+#   - Risk tier assignment
+#   - Model metadata output
+#
+###############################################################################
+
+scoring:
+
+  ###########################################################################
+  # Master Switch
+  ###########################################################################
+
+  enabled: true
+
+  ###########################################################################
+  # Population Scoring
+  ###########################################################################
+
+  score_full_population: true
+
+  ###########################################################################
+  # Output Columns
+  ###########################################################################
+
+  include_probability: true
+
+  include_prediction: true
+
+  include_risk_tier: true
+
+  ###########################################################################
+  # Metadata
+  ###########################################################################
+
+  include_model_metadata: true
+
+  include_run_id: true
+
+  include_scoring_timestamp: true
+
+###############################################################################
+# End of File
+###############################################################################

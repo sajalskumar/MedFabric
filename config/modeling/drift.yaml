@@ -1,0 +1,39 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/drift.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Purpose:
+#   Defines model drift monitoring configuration.
+#
+# Current Scope:
+#   - Build baseline feature statistics from the current champion training run.
+#
+# Future Scope:
+#   - Population Stability Index (PSI)
+#   - Kolmogorov-Smirnov (KS) drift checks
+#   - Prediction score drift
+#   - Model performance drift
+#
+###############################################################################
+
+drift:
+
+  enabled: true
+
+  build_baseline: true
+
+  baseline_strategy: "latest_champion_training_run"
+
+  psi_threshold: 0.20
+
+  ks_threshold: 0.10
+
+###############################################################################
+# End of File
+###############################################################################

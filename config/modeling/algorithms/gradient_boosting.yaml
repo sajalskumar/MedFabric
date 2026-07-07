@@ -1,0 +1,46 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/algorithms/gradient_boosting.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Algorithm:
+#   Gradient Boosting
+#
+# Purpose:
+#   Defines the enterprise configuration for the Gradient Boosting
+#   classification algorithm.
+#
+# Business Context:
+#   Gradient Boosting builds an ensemble of weak learners sequentially, where
+#   each new tree attempts to correct errors made by prior trees. It can capture
+#   nonlinear relationships and feature interactions commonly found in healthcare
+#   risk modeling datasets.
+#
+###############################################################################
+
+gradient_boosting:
+
+  enabled: false
+
+  name: "Gradient Boosting"
+
+  model_type: "classification"
+
+  parameters:
+    n_estimators: 100
+    learning_rate: 0.1
+    max_depth: 3
+    random_state: 42
+
+  hyperparameter_search_overrides: {}
+
+  preprocessing_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################

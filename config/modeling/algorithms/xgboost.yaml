@@ -1,0 +1,51 @@
+###############################################################################
+# MedFabric
+# Enterprise Healthcare Data & AI Platform
+#
+# File:
+#   config/modeling/algorithms/xgboost.yaml
+#
+# Capability:
+#   Enterprise Modeling Framework
+#
+# Algorithm:
+#   XGBoost
+#
+# Purpose:
+#   Defines placeholder enterprise configuration for the XGBoost classification
+#   algorithm.
+#
+# Notes:
+#   - Disabled by default.
+#   - Requires the optional xgboost package.
+#   - Enable only after trainer.py supports this algorithm.
+#
+###############################################################################
+
+xgboost:
+
+  enabled: false
+
+  name: "XGBoost"
+
+  model_type: "classification"
+
+  package_required: "xgboost"
+
+  parameters:
+    n_estimators: 200
+    learning_rate: 0.05
+    max_depth: 4
+    subsample: 0.80
+    colsample_bytree: 0.80
+    eval_metric: "logloss"
+    random_state: 42
+    n_jobs: -1
+
+  hyperparameter_search_overrides: {}
+
+  preprocessing_overrides: {}
+
+###############################################################################
+# End of File
+###############################################################################
