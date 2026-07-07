@@ -71,6 +71,10 @@ from src.modeling.evaluation.build_target_quality_report import (
     build_target_quality_report,
 )
 
+from src.modeling.evaluation.build_model_explainability_summary import (
+    build_model_explainability_summary,
+    build_model_explainability_executive_summary,
+)
 ###############################################################################
 # Constants
 ###############################################################################
@@ -122,6 +126,9 @@ class ModelingRuntime:
     cross_validation_summary_frames: List[pd.DataFrame] = field(default_factory=list)
     target_leakage_report_frames: List[pd.DataFrame] = field(default_factory=list)
     target_quality_report_frames: List[pd.DataFrame] = field(default_factory=list)
+    hyperparameter_search_frames: List[pd.DataFrame] = field(default_factory=list)
+    model_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
+    model_executive_explainability_frames: List[pd.DataFrame] = field(default_factory=list)    
 
 
 @dataclass
@@ -577,7 +584,14 @@ def get_output_path(
         raw_path = output_entry
 
     if not raw_path:
-        raw_path = f"data/{output_group}/{output_name}"
+        if output_group == "outputs":
+            raw_path = f"data/modeling/{output_name}"
+        elif output_group=="metadata_outputs":
+            raw_path = f"data/metadata/{output_name}"
+        elif output_group=="audit_outputs":
+            raw_path = f"data/audit/{output_name}"  
+        else:
+            raw_path = f"data/{output_group}/{output_name}"
 
     return normalize_path(runtime.project_root, raw_path)
 
@@ -1066,6 +1080,10 @@ def run_models(
             runtime.cross_validation_fold_frames.append(
                 training_result.cross_validation_fold_metrics_dataframe
             )
+        if getattr(training_result, "hyperparameter_search_results_dataframe", None) is not None:
+            runtime.hyperparameter_search_frames.append(
+                training_result.hyperparameter_search_results_dataframe
+            )    
 
         if getattr(training_result, "cross_validation_summary_dataframe", None) is not None:
             runtime.cross_validation_summary_frames.append(
@@ -1112,6 +1130,25 @@ def run_models(
             algorithm_key=training_result.champion_algorithm_key,
             algorithm_name=training_result.champion_algorithm_name,
         )
+
+        explainability_df = build_model_explainability_summary(
+            feature_importance_dataframe=feature_importance_df,
+            run_id=runtime.run_id,
+            top_n_features=10,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name,
+        )
+
+        executive_explainability_df = (build_model_explainability_executive_summary(
+            explainability_summary_dataframe=explainability_df,
+            run_id=runtime.run_id,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name, 
+            )
+        )
+
+        runtime.model_explainability_frames.append(explainability_df)
+        runtime.model_executive_explainability_frames.append(executive_explainability_df)
 
         output_config = get_model_output_config(runtime, model_key)
 
@@ -1352,6 +1389,24 @@ def write_metadata_and_audit_outputs(
         else pd.DataFrame()
     )
 
+    hyperparameter_search_results_df = (
+        pd.concat(runtime.hyperparameter_search_frames, ignore_index=True)
+        if runtime.hyperparameter_search_frames
+        else pd.DataFrame()
+    )
+
+    model_explainability_summary_df = (
+    pd.concat(runtime.model_explainability_frames, ignore_index=True)
+    if runtime.model_explainability_frames
+    else pd.DataFrame()
+)
+
+    model_executive_explainability_summary_df = (
+    pd.concat(runtime.model_executive_explainability_frames, ignore_index=True)
+    if runtime.model_executive_explainability_frames
+    else pd.DataFrame()
+)
+
     metadata_assets = {
         "modeling_dataset_inventory": pd.DataFrame(runtime.dataset_records),
         "modeling_model_registry": build_model_registry_dataframe(
@@ -1373,8 +1428,11 @@ def write_metadata_and_audit_outputs(
         "champion_model_summary": champion_summary_df,
         "cross_validation_fold_metrics": cross_validation_fold_metrics_df,
         "cross_validation_summary": cross_validation_summary_df,
+        "hyperparameter_search_results": hyperparameter_search_results_df,
         "target_leakage_report": target_leakage_report_df,
         "target_quality_report": target_quality_report_df,
+        "model_explainability_summary": model_explainability_summary_df,
+        "model_explainability_executive_summary": model_executive_explainability_summary_df,
     }
 
     for output_name, dataframe in metadata_assets.items():

@@ -216,6 +216,15 @@ paths:
     cross_validation_summary:
       path: "data/modeling/cross_validation_summary"
 
+    hyperparameter_search_results:
+      path: "data/modeling/hyperparameter_search_results" 
+
+    model_explainability_summary:
+      path: "data/modeling/model_explainability_summary"
+
+    model_explainability_executive_summary:
+      path: "data/modeling/model_explainability_executive_summary"
+
 
   model_outputs:
 
@@ -410,15 +419,17 @@ training:
 
   hyperparameter_search:
 
-    enabled: false
+    enabled: true
 
     method: "random_search"
 
-    folds: 5
+    folds: 3
 
-    iterations: 25
+    iterations: 3
 
     scoring_metric: "roc_auc"
+
+    random_state: 42
 
   imbalance:
 

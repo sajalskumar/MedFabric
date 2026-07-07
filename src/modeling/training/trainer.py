@@ -63,7 +63,10 @@ from src.modeling.training.cross_validation import (
     is_cross_validation_enabled,
     run_cross_validation,
 )
-
+from src.modeling.training.hyperparameter_search import (
+    is_hyperparameter_search_enabled,
+    run_hyperparameter_search,
+)
 STATUS_SUCCESS = "SUCCESS"
 STATUS_FAILED = "FAILED"
 
@@ -107,6 +110,7 @@ class TrainingResult:
     sampling_applied: bool
     cross_validation_fold_metrics_dataframe: pd.DataFrame
     cross_validation_summary_dataframe: pd.DataFrame
+    hyperparameter_search_results_dataframe: pd.DataFrame
 
 
 ###############################################################################
@@ -881,6 +885,34 @@ def train_model_candidates(
 
     if not algorithm_definitions:
         raise ValueError("No enabled algorithms found for training.")
+    
+    if is_hyperparameter_search_enabled(training_config):
+        search_dataframe = X_training_base.copy()
+        search_dataframe[target_column] = y_training_base.values
+
+        hyperparameter_search_result = run_hyperparameter_search(
+            dataframe=search_dataframe,
+            feature_columns=feature_columns,
+            target_column=target_column,
+            model_key=model_key,
+            model_name=model_name,
+            algorithm_definitions=algorithm_definitions,
+            modeling_defaults=modeling_defaults,
+            training_config=training_config,
+            run_id=run_id,
+            event_timestamp_utc=event_timestamp_utc,
+            layer_name=layer_name,
+            domain_name=domain_name,
+            logger=logger,
+        )
+
+        hyperparameter_search_results_dataframe = (
+            hyperparameter_search_result.search_results_dataframe
+        )
+
+        algorithm_definitions = hyperparameter_search_result.algorithm_definitions
+    else:
+        hyperparameter_search_results_dataframe = pd.DataFrame()
 
     if is_cross_validation_enabled(training_config):
         cv_dataframe = X_training_base.copy()
@@ -1003,6 +1035,7 @@ def train_model_candidates(
         sampling_applied=sampling_applied,
         cross_validation_fold_metrics_dataframe=cross_validation_fold_metrics_dataframe,
         cross_validation_summary_dataframe=cross_validation_summary_dataframe,
+        hyperparameter_search_results_dataframe=hyperparameter_search_results_dataframe,
     )
 
 
