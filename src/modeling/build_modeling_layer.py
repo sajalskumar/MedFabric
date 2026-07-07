@@ -107,6 +107,8 @@ from src.modeling.common.constants import (
 )
 
 from src.modeling.feature_matrix.builder import build_feature_matrix
+
+from src.modeling.inputs.loader import load_input_datasets
 ###############################################################################
 # Runtime Initialization
 ###############################################################################
@@ -220,93 +222,6 @@ def get_selection_metric(
         )
     )
 
-
-###############################################################################
-# Input Loading
-###############################################################################
-
-def load_input_datasets(runtime: ModelingRuntime) -> Dict[str, pd.DataFrame]:
-    """
-    Load configured Feature Store inputs.
-    """
-
-    inputs_config = runtime.config.get("paths", {}).get("inputs", {})
-    datasets: Dict[str, pd.DataFrame] = {}
-
-    runtime.logger.info("START: Load Modeling Feature Store inputs")
-
-    for dataset_name, dataset_config in inputs_config.items():
-        raw_path = dataset_config.get("path")
-        file_format = dataset_config.get("format", "parquet")
-        required = bool(dataset_config.get("required", True))
-
-        if not raw_path:
-            message = f"No path configured for dataset: {dataset_name}"
-
-            if required:
-                raise ValueError(message)
-
-            add_audit_record(
-                runtime=runtime,
-                step_name=f"load_input:{dataset_name}",
-                status=STATUS_SKIPPED,
-                message=message,
-            )
-            continue
-
-        dataset_path = normalize_path(runtime.project_root, raw_path)
-
-        try:
-            dataframe = read_dataset(dataset_path, file_format)
-            datasets[dataset_name] = dataframe
-
-            add_dataset_record(
-                runtime=runtime,
-                dataset_name=dataset_name,
-                dataset_type="feature_store_input",
-                status=STATUS_SUCCESS,
-                path=str(dataset_path),
-                row_count=len(dataframe),
-                column_count=len(dataframe.columns),
-                message="Feature Store input loaded successfully.",
-            )
-
-            runtime.logger.info(
-                "Loaded %s | Rows: %s | Columns: %s | Path: %s",
-                dataset_name,
-                len(dataframe),
-                len(dataframe.columns),
-                dataset_path,
-            )
-
-        except Exception as exc:
-            if required:
-                add_audit_record(
-                    runtime=runtime,
-                    step_name=f"load_input:{dataset_name}",
-                    status=STATUS_FAILED,
-                    message=str(exc),
-                    output_path=str(dataset_path),
-                )
-                raise
-
-            add_audit_record(
-                runtime=runtime,
-                step_name=f"load_input:{dataset_name}",
-                status=STATUS_SKIPPED,
-                message=str(exc),
-                output_path=str(dataset_path),
-            )
-
-            runtime.logger.warning(
-                "Skipped optional dataset: %s | Reason: %s",
-                dataset_name,
-                exc,
-            )
-
-    runtime.logger.info("COMPLETE: Load inputs | Count: %s", len(datasets))
-
-    return datasets
 
 ###############################################################################
 # Modeling Execution
