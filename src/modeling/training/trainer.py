@@ -15,8 +15,12 @@
 # Enhancements:
 #     - Supports YAML-driven class imbalance handling.
 #     - Supports YAML-driven threshold optimization.
+#     - Supports YAML-driven probability calibration.
 #     - Stores optimized threshold in candidate/champion metrics.
 #     - Attaches selected threshold to champion pipeline for scoring.
+#
+# Roadmap Item:
+#     30. Probability Calibration
 #
 # Run:
 #     python -m src.modeling.training.trainer
@@ -34,10 +38,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
+    brier_score_loss,
     f1_score,
+    log_loss,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -55,10 +62,6 @@ from src.modeling.training.algorithms import (
     build_algorithm_definitions,
     get_default_algorithms_config,
 )
-from src.modeling.training.preprocessing import (
-    build_preprocessor,
-    prepare_features_for_preprocessing,
-)
 from src.modeling.training.cross_validation import (
     is_cross_validation_enabled,
     run_cross_validation,
@@ -67,6 +70,11 @@ from src.modeling.training.hyperparameter_search import (
     is_hyperparameter_search_enabled,
     run_hyperparameter_search,
 )
+from src.modeling.training.preprocessing import (
+    build_preprocessor,
+    prepare_features_for_preprocessing,
+)
+
 STATUS_SUCCESS = "SUCCESS"
 STATUS_FAILED = "FAILED"
 
@@ -118,45 +126,45 @@ class TrainingResult:
 ###############################################################################
 
 def get_training_performance_config(training_config: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Return training.performance from modeling.yaml.
-    """
-
     return training_config.get("performance", {}) or {}
 
 
 def get_training_metrics_config(training_config: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Return training.metrics from modeling.yaml.
-    """
-
     return training_config.get("metrics", {}) or {}
 
 
 def get_imbalance_config(training_config: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Return training.imbalance from modeling.yaml.
-    """
-
     return training_config.get("imbalance", {}) or {}
 
 
 def get_threshold_optimization_config(training_config: Dict[str, Any]) -> Dict[str, Any]:
+    return training_config.get("threshold_optimization", {}) or {}
+
+
+def get_probability_calibration_config(training_config: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Return training.threshold_optimization from modeling.yaml.
+    Return training.probability_calibration from modeling.yaml.
+
+    Safe default:
+        - disabled when the section is absent.
     """
 
-    return training_config.get("threshold_optimization", {}) or {}
+    return training_config.get("probability_calibration", {}) or {}
+
+
+def is_probability_calibration_enabled(training_config: Dict[str, Any]) -> bool:
+    """
+    Return whether probability calibration is enabled.
+    """
+
+    calibration_config = get_probability_calibration_config(training_config)
+    return bool(calibration_config.get("enabled", False))
 
 
 def get_selection_metric(
     modeling_defaults: Dict[str, Any],
     training_config: Dict[str, Any],
 ) -> str:
-    """
-    Resolve champion selection metric.
-    """
-
     metrics_config = get_training_metrics_config(training_config)
 
     return (
@@ -171,10 +179,6 @@ def get_selection_metric(
 ###############################################################################
 
 def supports_class_weight(algorithm_key: str) -> bool:
-    """
-    Return whether an algorithm supports sklearn class_weight.
-    """
-
     return algorithm_key in {
         "logistic_regression",
         "random_forest",
@@ -186,16 +190,6 @@ def apply_imbalance_config_to_algorithms(
     algorithms_config: Dict[str, Any],
     imbalance_config: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Apply YAML-driven imbalance handling to algorithm configs.
-
-    Current supported production-safe strategy:
-        - class_weight
-
-    This mutates a deep copy only. The original loaded YAML dictionary is not
-    modified.
-    """
-
     updated_config = copy.deepcopy(algorithms_config)
 
     if not bool(imbalance_config.get("enabled", False)):
@@ -235,10 +229,6 @@ def calculate_sample_size(
     row_count: int,
     performance_config: Dict[str, Any],
 ) -> int:
-    """
-    Calculate training sample size using YAML controls.
-    """
-
     train_sample_fraction = float(
         performance_config.get("train_sample_fraction", 1.0)
     )
@@ -255,10 +245,6 @@ def calculate_sample_size(
 
 
 def can_stratify(y: pd.Series) -> bool:
-    """
-    Determine whether stratified sampling is safe.
-    """
-
     class_counts = y.value_counts(dropna=True)
 
     if len(class_counts) < 2:
@@ -273,10 +259,6 @@ def sample_training_data(
     performance_config: Dict[str, Any],
     random_state: int,
 ) -> Tuple[pd.DataFrame, pd.Series, bool]:
-    """
-    Apply optional training-time sampling.
-    """
-
     row_count = len(X)
     sampling_enabled = bool(
         performance_config.get("enable_training_sample", False)
@@ -322,7 +304,7 @@ def sample_training_data(
 
 
 ###############################################################################
-# Metrics and Threshold Optimization
+# Metrics, Calibration, and Threshold Optimization
 ###############################################################################
 
 def calculate_classification_metrics(
@@ -330,10 +312,6 @@ def calculate_classification_metrics(
     y_pred: np.ndarray,
     y_score: np.ndarray,
 ) -> Dict[str, Any]:
-    """
-    Calculate standard binary classification metrics.
-    """
-
     metrics: Dict[str, Any] = {
         "accuracy": float(accuracy_score(y_true, y_pred)),
         "precision": float(precision_score(y_true, y_pred, zero_division=0)),
@@ -347,6 +325,16 @@ def calculate_classification_metrics(
     except Exception:
         metrics["roc_auc"] = None
 
+    try:
+        metrics["brier_score"] = float(brier_score_loss(y_true, y_score))
+    except Exception:
+        metrics["brier_score"] = None
+
+    try:
+        metrics["log_loss"] = float(log_loss(y_true, y_score, labels=[0, 1]))
+    except Exception:
+        metrics["log_loss"] = None
+
     return metrics
 
 
@@ -354,10 +342,6 @@ def get_prediction_scores(
     pipeline: Pipeline,
     X: pd.DataFrame,
 ) -> np.ndarray:
-    """
-    Return probability-like scores for metric calculation.
-    """
-
     if hasattr(pipeline, "predict_proba"):
         return pipeline.predict_proba(X)[:, 1]
 
@@ -374,10 +358,6 @@ def get_metric_value_for_threshold(
     threshold: float,
     optimization_metric: str,
 ) -> float:
-    """
-    Calculate one threshold optimization metric.
-    """
-
     y_pred = (y_score >= threshold).astype(int)
 
     metric = optimization_metric.lower()
@@ -402,13 +382,6 @@ def optimize_prediction_threshold(
     y_score: np.ndarray,
     threshold_config: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Select prediction threshold using YAML controls.
-
-    If disabled, returns fixed threshold.
-    If enabled, searches thresholds from 0.05 to 0.95.
-    """
-
     fixed_threshold = float(threshold_config.get("fixed_threshold", 0.50))
     enabled = bool(threshold_config.get("enabled", False))
     strategy = str(threshold_config.get("strategy", "fixed")).lower()
@@ -453,6 +426,142 @@ def optimize_prediction_threshold(
     }
 
 
+def split_calibration_data(
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    calibration_config: Dict[str, Any],
+    random_state: int,
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, bool]:
+    """
+    Split training data into fit and calibration partitions.
+
+    Calibration is applied only when:
+        - training.probability_calibration.enabled = true
+        - the calibration split is large enough
+        - both fit and calibration partitions can support both target classes
+    """
+
+    enabled = bool(calibration_config.get("enabled", False))
+
+    if not enabled:
+        return X_train, X_train.iloc[0:0].copy(), y_train, y_train.iloc[0:0].copy(), False
+
+    calibration_size = float(calibration_config.get("calibration_size", 0.20))
+
+    if calibration_size <= 0 or calibration_size >= 0.50:
+        calibration_size = 0.20
+
+    if len(X_train) < 100:
+        return X_train, X_train.iloc[0:0].copy(), y_train, y_train.iloc[0:0].copy(), False
+
+    stratify_target = y_train if can_stratify(y_train) else None
+
+    X_fit, X_cal, y_fit, y_cal = train_test_split(
+        X_train,
+        y_train,
+        test_size=calibration_size,
+        random_state=random_state,
+        stratify=stratify_target,
+    )
+
+    if y_fit.nunique(dropna=True) < 2 or y_cal.nunique(dropna=True) < 2:
+        return X_train, X_train.iloc[0:0].copy(), y_train, y_train.iloc[0:0].copy(), False
+
+    return X_fit, X_cal, y_fit, y_cal, True
+
+
+def build_calibrated_classifier(
+    fitted_pipeline: Pipeline,
+    calibration_method: str,
+) -> CalibratedClassifierCV:
+    """
+    Build a CalibratedClassifierCV around an already-fitted pipeline.
+
+    The try/except supports both newer and older sklearn constructor names.
+    """
+
+    try:
+        return CalibratedClassifierCV(
+            estimator=fitted_pipeline,
+            method=calibration_method,
+            cv="prefit",
+        )
+    except TypeError:
+        return CalibratedClassifierCV(
+            base_estimator=fitted_pipeline,
+            method=calibration_method,
+            cv="prefit",
+        )
+
+
+def calibrate_pipeline_if_enabled(
+    pipeline: Pipeline,
+    X_calibration: pd.DataFrame,
+    y_calibration: pd.Series,
+    calibration_config: Dict[str, Any],
+    logger: Optional[logging.Logger] = None,
+) -> Tuple[Pipeline, Dict[str, Any]]:
+    """
+    Apply probability calibration when enabled and safe.
+
+    Supported methods:
+        - sigmoid
+        - isotonic
+
+    For small calibration samples, sigmoid is safer. Isotonic is more flexible
+    but can overfit when the calibration sample is small.
+    """
+
+    enabled = bool(calibration_config.get("enabled", False))
+
+    if not enabled or len(X_calibration) == 0:
+        return pipeline, {
+            "probability_calibration_enabled": enabled,
+            "probability_calibration_applied": False,
+            "probability_calibration_method": None,
+            "calibration_row_count": 0,
+        }
+
+    method = str(calibration_config.get("method", "sigmoid")).lower()
+
+    if method not in {"sigmoid", "isotonic"}:
+        raise ValueError(
+            f"Unsupported probability calibration method: {method}. "
+            "Supported methods: sigmoid, isotonic"
+        )
+
+    minimum_rows = int(calibration_config.get("minimum_calibration_rows", 500))
+
+    if len(X_calibration) < minimum_rows:
+        if logger is not None:
+            logger.warning(
+                "SKIP Probability Calibration | Rows: %s | Minimum Required: %s",
+                len(X_calibration),
+                minimum_rows,
+            )
+
+        return pipeline, {
+            "probability_calibration_enabled": enabled,
+            "probability_calibration_applied": False,
+            "probability_calibration_method": method,
+            "calibration_row_count": int(len(X_calibration)),
+        }
+
+    calibrated_pipeline = build_calibrated_classifier(
+        fitted_pipeline=pipeline,
+        calibration_method=method,
+    )
+
+    calibrated_pipeline.fit(X_calibration, y_calibration)
+
+    return calibrated_pipeline, {
+        "probability_calibration_enabled": enabled,
+        "probability_calibration_applied": True,
+        "probability_calibration_method": method,
+        "calibration_row_count": int(len(X_calibration)),
+    }
+
+
 ###############################################################################
 # Candidate Training
 ###############################################################################
@@ -466,21 +575,26 @@ def train_candidate_algorithm(
     y_test: pd.Series,
     preprocessing_config: Dict[str, Any],
     threshold_config: Dict[str, Any],
+    calibration_config: Dict[str, Any],
+    random_state: int,
     event_timestamp_utc: str,
     logger: Optional[logging.Logger] = None,
 ) -> CandidateModelResult:
-    """
-    Train and evaluate one candidate algorithm.
-    """
-
     start_time = time.perf_counter()
 
     if logger is not None:
         logger.info("START Algorithm: %s", algorithm_definition.algorithm_name)
 
     try:
+        X_fit, X_cal, y_fit, y_cal, calibration_split_applied = split_calibration_data(
+            X_train=X_train,
+            y_train=y_train,
+            calibration_config=calibration_config,
+            random_state=random_state,
+        )
+
         preprocessor = build_preprocessor(
-            dataframe=X_train,
+            dataframe=X_fit,
             preprocessing_config=preprocessing_config,
         )
 
@@ -491,7 +605,15 @@ def train_candidate_algorithm(
             ]
         )
 
-        pipeline.fit(X_train, y_train)
+        pipeline.fit(X_fit, y_fit)
+
+        pipeline, calibration_metrics = calibrate_pipeline_if_enabled(
+            pipeline=pipeline,
+            X_calibration=X_cal,
+            y_calibration=y_cal,
+            calibration_config=calibration_config,
+            logger=logger,
+        )
 
         y_score = get_prediction_scores(pipeline, X_test)
 
@@ -511,6 +633,9 @@ def train_candidate_algorithm(
         )
 
         metrics.update(threshold_result)
+        metrics.update(calibration_metrics)
+        metrics["calibration_split_applied"] = calibration_split_applied
+        metrics["fit_row_count"] = int(len(X_fit))
 
         setattr(
             pipeline,
@@ -518,14 +643,27 @@ def train_candidate_algorithm(
             prediction_threshold,
         )
 
+        setattr(
+            pipeline,
+            "medfabric_probability_calibration_applied",
+            calibration_metrics.get("probability_calibration_applied"),
+        )
+
+        setattr(
+            pipeline,
+            "medfabric_probability_calibration_method",
+            calibration_metrics.get("probability_calibration_method"),
+        )
+
         training_seconds = float(time.perf_counter() - start_time)
 
         if logger is not None:
             logger.info(
-                "COMPLETE Algorithm: %s | %.2f sec | Threshold: %.2f",
+                "COMPLETE Algorithm: %s | %.2f sec | Threshold: %.2f | Calibration: %s",
                 algorithm_definition.algorithm_name,
                 training_seconds,
                 prediction_threshold,
+                calibration_metrics.get("probability_calibration_applied"),
             )
 
         return CandidateModelResult(
@@ -577,14 +715,12 @@ def train_candidate_algorithms(
     y_test: pd.Series,
     preprocessing_config: Dict[str, Any],
     threshold_config: Dict[str, Any],
+    calibration_config: Dict[str, Any],
+    random_state: int,
     event_timestamp_utc: str,
     parallelism_config: Optional[Dict[str, Any]],
     logger: Optional[logging.Logger] = None,
 ) -> List[CandidateModelResult]:
-    """
-    Train all enabled candidate algorithms.
-    """
-
     if parallelism_config is None:
         parallelism_config = resolve_parallelism_config()
 
@@ -611,6 +747,8 @@ def train_candidate_algorithms(
                     y_test=y_test,
                     preprocessing_config=preprocessing_config,
                     threshold_config=threshold_config,
+                    calibration_config=calibration_config,
+                    random_state=random_state,
                     event_timestamp_utc=event_timestamp_utc,
                     logger=logger,
                 ),
@@ -636,10 +774,6 @@ def select_champion_model(
     selection_metric: str,
     logger: Optional[logging.Logger] = None,
 ) -> CandidateModelResult:
-    """
-    Select champion algorithm by configured metric.
-    """
-
     start_time = time.perf_counter()
 
     if logger is not None:
@@ -696,10 +830,6 @@ def build_candidate_metrics_dataframe(
     training_row_count: int,
     sampling_applied: bool,
 ) -> pd.DataFrame:
-    """
-    Build one-row-per-metric candidate leaderboard dataframe.
-    """
-
     rows: List[Dict[str, Any]] = []
 
     for result in candidate_results:
@@ -728,12 +858,16 @@ def build_candidate_metrics_dataframe(
             for metric_name, metric_value in result.metrics.items():
                 row = dict(base_record)
                 row["metric_name"] = metric_name
-                if isinstance(metric_value, (int, float, np.integer, np.floating, bool)) or metric_value is None:
+
+                if (
+                    isinstance(metric_value, (int, float, np.integer, np.floating, bool))
+                    or metric_value is None
+                ):
                     row["metric_value"] = metric_value
                     row["metric_value_text"] = None
                 else:
                     row["metric_value"] = None
-                    row["metric_value_text"] = str(metric_value)    
+                    row["metric_value_text"] = str(metric_value)
 
                 rows.append(row)
         else:
@@ -759,10 +893,6 @@ def build_champion_summary_dataframe(
     training_row_count: int,
     sampling_applied: bool,
 ) -> pd.DataFrame:
-    """
-    Build one-row champion summary dataframe.
-    """
-
     record: Dict[str, Any] = {
         "run_id": run_id,
         "layer_name": layer_name,
@@ -784,6 +914,18 @@ def build_champion_summary_dataframe(
         "threshold_optimization_score": champion.metrics.get(
             "threshold_optimization_score"
         ),
+        "probability_calibration_enabled": champion.metrics.get(
+            "probability_calibration_enabled"
+        ),
+        "probability_calibration_applied": champion.metrics.get(
+            "probability_calibration_applied"
+        ),
+        "probability_calibration_method": champion.metrics.get(
+            "probability_calibration_method"
+        ),
+        "calibration_row_count": champion.metrics.get("calibration_row_count"),
+        "brier_score": champion.metrics.get("brier_score"),
+        "log_loss": champion.metrics.get("log_loss"),
         "training_seconds": champion.training_seconds,
         "train_row_count": champion.train_row_count,
         "test_row_count": champion.test_row_count,
@@ -818,20 +960,6 @@ def train_model_candidates(
     parallelism_config: Optional[Dict[str, Any]] = None,
     logger: Optional[logging.Logger] = None,
 ) -> TrainingResult:
-    """
-    Train all enabled candidate algorithms and select champion model.
-
-    This function now supports:
-      - Training-time sampling
-      - Class imbalance handling
-      - Threshold optimization
-      - Optional cross-validation
-      - Candidate metrics output
-      - Champion summary output
-      - Cross-validation fold metrics output
-      - Cross-validation summary output
-    """
-
     if logger is not None:
         logger.info("START Training Data Preparation | Model: %s", model_key)
 
@@ -860,6 +988,7 @@ def train_model_candidates(
     performance_config = get_training_performance_config(training_config)
     imbalance_config = get_imbalance_config(training_config)
     threshold_config = get_threshold_optimization_config(training_config)
+    calibration_config = get_probability_calibration_config(training_config)
 
     X_training_base, y_training_base, sampling_applied = sample_training_data(
         X=X_full,
@@ -885,7 +1014,7 @@ def train_model_candidates(
 
     if not algorithm_definitions:
         raise ValueError("No enabled algorithms found for training.")
-    
+
     if is_hyperparameter_search_enabled(training_config):
         search_dataframe = X_training_base.copy()
         search_dataframe[target_column] = y_training_base.values
@@ -961,7 +1090,7 @@ def train_model_candidates(
             "COMPLETE Training Data Preparation | Model: %s | %.2f sec | "
             "Full Rows: %s | Training Rows: %s | Sampling Applied: %s | "
             "Imbalance Enabled: %s | Threshold Optimization Enabled: %s | "
-            "Cross Validation Enabled: %s",
+            "Probability Calibration Enabled: %s | Cross Validation Enabled: %s",
             model_key,
             preparation_seconds,
             len(X_full),
@@ -969,6 +1098,7 @@ def train_model_candidates(
             sampling_applied,
             bool(imbalance_config.get("enabled", False)),
             bool(threshold_config.get("enabled", False)),
+            bool(calibration_config.get("enabled", False)),
             is_cross_validation_enabled(training_config),
         )
 
@@ -981,6 +1111,8 @@ def train_model_candidates(
         y_test=y_test,
         preprocessing_config=preprocessing_config,
         threshold_config=threshold_config,
+        calibration_config=calibration_config,
+        random_state=random_state,
         event_timestamp_utc=event_timestamp_utc,
         parallelism_config=parallelism_config,
         logger=logger,
@@ -1044,10 +1176,6 @@ def train_model_candidates(
 ###############################################################################
 
 def main() -> None:
-    """
-    Validate trainer module independently.
-    """
-
     logging.basicConfig(
         level=logging.INFO,
         format="[%(levelname)s] %(message)s",
@@ -1112,6 +1240,12 @@ def main() -> None:
                 "fixed_threshold": 0.50,
                 "optimization_metric": "f1",
             },
+            "probability_calibration": {
+                "enabled": True,
+                "method": "sigmoid",
+                "calibration_size": 0.20,
+                "minimum_calibration_rows": 500,
+            },
             "metrics": {
                 "primary_metric": "roc_auc",
                 "secondary_metrics": [
@@ -1120,6 +1254,8 @@ def main() -> None:
                     "recall",
                     "f1",
                     "balanced_accuracy",
+                    "brier_score",
+                    "log_loss",
                 ],
             },
             "algorithms": {

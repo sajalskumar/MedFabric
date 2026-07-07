@@ -462,6 +462,11 @@ training:
 
     optimization_metric: "f1"
 
+  probability_calibration:
+    enabled: true
+    method: "sigmoid"
+    cv: 3  
+
   metrics:
 
     primary_metric: "roc_auc"
@@ -542,6 +547,7 @@ training:
       parameters:
         n_estimators: 100
         learning_rate: 1.0
+    
 
 
 ###############################################################################
@@ -600,7 +606,7 @@ explainability:
 
 drift:
 
-  enabled: false
+  enabled: true
 
   build_baseline: true
 

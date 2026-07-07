@@ -9,8 +9,14 @@
 #     Layer 2D - Enterprise Modeling Framework
 #
 # Purpose:
-#     Extracts feature importance outputs from trained champion model pipelines.
-#.    this is standalone module validation test, not a production modelling logic. 
+#     Extracts standardized feature importance outputs from trained champion
+#     model pipelines.
+#
+# Supports:
+#     - Plain sklearn Pipeline objects
+#     - CalibratedClassifierCV wrapping a fitted Pipeline
+#     - Tree-based feature_importances_
+#     - Linear model coef_
 #
 # Run:
 #     python -m src.modeling.evaluation.feature_importance
@@ -19,19 +25,69 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, List, Optional, Tuple
 
 import pandas as pd
 from sklearn.pipeline import Pipeline
 
 
+EMPTY_COLUMNS = ["feature_name", "importance", "importance_type"]
+
+
+def unwrap_pipeline(model_object: Any) -> Any:
+    """
+    Return the underlying fitted pipeline/model from a possible calibrated model.
+
+    Probability calibration can wrap the original sklearn Pipeline inside
+    CalibratedClassifierCV. In that case, the object no longer has named_steps
+    directly, so feature importance extraction must first recover the original
+    fitted estimator.
+    """
+
+    if hasattr(model_object, "named_steps"):
+        return model_object
+
+    if hasattr(model_object, "estimator") and model_object.estimator is not None:
+        if hasattr(model_object.estimator, "named_steps"):
+            return model_object.estimator
+
+    if hasattr(model_object, "base_estimator") and model_object.base_estimator is not None:
+        if hasattr(model_object.base_estimator, "named_steps"):
+            return model_object.base_estimator
+
+    if hasattr(model_object, "calibrated_classifiers_"):
+        calibrated_classifiers = getattr(model_object, "calibrated_classifiers_", [])
+
+        if calibrated_classifiers:
+            calibrated_classifier = calibrated_classifiers[0]
+
+            if hasattr(calibrated_classifier, "estimator"):
+                estimator = calibrated_classifier.estimator
+                if hasattr(estimator, "named_steps"):
+                    return estimator
+                return estimator
+
+            if hasattr(calibrated_classifier, "base_estimator"):
+                estimator = calibrated_classifier.base_estimator
+                if hasattr(estimator, "named_steps"):
+                    return estimator
+                return estimator
+
+    return model_object
+
+
 def get_transformed_feature_names(
-    pipeline: Pipeline,
+    pipeline: Any,
     fallback_feature_columns: List[str],
 ) -> List[str]:
     """
     Return transformed feature names from a fitted preprocessing pipeline.
     """
+
+    pipeline = unwrap_pipeline(pipeline)
+
+    if not hasattr(pipeline, "named_steps"):
+        return fallback_feature_columns
 
     preprocessor = pipeline.named_steps.get("preprocessor")
 
@@ -44,34 +100,54 @@ def get_transformed_feature_names(
         return fallback_feature_columns
 
 
+def get_model_from_pipeline(pipeline: Any) -> Optional[Any]:
+    """
+    Return the final model step from a Pipeline, or the object itself when the
+    supplied object is already a fitted estimator.
+    """
+
+    pipeline = unwrap_pipeline(pipeline)
+
+    if hasattr(pipeline, "named_steps"):
+        return pipeline.named_steps.get("model")
+
+    return pipeline
+
+
 def extract_feature_importance(
-    pipeline: Pipeline,
+    pipeline: Any,
     feature_columns: List[str],
 ) -> pd.DataFrame:
     """
-    Extract feature importance or coefficient values from trained pipeline.
+    Extract feature importance or coefficient values from a trained model.
     """
 
-    model = pipeline.named_steps.get("model")
+    unwrapped_pipeline = unwrap_pipeline(pipeline)
+    model = get_model_from_pipeline(unwrapped_pipeline)
 
     if model is None:
-        return pd.DataFrame(columns=["feature_name", "importance", "importance_type"])
+        return pd.DataFrame(columns=EMPTY_COLUMNS)
 
     feature_names = get_transformed_feature_names(
-        pipeline=pipeline,
+        pipeline=unwrapped_pipeline,
         fallback_feature_columns=feature_columns,
     )
 
     if hasattr(model, "feature_importances_"):
         values = model.feature_importances_
         importance_type = "feature_importance"
+
     elif hasattr(model, "coef_"):
         values = model.coef_[0]
         importance_type = "coefficient"
+
     else:
-        return pd.DataFrame(columns=["feature_name", "importance", "importance_type"])
+        return pd.DataFrame(columns=EMPTY_COLUMNS)
 
     length = min(len(feature_names), len(values))
+
+    if length == 0:
+        return pd.DataFrame(columns=EMPTY_COLUMNS)
 
     return (
         pd.DataFrame(
@@ -87,7 +163,7 @@ def extract_feature_importance(
 
 
 def build_feature_importance_output(
-    pipeline: Pipeline,
+    pipeline: Any,
     feature_columns: List[str],
     run_id: str,
     layer_name: str,
@@ -106,21 +182,21 @@ def build_feature_importance_output(
         feature_columns=feature_columns,
     )
 
+    output_columns = [
+        "run_id",
+        "layer_name",
+        "domain_name",
+        "model_key",
+        "model_name",
+        "algorithm_key",
+        "algorithm_name",
+        "feature_name",
+        "importance",
+        "importance_type",
+    ]
+
     if importance_df.empty:
-        return pd.DataFrame(
-            columns=[
-                "run_id",
-                "layer_name",
-                "domain_name",
-                "model_key",
-                "model_name",
-                "algorithm_key",
-                "algorithm_name",
-                "feature_name",
-                "importance",
-                "importance_type",
-            ]
-        )
+        return pd.DataFrame(columns=output_columns)
 
     importance_df.insert(0, "algorithm_name", algorithm_name)
     importance_df.insert(0, "algorithm_key", algorithm_key)
@@ -130,15 +206,13 @@ def build_feature_importance_output(
     importance_df.insert(0, "layer_name", layer_name)
     importance_df.insert(0, "run_id", run_id)
 
-    return importance_df
+    return importance_df[output_columns]
 
 
 def main() -> None:
     """
-    Lightweight module validation.
+    Lightweight module validation test.
     """
-
-    import pandas as pd
 
     from src.modeling.training.algorithms import get_default_algorithms_config
     from src.modeling.training.trainer import train_model_candidates
@@ -174,16 +248,16 @@ def main() -> None:
             },
         },
         training_config={
-            "prformance":{
+            "performance": {
                 "enable_training_sample": False,
             },
             "metrics": {
                 "primary_metric": "roc_auc",
             },
-            "algorithm":get_default_algorithms_config(),
+            "algorithms": get_default_algorithms_config(),
         },
         run_id="TEST_RUN",
-        event_timestamp_utc="TEST_TIMESTAMP_UTC"
+        event_timestamp_utc="TEST_TIMESTAMP_UTC",
     )
 
     output = build_feature_importance_output(
