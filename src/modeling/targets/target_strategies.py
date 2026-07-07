@@ -8,17 +8,18 @@
 # Layer:
 #     Layer 2D - Enterprise Modeling Framework
 #
+# Release:
+#     Release 2D.3 - Target Realism Improvement
+#
 # Purpose:
 #     Implements reusable target-generation strategies for MedFabric models.
-#
-#     This module is responsible only for converting configured target
-#     definitions into binary target labels.
 #
 # Supported Strategies:
 #     - threshold
 #     - rule_based
 #     - quantile
 #     - existing_column
+#     - weighted_score
 #
 # Run:
 #     python -m src.modeling.targets.target_strategies
@@ -28,7 +29,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -38,15 +39,12 @@ SUPPORTED_TARGET_STRATEGIES = {
     "rule_based",
     "quantile",
     "existing_column",
+    "weighted_score",
 }
 
 
 @dataclass
 class TargetStrategyResult:
-    """
-    Standard output returned by every target strategy.
-    """
-
     target_column: str
     target_series: pd.Series
     strategy: str
@@ -59,37 +57,24 @@ class TargetStrategyResult:
 
 
 def apply_operator(series: pd.Series, operator: str, value: Any) -> pd.Series:
-    """
-    Apply a configured comparison operator to a pandas Series.
-    """
-
     if operator == "equals":
         return series == value
-
     if operator == "not_equals":
         return series != value
-
     if operator == "greater_than":
         return series > value
-
     if operator == "greater_than_or_equal":
         return series >= value
-
     if operator == "less_than":
         return series < value
-
     if operator == "less_than_or_equal":
         return series <= value
-
     if operator == "in":
         return series.isin(value)
-
     if operator == "not_in":
         return ~series.isin(value)
-
     if operator == "is_null":
         return series.isna()
-
     if operator == "is_not_null":
         return series.notna()
 
@@ -101,20 +86,11 @@ def resolve_source_column(
     source_dataset: Optional[str],
     source_column: str,
 ) -> str:
-    """
-    Resolve source column from the modeling feature matrix.
-
-    The feature matrix may contain either:
-        - original column name
-        - dataset-prefixed column name, such as cost_features__total_paid_amount
-    """
-
     if source_column in dataframe.columns:
         return source_column
 
     if source_dataset:
         prefixed_column = f"{source_dataset}__{source_column}"
-
         if prefixed_column in dataframe.columns:
             return prefixed_column
 
@@ -122,6 +98,18 @@ def resolve_source_column(
         "Unable to resolve target source column. "
         f"source_dataset={source_dataset}, source_column={source_column}"
     )
+
+
+def normalize_series(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce").fillna(0.0)
+
+    min_value = numeric.min()
+    max_value = numeric.max()
+
+    if max_value == min_value:
+        return pd.Series(0.0, index=numeric.index)
+
+    return (numeric - min_value) / (max_value - min_value)
 
 
 def build_result(
@@ -132,10 +120,6 @@ def build_result(
     resolved_source_column: Optional[str],
     threshold_value: Optional[float],
 ) -> TargetStrategyResult:
-    """
-    Build standardized target strategy result.
-    """
-
     clean_target = target_series.astype(int)
 
     total_count = int(len(clean_target))
@@ -160,10 +144,6 @@ def build_existing_column_target(
     dataframe: pd.DataFrame,
     target_column: str,
 ) -> TargetStrategyResult:
-    """
-    Use an existing binary target column from the modeling feature matrix.
-    """
-
     if target_column not in dataframe.columns:
         raise ValueError(f"Existing target column not found: {target_column}")
 
@@ -185,10 +165,6 @@ def build_threshold_target(
     operator: str,
     value: Any,
 ) -> TargetStrategyResult:
-    """
-    Build binary target using a configured threshold or comparison rule.
-    """
-
     resolved_column = resolve_source_column(
         dataframe=dataframe,
         source_dataset=source_dataset,
@@ -219,13 +195,6 @@ def build_quantile_target(
     quantile: float,
     positive_direction: str = "greater_than_or_equal",
 ) -> TargetStrategyResult:
-    """
-    Build binary target using a dynamic quantile threshold.
-
-    Example:
-        quantile = 0.90 means top 10 percent becomes target = 1.
-    """
-
     resolved_column = resolve_source_column(
         dataframe=dataframe,
         source_dataset=source_dataset,
@@ -250,15 +219,65 @@ def build_quantile_target(
     )
 
 
+def build_weighted_score_target(
+    dataframe: pd.DataFrame,
+    target_column: str,
+    components: List[Dict[str, Any]],
+    quantile: float,
+    positive_direction: str = "greater_than_or_equal",
+) -> TargetStrategyResult:
+    if not components:
+        raise ValueError("weighted_score target requires at least one component.")
+
+    composite_score = pd.Series(0.0, index=dataframe.index)
+    resolved_columns: List[str] = []
+
+    for component in components:
+        source_dataset = component.get("dataset")
+        source_column = component.get("column")
+        weight = float(component.get("weight", 0.0))
+        direction = component.get("direction", "positive")
+
+        if not source_column:
+            raise ValueError("weighted_score component missing column.")
+
+        resolved_column = resolve_source_column(
+            dataframe=dataframe,
+            source_dataset=source_dataset,
+            source_column=source_column,
+        )
+
+        normalized = normalize_series(dataframe[resolved_column])
+
+        if direction == "negative":
+            normalized = 1.0 - normalized
+
+        composite_score = composite_score + (normalized * weight)
+        resolved_columns.append(resolved_column)
+
+    threshold_value = float(composite_score.quantile(float(quantile)))
+
+    mask = apply_operator(
+        series=composite_score,
+        operator=positive_direction,
+        value=threshold_value,
+    )
+
+    return build_result(
+        target_column=target_column,
+        target_series=mask.astype(int),
+        strategy="weighted_score",
+        source_column="weighted_score_components",
+        resolved_source_column=",".join(resolved_columns),
+        threshold_value=threshold_value,
+    )
+
+
 def build_target_from_config(
     dataframe: pd.DataFrame,
     model_key: str,
     target_config: Dict[str, Any],
 ) -> TargetStrategyResult:
-    """
-    Build target for one model using normalized target configuration.
-    """
-
     strategy = target_config.get("strategy") or target_config.get("mode")
     target_column = target_config.get("output_column") or target_config.get("column")
 
@@ -275,19 +294,30 @@ def build_target_from_config(
         )
 
     if strategy == "existing_column":
-        return build_existing_column_target(
+        return build_existing_column_target(dataframe, target_column)
+
+    parameters = target_config.get("parameters", {})
+
+    if strategy == "weighted_score":
+        return build_weighted_score_target(
             dataframe=dataframe,
             target_column=target_column,
+            components=target_config.get("components", []),
+            quantile=float(parameters.get("quantile", 0.80)),
+            positive_direction=parameters.get(
+                "positive_direction",
+                "greater_than_or_equal",
+            ),
         )
 
     source = target_config.get("source", {})
-    parameters = target_config.get("parameters", {})
 
     source_dataset = (
         source.get("dataset")
         or target_config.get("source_dataset")
         or target_config.get("dataset")
     )
+
     source_column = (
         source.get("column")
         or target_config.get("source_column")
@@ -335,24 +365,35 @@ def build_target_from_config(
 
 
 def main() -> None:
-    """
-    Lightweight module validation.
-    """
-
     sample = pd.DataFrame(
         {
             "member_id": [1, 2, 3, 4, 5],
             "total_paid_amount": [100.0, 200.0, 300.0, 400.0, 500.0],
+            "total_claims": [1, 2, 3, 4, 5],
+            "latest_sdoh_risk_score": [0.1, 0.4, 0.3, 0.8, 0.9],
         }
     )
 
     config = {
-        "strategy": "quantile",
+        "strategy": "weighted_score",
         "output_column": "high_cost_target",
-        "source": {
-            "dataset": "cost_features",
-            "column": "total_paid_amount",
-        },
+        "components": [
+            {
+                "column": "total_paid_amount",
+                "weight": 0.60,
+                "direction": "positive",
+            },
+            {
+                "column": "total_claims",
+                "weight": 0.30,
+                "direction": "positive",
+            },
+            {
+                "column": "latest_sdoh_risk_score",
+                "weight": 0.10,
+                "direction": "positive",
+            },
+        ],
         "parameters": {
             "quantile": 0.80,
             "positive_direction": "greater_than_or_equal",
@@ -369,6 +410,7 @@ def main() -> None:
     print(f"Target column: {result.target_column}")
     print(f"Strategy: {result.strategy}")
     print(f"Threshold: {result.threshold_value}")
+    print(f"Resolved columns: {result.resolved_source_column}")
     print(f"Positive count: {result.positive_count}")
     print(f"Negative count: {result.negative_count}")
     print(f"Positive rate: {result.positive_rate:.4f}")
