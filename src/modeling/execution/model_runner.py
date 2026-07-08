@@ -78,6 +78,10 @@ from src.modeling.evaluation.build_population_stability_index import (
     build_population_stability_index,
 )
 
+from src.modeling.evaluation.build_ks_drift_detection import (
+    build_ks_drift_detection,
+)
+
 ###############################################################################
 # Configuration Helpers
 ###############################################################################
@@ -721,6 +725,54 @@ def run_models(
             runtime.logger.info(
                 "SKIP: Population Stability Index | population_stability_index.enabled=false"
             )
+        #######################################################################
+        # Kolmogorov-Smirnov Drift Detection
+        #######################################################################
+
+        ks_config = drift_config.get(
+            "ks_drift",
+            {},
+        )
+
+        if bool(ks_config.get("enabled", True)):
+            ks_drift_df = build_ks_drift_detection(
+                baseline_dataframe=modeling_frame[drift_columns].copy(),
+                current_dataframe=modeling_frame[drift_columns].copy(),
+                feature_columns=baseline_feature_columns,
+                run_id=runtime.run_id,
+                layer_name=runtime.layer_name,
+                domain_name=runtime.domain_name,
+                ks_threshold=ks_config.get(
+                    "threshold",
+                    drift_config.get("ks_threshold", 0.10),
+                ),
+                baseline_run_id=runtime.run_id,
+                baseline_version="1.0",
+            )
+
+            runtime.ks_drift_frames.append(ks_drift_df)
+
+            add_dataset_record(
+                runtime=runtime,
+                dataset_name="ks_drift_summary",
+                dataset_type="modeling_output",
+                status=STATUS_SUCCESS,
+                path=None,
+                row_count=len(ks_drift_df),
+                column_count=len(ks_drift_df.columns),
+                message="KS drift detection built successfully.",
+            )
+
+            runtime.logger.info(
+                "COMPLETE: KS Drift Detection | Rows: %s",
+                len(ks_drift_df),
+            )
+
+        else:
+            runtime.logger.info(
+                "SKIP: KS Drift Detection | ks_drift.enabled=false"
+            )
+    #        
     else:
         runtime.logger.info(
             "SKIP: Model Drift Baseline | drift.enabled=false or build_baseline=false"
