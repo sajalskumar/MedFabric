@@ -81,7 +81,9 @@ from src.modeling.evaluation.build_population_stability_index import (
 from src.modeling.evaluation.build_ks_drift_detection import (
     build_ks_drift_detection,
 )
-
+from src.modeling.evaluation.build_prediction_score_drift import (
+    build_prediction_score_drift,
+)
 ###############################################################################
 # Configuration Helpers
 ###############################################################################
@@ -725,7 +727,7 @@ def run_models(
             runtime.logger.info(
                 "SKIP: Population Stability Index | population_stability_index.enabled=false"
             )
-        #######################################################################
+         #######################################################################
         # Kolmogorov-Smirnov Drift Detection
         #######################################################################
 
@@ -772,7 +774,59 @@ def run_models(
             runtime.logger.info(
                 "SKIP: KS Drift Detection | ks_drift.enabled=false"
             )
-    #        
+
+        #######################################################################
+        # Prediction Score Drift
+        #######################################################################
+
+        prediction_score_drift_config = drift_config.get(
+            "prediction_score_drift",
+            {},
+        )
+
+        if bool(prediction_score_drift_config.get("enabled", True)):
+            prediction_score_drift_df = build_prediction_score_drift(
+                baseline_scoring_outputs=[
+                    result.scoring_dataframe for result in runtime.scoring_results
+                ],
+                current_scoring_outputs=[
+                    result.scoring_dataframe for result in runtime.scoring_results
+                ],
+                run_id=runtime.run_id,
+                layer_name=runtime.layer_name,
+                domain_name=runtime.domain_name,
+                score_drift_threshold=prediction_score_drift_config.get(
+                    "threshold",
+                    0.05,
+                ),
+                baseline_run_id=runtime.run_id,
+                baseline_version="1.0",
+            )
+
+            runtime.prediction_score_drift_frames.append(
+                prediction_score_drift_df
+            )
+
+            add_dataset_record(
+                runtime=runtime,
+                dataset_name="prediction_score_drift_summary",
+                dataset_type="modeling_output",
+                status=STATUS_SUCCESS,
+                path=None,
+                row_count=len(prediction_score_drift_df),
+                column_count=len(prediction_score_drift_df.columns),
+                message="Prediction score drift built successfully.",
+            )
+
+            runtime.logger.info(
+                "COMPLETE: Prediction Score Drift | Rows: %s",
+                len(prediction_score_drift_df),
+            )
+
+        else:
+            runtime.logger.info(
+                "SKIP: Prediction Score Drift | prediction_score_drift.enabled=false"
+            )
     else:
         runtime.logger.info(
             "SKIP: Model Drift Baseline | drift.enabled=false or build_baseline=false"

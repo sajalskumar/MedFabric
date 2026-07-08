@@ -80,7 +80,7 @@ class ModelingRuntime:
     member_level_explanations_frames: List[pd.DataFrame] = field(default_factory=list)
     population_stability_index_frames: List[pd.DataFrame] = field(default_factory=list)
     ks_drift_frames: List[pd.DataFrame] = field(default_factory=list)
-
+    prediction_score_drift_frames: List[pd.DataFrame] = field(default_factory=list)
     scoring_results: List[Any] = field(default_factory=list)
 
 
