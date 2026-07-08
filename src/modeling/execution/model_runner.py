@@ -84,6 +84,9 @@ from src.modeling.evaluation.build_ks_drift_detection import (
 from src.modeling.evaluation.build_prediction_score_drift import (
     build_prediction_score_drift,
 )
+from src.modeling.evaluation.build_model_performance_drift import (
+    build_model_performance_drift,
+)
 ###############################################################################
 # Configuration Helpers
 ###############################################################################
@@ -727,7 +730,7 @@ def run_models(
             runtime.logger.info(
                 "SKIP: Population Stability Index | population_stability_index.enabled=false"
             )
-         #######################################################################
+        #######################################################################
         # Kolmogorov-Smirnov Drift Detection
         #######################################################################
 
@@ -826,6 +829,62 @@ def run_models(
         else:
             runtime.logger.info(
                 "SKIP: Prediction Score Drift | prediction_score_drift.enabled=false"
+            )
+        #######################################################################
+        # Model Performance Drift
+        #######################################################################
+
+        model_performance_drift_config = drift_config.get(
+            "model_performance_drift",
+            {},
+        )
+
+        if bool(model_performance_drift_config.get("enabled", True)):
+            model_performance_drift_df = build_model_performance_drift(
+                baseline_champion_summary=(
+                    pd.concat(runtime.champion_summary_frames, ignore_index=True)
+                    if runtime.champion_summary_frames
+                    else pd.DataFrame()
+                ),
+                current_champion_summary=(
+                    pd.concat(runtime.champion_summary_frames, ignore_index=True)
+                    if runtime.champion_summary_frames
+                    else pd.DataFrame()
+                ),
+                run_id=runtime.run_id,
+                layer_name=runtime.layer_name,
+                domain_name=runtime.domain_name,
+                performance_drift_threshold=model_performance_drift_config.get(
+                    "threshold",
+                    0.05,
+                ),
+                baseline_run_id=runtime.run_id,
+                baseline_version="1.0",
+            )
+
+            runtime.model_performance_drift_frames.append(
+                model_performance_drift_df
+            )
+
+            add_dataset_record(
+                runtime=runtime,
+                dataset_name="model_performance_drift_summary",
+                dataset_type="modeling_output",
+                status=STATUS_SUCCESS,
+                path=None,
+                row_count=len(model_performance_drift_df),
+                column_count=len(model_performance_drift_df.columns),
+                message="Model performance drift built successfully.",
+            )
+
+            runtime.logger.info(
+                "COMPLETE: Model Performance Drift | Rows: %s",
+                len(model_performance_drift_df),
+            )
+
+        else:
+            runtime.logger.info(
+                "SKIP: Model Performance Drift | model_performance_drift.enabled=false"
             )
     else:
         runtime.logger.info(

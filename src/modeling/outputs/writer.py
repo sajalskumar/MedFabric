@@ -692,6 +692,12 @@ def write_metadata_and_audit_outputs(
         else pd.DataFrame()
     )
 
+    model_performance_drift_summary_df = (
+        pd.concat(runtime.model_performance_drift_frames, ignore_index=True)
+        if runtime.model_performance_drift_frames
+        else pd.DataFrame()
+    )
+
     metadata_assets = {
         "modeling_dataset_inventory": pd.DataFrame(runtime.dataset_records),
         "modeling_model_registry": build_model_registry_dataframe(
@@ -731,6 +737,7 @@ def write_metadata_and_audit_outputs(
         "population_stability_index_summary": population_stability_index_summary_df,
         "ks_drift_summary": ks_drift_summary_df,
         "prediction_score_drift_summary": prediction_score_drift_summary_df,
+        "model_performance_drift_summary": model_performance_drift_summary_df,
     }
 
     if not model_drift_baseline_df.empty:

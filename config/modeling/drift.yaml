@@ -124,6 +124,12 @@ population_stability_index:
     enabled: true
 
     threshold: 0.05    
+
+  model_performance_drift:
+
+    enabled: true
+
+    threshold: 0.05
 ###############################################################################
 # End of File
 ###############################################################################
