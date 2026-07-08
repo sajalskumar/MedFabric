@@ -34,6 +34,75 @@ drift:
 
   ks_threshold: 0.10
 
+  
+###############################################################################
+# Population Stability Index (PSI)
+#
+# Purpose:
+#   Calculates distribution drift between the training baseline and
+#   production/scoring population.
+#
+# Interpretation:
+#
+#   PSI < 0.10
+#       No significant population drift.
+#
+#   PSI 0.10 - 0.20
+#       Moderate drift. Monitor closely.
+#
+#   PSI >= 0.20
+#       Significant drift. Model review or retraining recommended.
+#
+###############################################################################
+
+population_stability_index:
+
+  enabled: true
+
+  ###########################################################################
+  # PSI Alert Threshold
+  #
+  # Typical industry recommendations:
+  #
+  #   0.10 = Early warning
+  #   0.20 = Significant drift
+  #   0.25 = Critical drift
+  ###########################################################################
+
+  threshold: 0.20
+
+  ###########################################################################
+  # Numeric Features
+  #
+  # Number of equal-frequency bins used to compare baseline and current
+  # feature distributions.
+  #
+  # Recommended:
+  #   10 bins (industry standard)
+  ###########################################################################
+
+  numeric_bin_count: 10
+
+  ###########################################################################
+  # Categorical Features
+  #
+  # Maximum number of categories evaluated before collapsing the remaining
+  # categories into "Other".
+  ###########################################################################
+
+  categorical_max_categories: 20
+
+  ###########################################################################
+  # Numerical Stability
+  #
+  # Small value added when a bucket has zero observations to prevent:
+  #
+  #     log(0)
+  #     divide-by-zero
+  #
+  ###########################################################################
+
+  epsilon: 0.0001
 ###############################################################################
 # End of File
 ###############################################################################

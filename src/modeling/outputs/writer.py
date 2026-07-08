@@ -674,6 +674,12 @@ def write_metadata_and_audit_outputs(
         experiment_run_history_df=experiment_run_history_df,
     )
 
+    population_stability_index_summary_df = (
+        pd.concat(runtime.population_stability_index_frames, ignore_index=True)
+        if runtime.population_stability_index_frames
+        else pd.DataFrame()
+    )
+
     metadata_assets = {
         "modeling_dataset_inventory": pd.DataFrame(runtime.dataset_records),
         "modeling_model_registry": build_model_registry_dataframe(
@@ -710,6 +716,7 @@ def write_metadata_and_audit_outputs(
         "experiment_run_history": experiment_run_history_df,
         "candidate_parameter_snapshot": candidate_parameter_snapshot_df,
         "champion_challenger_history": champion_challenger_history_df,
+        "population_stability_index_summary": population_stability_index_summary_df,
     }
 
     if not model_drift_baseline_df.empty:

@@ -74,6 +74,9 @@ from src.modeling.training.trainer import train_model_candidates
 from src.modeling.evaluation.build_member_level_explanations import (
     build_member_level_explanations,
 )
+from src.modeling.evaluation.build_population_stability_index import (
+    build_population_stability_index,
+)
 
 ###############################################################################
 # Configuration Helpers
@@ -666,6 +669,58 @@ def run_models(
             model_drift_baseline_path,
         )
 
+        psi_config = drift_config.get(
+            "population_stability_index",
+             {},
+        )
+        if bool(psi_config.get("enabled", True)):
+            population_stability_index_df = build_population_stability_index(
+                baseline_dataframe=modeling_frame[drift_columns].copy(),
+                current_dataframe=modeling_frame[drift_columns].copy(),
+                feature_columns=baseline_feature_columns,
+                run_id=runtime.run_id,
+                layer_name=runtime.layer_name,
+                domain_name=runtime.domain_name,
+                psi_threshold=psi_config.get(
+                    "threshold",
+                    drift_config.get("psi_threshold", 0.20),
+                ),
+                numeric_bin_count=psi_config.get(
+                    "numeric_bin_count",
+                    10,
+                ),
+                categorical_max_categories=psi_config.get(
+                    "categorical_max_categories",
+                    20,
+                ),
+                epsilon=psi_config.get(
+                    "epsilon",
+                    0.0001,
+                ),
+                baseline_run_id=runtime.run_id,
+                baseline_version="1.0",
+            )
+            runtime.population_stability_index_frames.append(
+                population_stability_index_df
+            )
+            add_dataset_record(
+                runtime=runtime,
+                dataset_name="population_stability_index",
+                dataset_type="modeling_output",
+                status=STATUS_SUCCESS,
+                path=None,
+                row_count=len(population_stability_index_df),
+                column_count=len(population_stability_index_df.columns),
+                message="Population Stability Index built successfully.",
+            )
+            runtime.logger.info(
+                "COMPLETE: Population Stability Index | Rows: %s",
+                len(population_stability_index_df),
+            )
+        else:
+            runtime.logger.info(
+                "SKIP: Population Stability Index | population_stability_index.enabled=false"
+            )
     else:
         runtime.logger.info(
             "SKIP: Model Drift Baseline | drift.enabled=false or build_baseline=false"
