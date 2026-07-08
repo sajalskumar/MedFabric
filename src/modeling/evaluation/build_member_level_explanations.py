@@ -127,7 +127,7 @@ def build_member_level_explanations(
                     "algorithm_name": algorithm_name,
                     "member_id": member_id,
                     "feature_name": feature_name,
-                    "feature_value": member_feature_values[feature_name],
+                    "feature_value": str(member_feature_values[feature_name]),
                     "local_shap_value": shap_value,
                     "absolute_local_shap_value": abs(shap_value),
                     "sample_row_count": len(shap_input_df),

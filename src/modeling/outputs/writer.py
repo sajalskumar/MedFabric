@@ -226,6 +226,12 @@ def write_metadata_and_audit_outputs(
         else pd.DataFrame()
     )
 
+    member_level_explanations_summary_df = (
+        pd.concat(runtime.member_level_explanations_frames, ignore_index=True)
+        if runtime.member_level_explanations_frames
+        else pd.DataFrame()
+    )
+
     metadata_assets = {
         "modeling_dataset_inventory": pd.DataFrame(runtime.dataset_records),
         "modeling_model_registry": build_model_registry_dataframe(
@@ -260,6 +266,7 @@ def write_metadata_and_audit_outputs(
         "permutation_importance_summary": permutation_importance_summary_df,
         "model_monitoring_summary": model_monitoring_summary_df,
         "shap_explainability_summary": shap_explainability_summary_df,
+        "member_level_explanations_summary": member_level_explanations_summary_df,
     }
 
     if not model_drift_baseline_df.empty:

@@ -71,7 +71,9 @@ from src.modeling.targets.leakage_detection import (
 )
 from src.modeling.targets.target_builder import build_targets_for_enabled_models
 from src.modeling.training.trainer import train_model_candidates
-
+from src.modeling.evaluation.build_member_level_explanations import (
+    build_member_level_explanations,
+)
 
 ###############################################################################
 # Configuration Helpers
@@ -438,6 +440,32 @@ def run_models(
         )
 
         runtime.shap_explainability_frames.append(shap_explainability_df)
+
+        member_level_config = (
+            runtime.config
+            .get("explainability", {})
+            .get("member_level_explanations", {})
+        )
+
+        member_level_explanations_df = build_member_level_explanations(
+            dataframe=modeling_frame,
+            feature_columns=model_feature_columns,
+            member_key=member_key,
+            pipeline=training_result.champion_pipeline,
+            run_id=runtime.run_id,
+            layer_name=runtime.layer_name,
+            domain_name=runtime.domain_name,
+            model_key=model_key,
+            model_name=model_name,
+            algorithm_key=training_result.champion_algorithm_key,
+            algorithm_name=training_result.champion_algorithm_name,
+            max_members=member_level_config.get("max_members", 100),
+            top_n_features=member_level_config.get("top_n_features", 5),
+            background_row_count=member_level_config.get("background_row_count", 50),
+            random_state=member_level_config.get("random_state", 42),
+        )
+
+        runtime.member_level_explanations_frames.append(member_level_explanations_df)
 
         explainability_df = build_model_explainability_summary(
             feature_importance_dataframe=feature_importance_df,

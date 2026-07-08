@@ -72,6 +72,21 @@ explainability:
     random_state: 42
 
   ###########################################################################
+  # Member-Level Local Explanations
+  ###########################################################################
+
+  member_level_explanations:
+
+    enabled: true
+
+    max_members: 100
+
+    top_n_features: 5
+
+    background_row_count: 25
+
+    random_state: 42
+  ###########################################################################
   # Partial Dependence (Future Enhancement)
   ###########################################################################
 

@@ -1,0 +1,525 @@
+src/modeling/config_loader.py:    "drift.yaml",
+src/modeling/config_loader.py:    The returned dictionary is intentionally shaped like the previous
+src/modeling/config_loader.py:        config["drift"]
+src/modeling/archive/build_modeling_layer_legacy.py:def extract_feature_importance(
+src/modeling/archive/build_modeling_layer_legacy.py:    if not hasattr(model, "feature_importances_"):
+src/modeling/archive/build_modeling_layer_legacy.py:    importances = model.feature_importances_
+src/modeling/archive/build_modeling_layer_legacy.py:    feature_importance_df = extract_feature_importance(pipeline, feature_columns)
+src/modeling/archive/build_modeling_layer_legacy.py:    feature_importance_df["run_id"] = runtime.run_id
+src/modeling/archive/build_modeling_layer_legacy.py:    feature_importance_df["model_key"] = model_key
+src/modeling/archive/build_modeling_layer_legacy.py:    feature_importance_df["model_name"] = model_config.get("model_name", model_key)
+src/modeling/archive/build_modeling_layer_legacy.py:    feature_importance_df["event_timestamp_utc"] = utc_now().isoformat()
+src/modeling/archive/build_modeling_layer_legacy.py:    feature_importance_path = output_path_with_format(
+src/modeling/archive/build_modeling_layer_legacy.py:            output_config.get("feature_importance_path"),
+src/modeling/archive/build_modeling_layer_legacy.py:    write_dataset(feature_importance_df, feature_importance_path, "parquet")
+src/modeling/archive/build_modeling_layer_legacy.py:    return scoring_df, metrics_df, feature_importance_df
+src/modeling/archive/build_modeling_layer_before_target_framework.py:def extract_feature_importance(
+src/modeling/archive/build_modeling_layer_before_target_framework.py:    if not hasattr(model, "feature_importances_"):
+src/modeling/archive/build_modeling_layer_before_target_framework.py:    importances = model.feature_importances_
+src/modeling/archive/build_modeling_layer_before_target_framework.py:    feature_importance_df = extract_feature_importance(pipeline, feature_columns)
+src/modeling/archive/build_modeling_layer_before_target_framework.py:    feature_importance_df["run_id"] = runtime.run_id
+src/modeling/archive/build_modeling_layer_before_target_framework.py:    feature_importance_df["model_key"] = model_key
+src/modeling/archive/build_modeling_layer_before_target_framework.py:    feature_importance_df["model_name"] = model_config.get("model_name", model_key)
+src/modeling/archive/build_modeling_layer_before_target_framework.py:    feature_importance_df["event_timestamp_utc"] = utc_now().isoformat()
+src/modeling/archive/build_modeling_layer_before_target_framework.py:    feature_importance_path = output_path_with_format(
+src/modeling/archive/build_modeling_layer_before_target_framework.py:            output_config.get("feature_importance_path"),
+src/modeling/archive/build_modeling_layer_before_target_framework.py:    write_dataset(feature_importance_df, feature_importance_path, "parquet")
+src/modeling/archive/build_modeling_layer_before_target_framework.py:    return scoring_df, metrics_df, feature_importance_df
+Binary file src/modeling/targets/__pycache__/target_strategies.cpython-313.pyc matches
+Binary file src/modeling/targets/__pycache__/target_validation.cpython-313.pyc matches
+src/modeling/targets/target_validation.py:    Validation checks:
+src/modeling/targets/target_validation.py:        Run all target validation checks.
+Binary file src/modeling/training/__pycache__/trainer.cpython-312.pyc matches
+Binary file src/modeling/training/__pycache__/trainer.cpython-313.pyc matches
+Binary file src/modeling/training/__pycache__/preprocessing.cpython-313.pyc matches
+src/modeling/training/preprocessing.py:    print(f"Output shape  : {transformed.shape}")
+src/modeling/training/trainer.py:#     each candidate, and selects the champion model.
+src/modeling/training/trainer.py:#     - Supports YAML-driven probability calibration.
+src/modeling/training/trainer.py:#     - Stores optimized threshold in candidate/champion metrics.
+src/modeling/training/trainer.py:#     - Attaches selected threshold to champion pipeline for scoring.
+src/modeling/training/trainer.py:from sklearn.calibration import CalibratedClassifierCV
+src/modeling/training/trainer.py:    run_tasks,
+src/modeling/training/trainer.py:    champion_algorithm_key: str
+src/modeling/training/trainer.py:    champion_algorithm_name: str
+src/modeling/training/trainer.py:    champion_pipeline: Pipeline
+src/modeling/training/trainer.py:    champion_metrics: Dict[str, Any]
+src/modeling/training/trainer.py:    champion_summary_dataframe: pd.DataFrame
+src/modeling/training/trainer.py:def get_probability_calibration_config(training_config: Dict[str, Any]) -> Dict[str, Any]:
+src/modeling/training/trainer.py:    Return training.probability_calibration from modeling.yaml.
+src/modeling/training/trainer.py:    return training_config.get("probability_calibration", {}) or {}
+src/modeling/training/trainer.py:def is_probability_calibration_enabled(training_config: Dict[str, Any]) -> bool:
+src/modeling/training/trainer.py:    Return whether probability calibration is enabled.
+src/modeling/training/trainer.py:    calibration_config = get_probability_calibration_config(training_config)
+src/modeling/training/trainer.py:    return bool(calibration_config.get("enabled", False))
+src/modeling/training/trainer.py:def split_calibration_data(
+src/modeling/training/trainer.py:    calibration_config: Dict[str, Any],
+src/modeling/training/trainer.py:    Split training data into fit and calibration partitions.
+src/modeling/training/trainer.py:        - training.probability_calibration.enabled = true
+src/modeling/training/trainer.py:        - the calibration split is large enough
+src/modeling/training/trainer.py:        - both fit and calibration partitions can support both target classes
+src/modeling/training/trainer.py:    enabled = bool(calibration_config.get("enabled", False))
+src/modeling/training/trainer.py:    calibration_size = float(calibration_config.get("calibration_size", 0.20))
+src/modeling/training/trainer.py:    if calibration_size <= 0 or calibration_size >= 0.50:
+src/modeling/training/trainer.py:        calibration_size = 0.20
+src/modeling/training/trainer.py:        test_size=calibration_size,
+src/modeling/training/trainer.py:    calibration_method: str,
+src/modeling/training/trainer.py:) -> CalibratedClassifierCV:
+src/modeling/training/trainer.py:    Build a CalibratedClassifierCV around an already-fitted pipeline.
+src/modeling/training/trainer.py:        return CalibratedClassifierCV(
+src/modeling/training/trainer.py:            method=calibration_method,
+src/modeling/training/trainer.py:        return CalibratedClassifierCV(
+src/modeling/training/trainer.py:            method=calibration_method,
+src/modeling/training/trainer.py:    X_calibration: pd.DataFrame,
+src/modeling/training/trainer.py:    y_calibration: pd.Series,
+src/modeling/training/trainer.py:    calibration_config: Dict[str, Any],
+src/modeling/training/trainer.py:    Apply probability calibration when enabled and safe.
+src/modeling/training/trainer.py:    For small calibration samples, sigmoid is safer. Isotonic is more flexible
+src/modeling/training/trainer.py:    but can overfit when the calibration sample is small.
+src/modeling/training/trainer.py:    enabled = bool(calibration_config.get("enabled", False))
+src/modeling/training/trainer.py:    if not enabled or len(X_calibration) == 0:
+src/modeling/training/trainer.py:            "probability_calibration_enabled": enabled,
+src/modeling/training/trainer.py:            "probability_calibration_applied": False,
+src/modeling/training/trainer.py:            "probability_calibration_method": None,
+src/modeling/training/trainer.py:            "calibration_row_count": 0,
+src/modeling/training/trainer.py:    method = str(calibration_config.get("method", "sigmoid")).lower()
+src/modeling/training/trainer.py:            f"Unsupported probability calibration method: {method}. "
+src/modeling/training/trainer.py:    minimum_rows = int(calibration_config.get("minimum_calibration_rows", 500))
+src/modeling/training/trainer.py:    if len(X_calibration) < minimum_rows:
+src/modeling/training/trainer.py:                len(X_calibration),
+src/modeling/training/trainer.py:            "probability_calibration_enabled": enabled,
+src/modeling/training/trainer.py:            "probability_calibration_applied": False,
+src/modeling/training/trainer.py:            "probability_calibration_method": method,
+src/modeling/training/trainer.py:            "calibration_row_count": int(len(X_calibration)),
+src/modeling/training/trainer.py:        calibration_method=method,
+src/modeling/training/trainer.py:    calibrated_pipeline.fit(X_calibration, y_calibration)
+src/modeling/training/trainer.py:        "probability_calibration_enabled": enabled,
+src/modeling/training/trainer.py:        "probability_calibration_applied": True,
+src/modeling/training/trainer.py:        "probability_calibration_method": method,
+src/modeling/training/trainer.py:        "calibration_row_count": int(len(X_calibration)),
+src/modeling/training/trainer.py:    calibration_config: Dict[str, Any],
+src/modeling/training/trainer.py:        X_fit, X_cal, y_fit, y_cal, calibration_split_applied = split_calibration_data(
+src/modeling/training/trainer.py:            calibration_config=calibration_config,
+src/modeling/training/trainer.py:        pipeline, calibration_metrics = calibrate_pipeline_if_enabled(
+src/modeling/training/trainer.py:            X_calibration=X_cal,
+src/modeling/training/trainer.py:            y_calibration=y_cal,
+src/modeling/training/trainer.py:            calibration_config=calibration_config,
+src/modeling/training/trainer.py:        metrics.update(calibration_metrics)
+src/modeling/training/trainer.py:        metrics["calibration_split_applied"] = calibration_split_applied
+src/modeling/training/trainer.py:            "medfabric_probability_calibration_applied",
+src/modeling/training/trainer.py:            calibration_metrics.get("probability_calibration_applied"),
+src/modeling/training/trainer.py:            "medfabric_probability_calibration_method",
+src/modeling/training/trainer.py:            calibration_metrics.get("probability_calibration_method"),
+src/modeling/training/trainer.py:                calibration_metrics.get("probability_calibration_applied"),
+src/modeling/training/trainer.py:    calibration_config: Dict[str, Any],
+src/modeling/training/trainer.py:    tasks: List[Dict[str, Any]] = []
+src/modeling/training/trainer.py:        tasks.append(
+src/modeling/training/trainer.py:                    calibration_config=calibration_config,
+src/modeling/training/trainer.py:    task_results = run_tasks(
+src/modeling/training/trainer.py:        tasks=tasks,
+src/modeling/training/trainer.py:def select_champion_model(
+src/modeling/training/trainer.py:    champion = sorted(
+src/modeling/training/trainer.py:            champion.algorithm_key,
+src/modeling/training/trainer.py:            champion.metrics.get(selection_metric),
+src/modeling/training/trainer.py:            champion.metrics.get("prediction_threshold"),
+src/modeling/training/trainer.py:    return champion
+src/modeling/training/trainer.py:    champion_algorithm_key: str,
+src/modeling/training/trainer.py:            "is_champion": result.algorithm_key == champion_algorithm_key,
+src/modeling/training/trainer.py:def build_champion_summary_dataframe(
+src/modeling/training/trainer.py:    champion: CandidateModelResult,
+src/modeling/training/trainer.py:        "champion_algorithm_key": champion.algorithm_key,
+src/modeling/training/trainer.py:        "champion_algorithm_name": champion.algorithm_name,
+src/modeling/training/trainer.py:        "selection_metric_value": champion.metrics.get(selection_metric),
+src/modeling/training/trainer.py:        "prediction_threshold": champion.metrics.get("prediction_threshold"),
+src/modeling/training/trainer.py:        "threshold_optimization_enabled": champion.metrics.get(
+src/modeling/training/trainer.py:        "threshold_optimization_metric": champion.metrics.get(
+src/modeling/training/trainer.py:        "threshold_optimization_score": champion.metrics.get(
+src/modeling/training/trainer.py:        "probability_calibration_enabled": champion.metrics.get(
+src/modeling/training/trainer.py:            "probability_calibration_enabled"
+src/modeling/training/trainer.py:        "probability_calibration_applied": champion.metrics.get(
+src/modeling/training/trainer.py:            "probability_calibration_applied"
+src/modeling/training/trainer.py:        "probability_calibration_method": champion.metrics.get(
+src/modeling/training/trainer.py:            "probability_calibration_method"
+src/modeling/training/trainer.py:        "calibration_row_count": champion.metrics.get("calibration_row_count"),
+src/modeling/training/trainer.py:        "brier_score": champion.metrics.get("brier_score"),
+src/modeling/training/trainer.py:        "log_loss": champion.metrics.get("log_loss"),
+src/modeling/training/trainer.py:        "training_seconds": champion.training_seconds,
+src/modeling/training/trainer.py:        "train_row_count": champion.train_row_count,
+src/modeling/training/trainer.py:        "test_row_count": champion.test_row_count,
+src/modeling/training/trainer.py:        "event_timestamp_utc": champion.trained_at_utc,
+src/modeling/training/trainer.py:    for metric_name, metric_value in champion.metrics.items():
+src/modeling/training/trainer.py:    calibration_config = get_probability_calibration_config(training_config)
+src/modeling/training/trainer.py:            bool(calibration_config.get("enabled", False)),
+src/modeling/training/trainer.py:        calibration_config=calibration_config,
+src/modeling/training/trainer.py:    champion = select_champion_model(
+src/modeling/training/trainer.py:        champion_algorithm_key=champion.algorithm_key,
+src/modeling/training/trainer.py:    champion_summary_dataframe = build_champion_summary_dataframe(
+src/modeling/training/trainer.py:        champion=champion,
+src/modeling/training/trainer.py:        champion_algorithm_key=champion.algorithm_key,
+src/modeling/training/trainer.py:        champion_algorithm_name=champion.algorithm_name,
+src/modeling/training/trainer.py:        champion_pipeline=champion.pipeline,
+src/modeling/training/trainer.py:        champion_metrics=champion.metrics,
+src/modeling/training/trainer.py:        champion_summary_dataframe=champion_summary_dataframe,
+src/modeling/training/trainer.py:            "probability_calibration": {
+src/modeling/training/trainer.py:                "calibration_size": 0.20,
+src/modeling/training/trainer.py:                "minimum_calibration_rows": 500,
+src/modeling/training/trainer.py:    print(f"Champion algorithm: {result.champion_algorithm_key}")
+src/modeling/training/trainer.py:    print(f"Champion metrics: {result.champion_metrics}")
+src/modeling/training/trainer.py:    print(result.champion_summary_dataframe.head())
+Binary file src/modeling/__pycache__/config_loader.cpython-313.pyc matches
+Binary file src/modeling/common/__pycache__/output_paths.cpython-313.pyc matches
+Binary file src/modeling/common/__pycache__/runtime.cpython-313.pyc matches
+src/modeling/common/runtime.py:    champion_summary_frames: List[pd.DataFrame] = field(default_factory=list)
+src/modeling/common/runtime.py:    model_drift_baseline_frames: List[pd.DataFrame] = field(default_factory=list)
+src/modeling/common/runtime.py:    confusion_matrix_frames: List[pd.DataFrame] = field(default_factory=list)
+src/modeling/common/runtime.py:    lift_gain_frames: List[pd.DataFrame] = field(default_factory=list)
+src/modeling/common/runtime.py:    permutation_importance_frames: List[pd.DataFrame] = field(default_factory=list)
+src/modeling/common/runtime.py:    shap_explainability_frames: List[pd.DataFrame] = field(default_factory=list)
+src/modeling/common/output_paths.py:        "feature_importance_path",
+src/modeling/execution/model_runner.py:from src.modeling.evaluation.build_lift_gain_analysis import build_lift_gain_analysis
+src/modeling/execution/model_runner.py:from src.modeling.evaluation.build_model_drift_baseline import (
+src/modeling/execution/model_runner.py:    build_model_drift_baseline,
+src/modeling/execution/model_runner.py:from src.modeling.evaluation.build_permutation_importance import (
+src/modeling/execution/model_runner.py:    build_permutation_importance,
+src/modeling/execution/model_runner.py:from src.modeling.evaluation.build_shap_explainability import build_shap_explainability
+src/modeling/execution/model_runner.py:from src.modeling.evaluation.confusion_matrix import build_confusion_matrix_output
+src/modeling/execution/model_runner.py:from src.modeling.evaluation.feature_importance import build_feature_importance_output
+src/modeling/execution/model_runner.py:    Resolve champion model selection metric.
+src/modeling/execution/model_runner.py:    drift_config = runtime.config.get("drift", {})
+src/modeling/execution/model_runner.py:        runtime.champion_summary_frames.append(
+src/modeling/execution/model_runner.py:            training_result.champion_summary_dataframe
+src/modeling/execution/model_runner.py:            training_result.champion_algorithm_key,
+src/modeling/execution/model_runner.py:            training_result.champion_metrics,
+src/modeling/execution/model_runner.py:            pipeline=training_result.champion_pipeline,
+src/modeling/execution/model_runner.py:        confusion_matrix_df = build_confusion_matrix_output(
+src/modeling/execution/model_runner.py:            algorithm_key=training_result.champion_algorithm_key,
+src/modeling/execution/model_runner.py:            algorithm_name=training_result.champion_algorithm_name,
+src/modeling/execution/model_runner.py:        runtime.confusion_matrix_frames.append(confusion_matrix_df)
+src/modeling/execution/model_runner.py:        lift_gain_df = build_lift_gain_analysis(
+src/modeling/execution/model_runner.py:            algorithm_key=training_result.champion_algorithm_key,
+src/modeling/execution/model_runner.py:            algorithm_name=training_result.champion_algorithm_name,
+src/modeling/execution/model_runner.py:        runtime.lift_gain_frames.append(lift_gain_df)
+src/modeling/execution/model_runner.py:        feature_importance_df = build_feature_importance_output(
+src/modeling/execution/model_runner.py:            pipeline=training_result.champion_pipeline,
+src/modeling/execution/model_runner.py:            algorithm_key=training_result.champion_algorithm_key,
+src/modeling/execution/model_runner.py:            algorithm_name=training_result.champion_algorithm_name,
+src/modeling/execution/model_runner.py:        permutation_importance_config = (
+src/modeling/execution/model_runner.py:            runtime.config.get("explainability", {}).get("permutation_importance", {})
+src/modeling/execution/model_runner.py:        permutation_importance_df = build_permutation_importance(
+src/modeling/execution/model_runner.py:            pipeline=training_result.champion_pipeline,
+src/modeling/execution/model_runner.py:            algorithm_key=training_result.champion_algorithm_key,
+src/modeling/execution/model_runner.py:            algorithm_name=training_result.champion_algorithm_name,
+src/modeling/execution/model_runner.py:            scoring_metric=permutation_importance_config.get("scoring_metric", "roc_auc"),
+src/modeling/execution/model_runner.py:            n_repeats=permutation_importance_config.get("n_repeats", 5),
+src/modeling/execution/model_runner.py:            max_rows=permutation_importance_config.get("sample_row_count", 300),
+src/modeling/execution/model_runner.py:            random_state=permutation_importance_config.get("random_state", 42),
+src/modeling/execution/model_runner.py:        runtime.permutation_importance_frames.append(permutation_importance_df)
+src/modeling/execution/model_runner.py:        shap_config = runtime.config.get("explainability", {}).get("shap", {})
+src/modeling/execution/model_runner.py:        shap_explainability_df = build_shap_explainability(
+src/modeling/execution/model_runner.py:            pipeline=training_result.champion_pipeline,
+src/modeling/execution/model_runner.py:            algorithm_key=training_result.champion_algorithm_key,
+src/modeling/execution/model_runner.py:            algorithm_name=training_result.champion_algorithm_name,
+src/modeling/execution/model_runner.py:            max_rows=shap_config.get("sample_row_count", 300),
+src/modeling/execution/model_runner.py:            background_rows=shap_config.get("background_row_count", 50),
+src/modeling/execution/model_runner.py:            random_state=shap_config.get("random_state", 42),
+src/modeling/execution/model_runner.py:        runtime.shap_explainability_frames.append(shap_explainability_df)
+src/modeling/execution/model_runner.py:            feature_importance_dataframe=feature_importance_df,
+src/modeling/execution/model_runner.py:        feature_importance_path = output_path_with_format(
+src/modeling/execution/model_runner.py:                output_config.get("feature_importance_path"),
+src/modeling/execution/model_runner.py:        save_pickle_object(training_result.champion_pipeline, model_path)
+src/modeling/execution/model_runner.py:        write_dataset(feature_importance_df, feature_importance_path, "parquet")
+src/modeling/execution/model_runner.py:            champion_algorithm_key=training_result.champion_algorithm_key,
+src/modeling/execution/model_runner.py:            champion_algorithm_name=training_result.champion_algorithm_name,
+src/modeling/execution/model_runner.py:            champion_metrics=training_result.champion_metrics,
+src/modeling/execution/model_runner.py:            feature_importance_path=str(feature_importance_path),
+src/modeling/execution/model_runner.py:                f"Champion={training_result.champion_algorithm_key}"
+src/modeling/execution/model_runner.py:    if bool(drift_config.get("enabled", False)) and bool(
+src/modeling/execution/model_runner.py:        drift_config.get("build_baseline", True)
+src/modeling/execution/model_runner.py:        drift_columns = [member_key] + baseline_feature_columns
+src/modeling/execution/model_runner.py:        drift_columns = [
+src/modeling/execution/model_runner.py:            column for column in drift_columns if column in modeling_frame.columns
+src/modeling/execution/model_runner.py:        model_drift_baseline_df = build_model_drift_baseline(
+src/modeling/execution/model_runner.py:            dataframe=modeling_frame[drift_columns].copy(),
+src/modeling/execution/model_runner.py:        runtime.model_drift_baseline_frames.append(model_drift_baseline_df)
+src/modeling/execution/model_runner.py:        model_drift_baseline_path = output_path_with_format(
+src/modeling/execution/model_runner.py:            get_output_path(runtime, "outputs", "model_drift_baseline"),
+src/modeling/execution/model_runner.py:            model_drift_baseline_df,
+src/modeling/execution/model_runner.py:            model_drift_baseline_path,
+src/modeling/execution/model_runner.py:            dataset_name="model_drift_baseline",
+src/modeling/execution/model_runner.py:            path=str(model_drift_baseline_path),
+src/modeling/execution/model_runner.py:            row_count=len(model_drift_baseline_df),
+src/modeling/execution/model_runner.py:            column_count=len(model_drift_baseline_df.columns),
+src/modeling/execution/model_runner.py:            message="Model drift baseline written successfully.",
+src/modeling/execution/model_runner.py:            len(model_drift_baseline_df),
+src/modeling/execution/model_runner.py:            model_drift_baseline_path,
+src/modeling/execution/model_runner.py:            "SKIP: Model Drift Baseline | drift.enabled=false or build_baseline=false"
+Binary file src/modeling/execution/__pycache__/model_runner.cpython-313.pyc matches
+Binary file src/modeling/scoring/__pycache__/risk_tiers.cpython-313.pyc matches
+Binary file src/modeling/scoring/__pycache__/scorer.cpython-313.pyc matches
+src/modeling/scoring/scorer.py:#     Scores the full modeling population using a trained champion model.
+src/modeling/scoring/scorer.py:#       - Uses optimized champion threshold when attached to the pipeline.
+src/modeling/scoring/scorer.py:        1. Optimized threshold attached to champion pipeline by trainer.py
+src/modeling/scoring/scorer.py:    Score full population for one trained champion model.
+src/modeling/scoring/scorer.py:        pipeline=training_result.champion_pipeline,
+Binary file src/modeling/registry/__pycache__/model_registry.cpython-313.pyc matches
+src/modeling/registry/model_registry.py:#     Builds standardized model registry records for MedFabric champion models.
+src/modeling/registry/model_registry.py:    Standard champion model registry record.
+src/modeling/registry/model_registry.py:    champion_algorithm_key: str
+src/modeling/registry/model_registry.py:    champion_algorithm_name: str
+src/modeling/registry/model_registry.py:    feature_importance_path: str
+src/modeling/registry/model_registry.py:            "champion_algorithm_key": self.champion_algorithm_key,
+src/modeling/registry/model_registry.py:            "champion_algorithm_name": self.champion_algorithm_name,
+src/modeling/registry/model_registry.py:            "feature_importance_path": self.feature_importance_path,
+src/modeling/registry/model_registry.py:    champion_algorithm_key: str,
+src/modeling/registry/model_registry.py:    champion_algorithm_name: str,
+src/modeling/registry/model_registry.py:    champion_metrics: Dict[str, Any],
+src/modeling/registry/model_registry.py:    feature_importance_path: str,
+src/modeling/registry/model_registry.py:    selection_metric_value = champion_metrics.get(selection_metric)
+src/modeling/registry/model_registry.py:        champion_algorithm_key=champion_algorithm_key,
+src/modeling/registry/model_registry.py:        champion_algorithm_name=champion_algorithm_name,
+src/modeling/registry/model_registry.py:        feature_importance_path=feature_importance_path,
+src/modeling/registry/model_registry.py:        metric_summary_json=str(champion_metrics),
+src/modeling/registry/model_registry.py:        champion_algorithm_key="random_forest",
+src/modeling/registry/model_registry.py:        champion_algorithm_name="Random Forest",
+src/modeling/registry/model_registry.py:        champion_metrics={
+src/modeling/registry/model_registry.py:        feature_importance_path="models/high_cost/high_cost_feature_importance.parquet",
+src/modeling/evaluation/build_shap_explainability.py:#     src/modeling/evaluation/build_shap_explainability.py
+src/modeling/evaluation/build_shap_explainability.py:#     Builds SHAP explainability output for trained champion models.
+src/modeling/evaluation/build_shap_explainability.py:#     python -m src.modeling.evaluation.build_shap_explainability
+src/modeling/evaluation/build_shap_explainability.py:    "mean_absolute_shap_value",
+src/modeling/evaluation/build_shap_explainability.py:    "shap_importance_rank",
+src/modeling/evaluation/build_shap_explainability.py:def compute_shap_values(
+src/modeling/evaluation/build_shap_explainability.py:        import shap
+src/modeling/evaluation/build_shap_explainability.py:            "SHAP is not installed. Add 'shap' to requirements.txt and run pip install -r requirements.txt."
+src/modeling/evaluation/build_shap_explainability.py:    explainer = shap.KernelExplainer(
+src/modeling/evaluation/build_shap_explainability.py:    shap_values = explainer.shap_values(working_df)
+src/modeling/evaluation/build_shap_explainability.py:    values = np.asarray(shap_values)
+src/modeling/evaluation/build_shap_explainability.py:def compute_shap_values(
+src/modeling/evaluation/build_shap_explainability.py:        import shap
+src/modeling/evaluation/build_shap_explainability.py:            "SHAP is not installed. Add 'shap' to requirements.txt and run pip install -r requirements.txt."
+src/modeling/evaluation/build_shap_explainability.py:    explainer = shap.KernelExplainer(
+src/modeling/evaluation/build_shap_explainability.py:    shap_values = explainer.shap_values(working_df)
+src/modeling/evaluation/build_shap_explainability.py:    values = np.asarray(shap_values)
+src/modeling/evaluation/build_shap_explainability.py:def build_shap_explainability(
+src/modeling/evaluation/build_shap_explainability.py:    Build SHAP summary for one champion model.
+src/modeling/evaluation/build_shap_explainability.py:        import shap
+src/modeling/evaluation/build_shap_explainability.py:            "SHAP is not installed. Add 'shap' to requirements.txt and run pip install -r requirements.txt."
+src/modeling/evaluation/build_shap_explainability.py:    explainer = shap.KernelExplainer(
+src/modeling/evaluation/build_shap_explainability.py:    shap_values = explainer.shap_values(working_df)
+src/modeling/evaluation/build_shap_explainability.py:    values = np.asarray(shap_values)
+src/modeling/evaluation/build_shap_explainability.py:            "mean_absolute_shap_value": mean_abs_values,
+src/modeling/evaluation/build_shap_explainability.py:    output_df["mean_absolute_shap_value"] = pd.to_numeric(
+src/modeling/evaluation/build_shap_explainability.py:        output_df["mean_absolute_shap_value"],
+src/modeling/evaluation/build_shap_explainability.py:        by="mean_absolute_shap_value",
+src/modeling/evaluation/build_shap_explainability.py:    output_df["shap_importance_rank"] = range(1, len(output_df) + 1)
+src/modeling/evaluation/build_shap_explainability.py:    output = build_shap_explainability(
+src/modeling/evaluation/build_shap_explainability.py:        pipeline=training_result.champion_pipeline,
+src/modeling/evaluation/build_shap_explainability.py:        algorithm_key=training_result.champion_algorithm_key,
+src/modeling/evaluation/build_shap_explainability.py:        algorithm_name=training_result.champion_algorithm_name,
+src/modeling/evaluation/build_feature_baseline_statistics.py:def looks_like_identifier(feature_name: str, series: pd.Series) -> bool:
+src/modeling/evaluation/build_feature_baseline_statistics.py:    Identifier fields should usually be excluded from drift calculations because
+src/modeling/evaluation/build_feature_baseline_statistics.py:def looks_like_datetime(feature_name: str, series: pd.Series) -> bool:
+src/modeling/evaluation/build_feature_baseline_statistics.py:    if looks_like_identifier(feature_name=feature_name, series=series):
+src/modeling/evaluation/build_feature_baseline_statistics.py:    if looks_like_datetime(feature_name=feature_name, series=series):
+src/modeling/evaluation/build_permutation_importance.py:#     src/modeling/evaluation/build_permutation_importance.py
+src/modeling/evaluation/build_permutation_importance.py:#     Builds permutation importance output for trained champion models.
+src/modeling/evaluation/build_permutation_importance.py:#     python -m src.modeling.evaluation.build_permutation_importance
+src/modeling/evaluation/build_permutation_importance.py:from sklearn.inspection import permutation_importance
+src/modeling/evaluation/build_permutation_importance.py:    "permutation_importance_mean",
+src/modeling/evaluation/build_permutation_importance.py:    "permutation_importance_std",
+src/modeling/evaluation/build_permutation_importance.py:    "permutation_importance_rank",
+src/modeling/evaluation/build_permutation_importance.py:def build_permutation_importance(
+src/modeling/evaluation/build_permutation_importance.py:    Build permutation importance summary for one champion model.
+src/modeling/evaluation/build_permutation_importance.py:    result = permutation_importance(
+src/modeling/evaluation/build_permutation_importance.py:            "permutation_importance_mean": result.importances_mean,
+src/modeling/evaluation/build_permutation_importance.py:            "permutation_importance_std": result.importances_std,
+src/modeling/evaluation/build_permutation_importance.py:    output_df["permutation_importance_mean"] = pd.to_numeric(
+src/modeling/evaluation/build_permutation_importance.py:        output_df["permutation_importance_mean"],
+src/modeling/evaluation/build_permutation_importance.py:    output_df["permutation_importance_std"] = pd.to_numeric(
+src/modeling/evaluation/build_permutation_importance.py:        output_df["permutation_importance_std"],
+src/modeling/evaluation/build_permutation_importance.py:        by="permutation_importance_mean",
+src/modeling/evaluation/build_permutation_importance.py:    output_df["permutation_importance_rank"] = range(1, len(output_df) + 1)
+src/modeling/evaluation/build_permutation_importance.py:    output = build_permutation_importance(
+src/modeling/evaluation/build_permutation_importance.py:        pipeline=training_result.champion_pipeline,
+src/modeling/evaluation/build_permutation_importance.py:        algorithm_key=training_result.champion_algorithm_key,
+src/modeling/evaluation/build_permutation_importance.py:        algorithm_name=training_result.champion_algorithm_name,
+src/modeling/evaluation/build_target_quality_report.py:        "quality_message": "Target passed basic quality checks.",
+src/modeling/evaluation/build_lift_gain_analysis.py:#     src/modeling/evaluation/build_lift_gain_analysis.py
+src/modeling/evaluation/build_lift_gain_analysis.py:#     Builds lift, gain, and decile analysis outputs for champion model scoring.
+src/modeling/evaluation/build_lift_gain_analysis.py:#     python -m src.modeling.evaluation.build_lift_gain_analysis
+src/modeling/evaluation/build_lift_gain_analysis.py:def build_lift_gain_analysis(
+src/modeling/evaluation/build_lift_gain_analysis.py:    decile_count: int = 10,
+src/modeling/evaluation/build_lift_gain_analysis.py:    Build lift, gain, and decile analysis for one scored champion model.
+src/modeling/evaluation/build_lift_gain_analysis.py:    analysis_df["decile"] = (
+src/modeling/evaluation/build_lift_gain_analysis.py:            q=decile_count,
+src/modeling/evaluation/build_lift_gain_analysis.py:        analysis_df.groupby("decile", as_index=False)
+src/modeling/evaluation/build_lift_gain_analysis.py:        .sort_values("decile")
+src/modeling/evaluation/build_lift_gain_analysis.py:    grouped["lift"] = grouped["response_rate"] / population_rate if population_rate else 0.0
+src/modeling/evaluation/build_lift_gain_analysis.py:    grouped["cumulative_gain_pct"] = (
+src/modeling/evaluation/build_lift_gain_analysis.py:    grouped["cumulative_lift"] = (
+src/modeling/evaluation/build_lift_gain_analysis.py:        grouped["cumulative_gain_pct"] / grouped["cumulative_population_pct"]
+src/modeling/evaluation/build_lift_gain_analysis.py:    grouped["decile_count"] = decile_count
+src/modeling/evaluation/build_lift_gain_analysis.py:    output = build_lift_gain_analysis(
+src/modeling/evaluation/build_lift_gain_analysis.py:    print("Lift/gain/decile validation successful.")
+Binary file src/modeling/evaluation/__pycache__/build_permutation_importance.cpython-313.pyc matches
+Binary file src/modeling/evaluation/__pycache__/build_member_level_explanations.cpython-313.pyc matches
+Binary file src/modeling/evaluation/__pycache__/build_lift_gain_analysis.cpython-313.pyc matches
+Binary file src/modeling/evaluation/__pycache__/confusion_matrix.cpython-313.pyc matches
+Binary file src/modeling/evaluation/__pycache__/build_model_drift_baseline.cpython-313.pyc matches
+Binary file src/modeling/evaluation/__pycache__/feature_importance.cpython-313.pyc matches
+Binary file src/modeling/evaluation/__pycache__/build_shap_explainability.cpython-313.pyc matches
+Binary file src/modeling/evaluation/__pycache__/build_target_quality_report.cpython-313.pyc matches
+Binary file src/modeling/evaluation/__pycache__/build_feature_baseline_statistics.cpython-313.pyc matches
+Binary file src/modeling/evaluation/__pycache__/build_model_explainability_summary.cpython-313.pyc matches
+src/modeling/evaluation/build_model_explainability_summary.py:def normalize_feature_importance_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
+src/modeling/evaluation/build_model_explainability_summary.py:        elif "feature_importance" in working_df.columns:
+src/modeling/evaluation/build_model_explainability_summary.py:            working_df["importance_value"] = working_df["feature_importance"]
+src/modeling/evaluation/build_model_explainability_summary.py:def validate_feature_importance_dataframe(dataframe: pd.DataFrame) -> None:
+src/modeling/evaluation/build_model_explainability_summary.py:    feature_importance_dataframe: pd.DataFrame,
+src/modeling/evaluation/build_model_explainability_summary.py:    if feature_importance_dataframe is None or feature_importance_dataframe.empty:
+src/modeling/evaluation/build_model_explainability_summary.py:    working_df = normalize_feature_importance_dataframe(
+src/modeling/evaluation/build_model_explainability_summary.py:        feature_importance_dataframe
+src/modeling/evaluation/build_model_explainability_summary.py:    validate_feature_importance_dataframe(working_df)
+src/modeling/evaluation/build_model_explainability_summary.py:                        f"{model_key} champion model."
+src/modeling/evaluation/build_model_explainability_summary.py:        feature_importance_dataframe=sample_df,
+src/modeling/evaluation/build_member_level_explanations.py:#     src/modeling/evaluation/build_member_level_explanations.py
+src/modeling/evaluation/build_member_level_explanations.py:#     python -m src.modeling.evaluation.build_member_level_explanations
+src/modeling/evaluation/build_member_level_explanations.py:from src.modeling.evaluation.build_shap_explainability import compute_shap_values
+src/modeling/evaluation/build_member_level_explanations.py:    "local_shap_value",
+src/modeling/evaluation/build_member_level_explanations.py:    "absolute_local_shap_value",
+src/modeling/evaluation/build_member_level_explanations.py:def build_member_level_explanations(
+src/modeling/evaluation/build_member_level_explanations.py:    shap_input_df, shap_values, background_df = compute_shap_values(
+src/modeling/evaluation/build_member_level_explanations.py:    if shap_input_df.empty or shap_values.size == 0:
+src/modeling/evaluation/build_member_level_explanations.py:        member_feature_values = shap_input_df.iloc[row_position]
+src/modeling/evaluation/build_member_level_explanations.py:            shap_value = float(shap_values[row_position][feature_position])
+src/modeling/evaluation/build_member_level_explanations.py:                    "local_shap_value": shap_value,
+src/modeling/evaluation/build_member_level_explanations.py:                    "absolute_local_shap_value": abs(shap_value),
+src/modeling/evaluation/build_member_level_explanations.py:                    "sample_row_count": len(shap_input_df),
+src/modeling/evaluation/build_member_level_explanations.py:            key=lambda item: item["absolute_local_shap_value"],
+src/modeling/evaluation/build_member_level_explanations.py:    output = build_member_level_explanations(
+src/modeling/evaluation/build_member_level_explanations.py:        pipeline=training_result.champion_pipeline,
+src/modeling/evaluation/build_member_level_explanations.py:        algorithm_key=training_result.champion_algorithm_key,
+src/modeling/evaluation/build_member_level_explanations.py:        algorithm_name=training_result.champion_algorithm_name,
+src/modeling/evaluation/feature_importance.py:#     src/modeling/evaluation/feature_importance.py
+src/modeling/evaluation/feature_importance.py:#     champion model pipelines.
+src/modeling/evaluation/feature_importance.py:#     - CalibratedClassifierCV wrapping a fitted Pipeline
+src/modeling/evaluation/feature_importance.py:#     - Tree-based feature_importances_
+src/modeling/evaluation/feature_importance.py:#     python -m src.modeling.evaluation.feature_importance
+src/modeling/evaluation/feature_importance.py:def extract_feature_importance(
+src/modeling/evaluation/feature_importance.py:    if hasattr(model, "feature_importances_"):
+src/modeling/evaluation/feature_importance.py:            values=model.feature_importances_,
+src/modeling/evaluation/feature_importance.py:            importance_type="feature_importance",
+src/modeling/evaluation/feature_importance.py:def build_feature_importance_output(
+src/modeling/evaluation/feature_importance.py:    importance_df = extract_feature_importance(
+src/modeling/evaluation/feature_importance.py:    output = build_feature_importance_output(
+src/modeling/evaluation/feature_importance.py:        pipeline=training_result.champion_pipeline,
+src/modeling/evaluation/feature_importance.py:        algorithm_key=training_result.champion_algorithm_key,
+src/modeling/evaluation/feature_importance.py:        algorithm_name=training_result.champion_algorithm_name,
+src/modeling/evaluation/confusion_matrix.py:#     src/modeling/evaluation/confusion_matrix.py
+src/modeling/evaluation/confusion_matrix.py:#     Builds standardized confusion matrix outputs for champion model scoring.
+src/modeling/evaluation/confusion_matrix.py:#     python -m src.modeling.evaluation.confusion_matrix
+src/modeling/evaluation/confusion_matrix.py:from sklearn.metrics import confusion_matrix
+src/modeling/evaluation/confusion_matrix.py:def build_confusion_matrix_output(
+src/modeling/evaluation/confusion_matrix.py:    Build standardized confusion matrix summary for one champion model.
+src/modeling/evaluation/confusion_matrix.py:    tn, fp, fn, tp = confusion_matrix(
+src/modeling/evaluation/confusion_matrix.py:    output = build_confusion_matrix_output(
+src/modeling/evaluation/build_model_drift_baseline.py:#     src/modeling/evaluation/build_model_drift_baseline.py
+src/modeling/evaluation/build_model_drift_baseline.py:#     Builds a model drift baseline from the current modeling feature matrix.
+src/modeling/evaluation/build_model_drift_baseline.py:#     This file prepares the reference baseline that future drift monitoring
+src/modeling/evaluation/build_model_drift_baseline.py:#     jobs will compare against.
+src/modeling/evaluation/build_model_drift_baseline.py:#     data/modeling/model_drift_baseline.parquet
+src/modeling/evaluation/build_model_drift_baseline.py:#     python -m src.modeling.evaluation.build_model_drift_baseline
+src/modeling/evaluation/build_model_drift_baseline.py:DEFAULT_OUTPUT_PATH = Path("data/modeling/model_drift_baseline.parquet")
+src/modeling/evaluation/build_model_drift_baseline.py:DEFAULT_BASELINE_TYPE = "model_drift_baseline"
+src/modeling/evaluation/build_model_drift_baseline.py:    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_model_drift_baseline")
+src/modeling/evaluation/build_model_drift_baseline.py:    Identify candidate feature columns for drift baseline creation.
+src/modeling/evaluation/build_model_drift_baseline.py:    The drift baseline should describe model input features only.
+src/modeling/evaluation/build_model_drift_baseline.py:def build_model_drift_baseline(
+src/modeling/evaluation/build_model_drift_baseline.py:    Build the model drift baseline from a modeling feature matrix.
+src/modeling/evaluation/build_model_drift_baseline.py:    baseline["drift_baseline_created_utc"] = utc_now_iso()
+src/modeling/evaluation/build_model_drift_baseline.py:    baseline["drift_reference_dataset"] = str(DEFAULT_INPUT_PATH)
+src/modeling/evaluation/build_model_drift_baseline.py:def write_model_drift_baseline(
+src/modeling/evaluation/build_model_drift_baseline.py:    Write the model drift baseline to parquet.
+src/modeling/evaluation/build_model_drift_baseline.py:def run_model_drift_baseline_build(
+src/modeling/evaluation/build_model_drift_baseline.py:    Execute the complete model drift baseline build.
+src/modeling/evaluation/build_model_drift_baseline.py:    baseline = build_model_drift_baseline(
+src/modeling/evaluation/build_model_drift_baseline.py:    write_model_drift_baseline(
+src/modeling/evaluation/build_model_drift_baseline.py:    baseline = run_model_drift_baseline_build()
+src/modeling/evaluation/build_model_drift_baseline.py:    print("Model drift baseline build completed successfully.")
+Binary file src/modeling/outputs/__pycache__/writer.cpython-313.pyc matches
+src/modeling/outputs/writer.py:    champion_summary_df = (
+src/modeling/outputs/writer.py:        pd.concat(runtime.champion_summary_frames, ignore_index=True)
+src/modeling/outputs/writer.py:        if runtime.champion_summary_frames
+src/modeling/outputs/writer.py:    confusion_matrix_summary_df = (
+src/modeling/outputs/writer.py:        pd.concat(runtime.confusion_matrix_frames, ignore_index=True)
+src/modeling/outputs/writer.py:        if runtime.confusion_matrix_frames
+src/modeling/outputs/writer.py:    model_drift_baseline_df = (
+src/modeling/outputs/writer.py:        pd.concat(runtime.model_drift_baseline_frames, ignore_index=True)
+src/modeling/outputs/writer.py:        if runtime.model_drift_baseline_frames
+src/modeling/outputs/writer.py:    lift_gain_decile_summary_df = (
+src/modeling/outputs/writer.py:        pd.concat(runtime.lift_gain_frames, ignore_index=True)
+src/modeling/outputs/writer.py:        if runtime.lift_gain_frames
+src/modeling/outputs/writer.py:    permutation_importance_summary_df = (
+src/modeling/outputs/writer.py:        pd.concat(runtime.permutation_importance_frames, ignore_index=True)
+src/modeling/outputs/writer.py:        if runtime.permutation_importance_frames
+src/modeling/outputs/writer.py:    shap_explainability_summary_df = (
+src/modeling/outputs/writer.py:        pd.concat(runtime.shap_explainability_frames, ignore_index=True)
+src/modeling/outputs/writer.py:        if runtime.shap_explainability_frames
+src/modeling/outputs/writer.py:        "champion_model_summary": champion_summary_df,
+src/modeling/outputs/writer.py:        "confusion_matrix_summary": confusion_matrix_summary_df,
+src/modeling/outputs/writer.py:        "lift_gain_decile_summary": lift_gain_decile_summary_df,
+src/modeling/outputs/writer.py:        "permutation_importance_summary": permutation_importance_summary_df,
+src/modeling/outputs/writer.py:        "shap_explainability_summary": shap_explainability_summary_df,
+src/modeling/outputs/writer.py:    if not model_drift_baseline_df.empty:
+src/modeling/outputs/writer.py:        modeling_output_assets["model_drift_baseline"] = model_drift_baseline_df
+config/modeling/training.yaml:#   - Probability calibration
+config/modeling/training.yaml:  probability_calibration:
+config/modeling/training.yaml:experiments:
+config/modeling/modeling.yaml:    champion_model_summary:
+config/modeling/modeling.yaml:      path: "data/modeling/champion_model_summary"
+config/modeling/modeling.yaml:    permutation_importance_summary:
+config/modeling/modeling.yaml:      path: "data/modeling/permutation_importance_summary"
+config/modeling/modeling.yaml:    shap_explainability_summary:
+config/modeling/modeling.yaml:      path: "data/modeling/shap_explainability_summary"
+config/modeling/modeling.yaml:    confusion_matrix_summary:
+config/modeling/modeling.yaml:      path: "data/modeling/confusion_matrix_summary"
+config/modeling/modeling.yaml:    lift_gain_decile_summary:
+config/modeling/modeling.yaml:      path: "data/modeling/lift_gain_decile_summary"
+config/modeling/modeling.yaml:    model_drift_baseline:
+config/modeling/modeling.yaml:      path: "data/modeling/model_drift_baseline"
+config/modeling/modeling.yaml:      feature_importance_path: "models/high_cost/high_cost_feature_importance"
+config/modeling/modeling.yaml:      feature_importance_path: "models/readmission/readmission_feature_importance"
+config/modeling/modeling.yaml:      feature_importance_path: "models/er_utilization/er_utilization_feature_importance"
+config/modeling/modeling.yaml:      feature_importance_path: "models/rising_risk/rising_risk_feature_importance"
+config/modeling/modeling.yaml:      feature_importance_path: "models/chronic_progression/chronic_progression_feature_importance"
+config/modeling/modeling.yaml:      feature_importance_path: "models/medication_non_adherence/medication_non_adherence_feature_importance"
+config/modeling/modeling.yaml:      feature_importance_path: "models/avoidable_admission/avoidable_admission_feature_importance"
+config/modeling/modeling.yaml:      feature_importance_path: "models/care_gap_closure/care_gap_closure_feature_importance"
+config/modeling/modeling.yaml:    champion_model_selected_check:
+config/modeling/modeling.yaml:  include_champion_summary: true
+config/modeling/modeling.yaml:  include_champion_selection_reason: true
+config/modeling/drift.yaml:#   config/modeling/drift.yaml
+config/modeling/drift.yaml:#   Defines model drift monitoring configuration.
+config/modeling/drift.yaml:#   - Build baseline feature statistics from the current champion training run.
+config/modeling/drift.yaml:#   - Kolmogorov-Smirnov (KS) drift checks
+config/modeling/drift.yaml:#   - Prediction score drift
+config/modeling/drift.yaml:#   - Model performance drift
+config/modeling/drift.yaml:drift:
+config/modeling/drift.yaml:  baseline_strategy: "latest_champion_training_run"
+config/modeling/drift.yaml:  psi_threshold: 0.20
+config/modeling/drift.yaml:  ks_threshold: 0.10
+config/modeling/models/chronic_progression.yaml:  drift_overrides: {}
+config/modeling/models/avoidable_admission.yaml:  drift_overrides: {}
+config/modeling/models/care_gap_closure.yaml:  drift_overrides: {}
+config/modeling/models/readmission.yaml:# drift settings without impacting other prediction models.
+config/modeling/models/readmission.yaml:  drift_overrides: {}
+config/modeling/models/er_utilization.yaml:# drift settings without impacting other prediction models.
+config/modeling/models/er_utilization.yaml:  drift_overrides: {}
+config/modeling/models/rising_risk.yaml:# drift settings without impacting other prediction models.
+config/modeling/models/rising_risk.yaml:  drift_overrides: {}
+config/modeling/models/medication_non_adherence.yaml:  drift_overrides: {}
+config/modeling/models/high_cost.yaml:  drift_overrides: {}
+config/modeling/scoring.yaml:#   Defines population scoring behavior for champion models.
+config/modeling/explainability.yaml:#   This configuration is consumed after champion model selection and controls
+config/modeling/explainability.yaml:  feature_importance:
+config/modeling/explainability.yaml:  permutation_importance:
+config/modeling/explainability.yaml:  shap:
